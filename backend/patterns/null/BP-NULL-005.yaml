@@ -1,0 +1,38 @@
+id: BP-NULL-005
+name: 可变默认参数陷阱
+category: "null"
+language: python
+knowledge_points: [函数默认参数, 对象生命周期]
+capability_dims: [Root_Cause_Reasoning, Hypothesis_Testing]
+difficulty: L3
+symptom: WA
+symptom_sample: |
+  （不报错，但第二个学生的成绩单里混入了第一个学生的成绩）
+buggy_code: |
+  def add_score(score, scores=[]):
+      # 把成绩加入成绩单，默认新建一个空成绩单
+      scores.append(score)
+      return scores
+
+  xiaoming = add_score(95)
+  xiaohong = add_score(88)
+  print("小明:", xiaoming)   # 期望 [95]
+  print("小红:", xiaohong)   # 期望 [88]，实际 [95, 88]！
+mine_location:
+  file: main.py
+  line: 1
+trigger_input: "连续两次不传scores的调用"
+root_cause: "Python的默认参数只在函数定义时求值一次，scores=[] 这个列表被所有调用共享——第二次调用拿到的是第一次已经append过的同一个列表。惯用修复：默认值用None，函数内再新建"
+expected_fix: "scores=None，函数内 if scores is None: scores = []"
+fix_check: 'scores\s*=\s*None'
+internalize_questions:
+  - "默认参数 scores=[] 是什么时候被创建的？每次调用会重新创建吗？"
+  - "为什么这个Bug不报错？不报错的Bug和报错的Bug，哪个更危险？为什么？"
+  - "以后定义函数时，什么类型的默认值要警惕？"
+hint_ladder:
+  L0: "程序没报错，但输出对吗？逐行对照'期望'和'实际'，差在哪？"
+  L1: "小红的成绩单里混进了95——这是谁的成绩？它怎么会出现在小红的列表里？"
+  L2: "两次调用都没传scores，都用了默认值。你认为：A. append写错了  B. 两次调用共享了同一个默认列表  C. 返回值搞混了？"
+  L3: "做个实验：在函数里打印 id(scores)，两次调用的id一样吗？默认参数是每次调用都新建的吗？"
+  L4: "看第1行的 scores=[]。这个列表在函数定义时创建一次，之后所有调用共用。Python社区对这个陷阱的惯用解法是什么？"
+  L5: "讲解思路：可变对象做默认值会被跨调用共享。惯用解法是默认值设为None，函数体内检测到None再新建列表。你自己改。"

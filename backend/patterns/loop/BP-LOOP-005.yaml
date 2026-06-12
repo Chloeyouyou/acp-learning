@@ -1,0 +1,37 @@
+id: BP-LOOP-005
+name: 遍历中修改集合
+category: loop
+language: python
+knowledge_points: [集合, 迭代器]
+capability_dims: [Root_Cause_Reasoning, Hypothesis_Testing, Boundary_Awareness]
+difficulty: L3
+symptom: WA
+symptom_sample: |
+  （不报错，但连续的不及格成绩只删掉了一半）
+buggy_code: |
+  def remove_failing(scores):
+      # 删除所有不及格(<60)的成绩
+      for s in scores:
+          if s < 60:
+              scores.remove(s)
+      return scores
+
+  print(remove_failing([45, 50, 80, 90]))   # 期望 [80, 90]，实际 [50, 80, 90]！
+mine_location:
+  file: main.py
+  line: 3
+trigger_input: "[45, 50, 80, 90]（连续两个不及格）"
+root_cause: "一边遍历一边remove：删掉45后所有元素前移，迭代器的游标却继续后移，50被跳过没有检查。遍历中修改正在遍历的列表会让迭代器错位——应遍历副本或用列表推导式重建"
+expected_fix: "遍历副本 for s in scores[:] 或列表推导 [s for s in scores if s >= 60]"
+fix_check: 'scores\[:\]|list\(scores\)|for\s+s\s+in\s+scores\s+if|if\s+s\s*>=\s*60'
+internalize_questions:
+  - "删掉45之后，列表变成什么样？此时迭代器的游标指向第几个位置？下一个被检查的是谁？"
+  - "为什么 [45, 80, 50, 90]（不及格不相邻）就能侥幸全删掉？这种'有时对有时错'的Bug为什么特别危险？"
+  - "Python里安全地'边遍历边删'有哪几种惯用写法？"
+hint_ladder:
+  L0: "运行一下，50为什么还在？换几组数据试试：不及格相邻的和不相邻的，结果有规律吗？"
+  L1: "你会发现连续的不及格只删掉第一个。删除45的瞬间，列表里每个元素的位置发生了什么？"
+  L2: "你认为：A. remove删错了元素  B. 删除导致后面元素前移、迭代器跳过了一个  C. 条件s<60写错了？"
+  L3: "迭代器按位置前进：检查完位置0就去位置1。删掉45后，50挪到了位置几？迭代器下一步检查位置几？"
+  L4: "看第3行：遍历scores的同时在remove它。说说为什么这会让迭代器错位？"
+  L5: "讲解思路：不要修改正在遍历的列表——要么遍历它的副本，要么用列表推导式生成新列表。选一种自己改。"

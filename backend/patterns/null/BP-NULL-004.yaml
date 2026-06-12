@@ -1,0 +1,44 @@
+id: BP-NULL-004
+name: 报错位置与根因位置分离的None
+category: "null"
+language: python
+knowledge_points: [对象生命周期, 数据流追踪]
+capability_dims: [Root_Cause_Reasoning, Log_Reading, Hypothesis_Testing]
+difficulty: L3
+symptom: RE
+symptom_sample: |
+  AttributeError: 'NoneType' object has no attribute 'get'
+    File "main.py", line 14, in login    # 崩在这里，但根因不在这里
+buggy_code: |
+  class UserService:
+      def __init__(self, repo=None):
+          self.repo = repo     # 第3行：repo可能是None，但这里不会报错
+
+      def login(self, username):
+          user = self.repo.get(username)   # 第6行：首次使用时才崩
+          if user is None:
+              return "用户不存在"
+          return f"欢迎, {user['name']}"
+
+  # ……项目里很多其他代码……
+
+  service = UserService()       # 第13行：忘了传repo
+  print(service.login("小明"))  # 第14行：报错指向login内部
+mine_location:
+  file: main.py
+  line: 13
+trigger_input: "任意login调用"
+root_cause: "第13行构造UserService时忘了传repo，self.repo一直是None，直到第6行首次使用才崩溃——报错行只是案发现场，根因在构造处。修复应在构造时传入repo（或在__init__中校验拒绝None）"
+expected_fix: "UserService(repo={...}) 构造时传入repo，或 __init__ 中对 repo 为 None 时 raise"
+fix_check: 'UserService\(\s*repo\s*=|UserService\(\s*\{|raise'
+internalize_questions:
+  - "为什么崩在第6行（login内部），错却在第13行（构造处）？这两行隔着什么？"
+  - "看到NoneType报错，你应该先问'谁是None'还是'哪行崩了'？追踪一个字段为什么是None的方法是什么？"
+  - "如果__init__在repo为None时立即raise，崩溃位置会变到哪里？这对调试有什么好处？"
+hint_ladder:
+  L0: "把完整报错读一遍。它崩在哪个方法？那个方法的代码看起来有错吗？"
+  L1: "报错说 self.repo 是 None。login方法自己有没有给 repo 赋过值？那它的值是哪来的？"
+  L2: "repo 是在 __init__ 里赋值的。你认为问题在：A. login的逻辑  B. __init__的默认参数被用上了  C. get方法不存在？"
+  L3: "报错的行不一定是出错的行。一个字段从构造起就是None，只是到第一次使用才暴露。沿着 self.repo 的赋值链往前找。"
+  L4: "看第13行 UserService()——构造时传repo了吗？再看第2行的默认值是什么？"
+  L5: "讲解思路：构造时没传repo，默认None被存进字段，首次使用才崩。修复有两个方向：调用处传入，或构造器拒绝None。你选一个自己改。"

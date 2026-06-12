@@ -1,0 +1,38 @@
+id: BP-BOUNDARY-004
+name: 二维数组行列混淆
+category: boundary
+language: python
+knowledge_points: [二维数组]
+capability_dims: [Boundary_Awareness, Root_Cause_Reasoning]
+difficulty: L2
+symptom: RE
+symptom_sample: |
+  IndexError: list index out of range
+    File "main.py", line 6, in transpose
+buggy_code: |
+  def transpose(matrix):
+      # 转置一个 2行3列 的矩阵
+      rows, cols = len(matrix), len(matrix[0])
+      result = []
+      for i in range(cols):
+          result.append([matrix[i][j] for j in range(rows)])
+      return result
+
+  print(transpose([[1, 2, 3], [4, 5, 6]]))
+mine_location:
+  file: main.py
+  line: 6
+trigger_input: "[[1, 2, 3], [4, 5, 6]]"
+root_cause: "第6行下标用反了：外层循环i走的是列（0..2），却被用作matrix的行下标，i=2时访问matrix[2]越界——转置时应该是matrix[j][i]"
+expected_fix: "matrix[j][i]"
+fix_check: 'matrix\[j\]\[i\]'
+internalize_questions:
+  - "i 和 j 各自的取值范围是什么？matrix[i][j] 里它们分别该对应行还是列？"
+  - "为什么 3行3列 的方阵测不出这个Bug？这对你设计测试用例有什么启发？"
+hint_ladder:
+  L0: "用一个2行3列的矩阵运行，发生了什么？如果换成3行3列呢？"
+  L1: "报错在第6行。i 这个循环变量最大取到几？matrix 有几行？"
+  L2: "问题在下标。你认为：A. range的范围错了  B. i和j的位置用反了  C. result初始化错了？"
+  L3: "转置的含义是新矩阵第i行第j列 = 原矩阵第j行第i列。对照第6行，下标对吗？"
+  L4: "看第6行的 matrix[i][j]。i是列号却被当成行号用了，说说为什么方阵测不出来？"
+  L5: "讲解思路：行列下标用反，只有行数≠列数时才暴露。哪两个下标该换位置你自己改。"

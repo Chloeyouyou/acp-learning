@@ -1,0 +1,38 @@
+id: BP-LOOP-002
+name: while条件永真（步长跳过终点）
+category: loop
+language: python
+knowledge_points: [循环, 循环不变式]
+capability_dims: [Hypothesis_Testing, Boundary_Awareness]
+difficulty: L2
+symptom: HANG
+symptom_sample: |
+  （程序一直运行不结束，内存中列表越来越长）
+buggy_code: |
+  def countdown_by_two(n):
+      # 从n开始每次减2，数到0为止
+      result = []
+      while n != 0:
+          result.append(n)
+          n -= 2
+      return result
+
+  print(countdown_by_two(10))   # 正常: [10, 8, 6, 4, 2]
+  print(countdown_by_two(7))    # 卡住！
+mine_location:
+  file: main.py
+  line: 4
+trigger_input: "n=7（奇数）"
+root_cause: "n为奇数时每次减2永远不会恰好等于0（7→5→3→1→-1→……），条件 n != 0 永真。用 != 做循环条件要求步长恰好命中终点，应改用 n > 0"
+expected_fix: "while n > 0"
+fix_check: 'while\s+n\s*>\s*0'
+internalize_questions:
+  - "n=7时，n的值依次是什么？它什么时候等于0？"
+  - "循环条件用 != 和用 > 有什么区别？什么时候 != 是危险的？"
+hint_ladder:
+  L0: "10正常、7卡住——这两个输入有什么不同？"
+  L1: "程序卡住说明循环停不下来。在循环里打印n，观察7的时候n怎么变？"
+  L2: "你会看到 7,5,3,1,-1,-3...。问题在：A. append的位置  B. n -= 2 写错了  C. 循环条件等不到真？"
+  L3: "n从7开始每次减2，会经过0吗？条件 n != 0 什么时候才为假？"
+  L4: "看第4行 while n != 0。对奇数它永远为真。怎么写条件能让任何n都停下来？"
+  L5: "讲解思路：!= 要求精确命中终点，步长不保证命中时就死循环；用不等号比较（越过即停）才安全。自己改。"

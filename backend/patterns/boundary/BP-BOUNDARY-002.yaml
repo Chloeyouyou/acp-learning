@@ -1,0 +1,35 @@
+id: BP-BOUNDARY-002
+name: 空集合未防护
+category: boundary
+language: python
+knowledge_points: [集合, 防御式编程]
+capability_dims: [Boundary_Awareness, Hypothesis_Testing]
+difficulty: L2
+symptom: RE
+symptom_sample: |
+  ZeroDivisionError: division by zero
+    File "main.py", line 3, in average
+buggy_code: |
+  def average(arr):
+      # 计算平均分
+      return sum(arr) / len(arr)
+
+  print(average([80, 90, 100]))
+  print(average([]))   # 这个班还没有录入成绩
+mine_location:
+  file: main.py
+  line: 3
+trigger_input: "[]"
+root_cause: "没有对空列表做防护，len(arr)为0时除法直接崩溃——正常输入永远测不出这个问题"
+expected_fix: "函数开头加空集合判断，如 if not arr: return 0"
+fix_check: 'if\s+not\s+arr|len\(arr\)\s*==\s*0'
+internalize_questions:
+  - "为什么用 [80, 90, 100] 测试时一切正常？这说明测试用例应该怎么设计？"
+  - "除了空列表，你还能想到哪些'正常代码会挂掉'的特殊输入？"
+hint_ladder:
+  L0: "这段代码什么情况下会出错？普通输入测过了，还有什么输入没试？"
+  L1: "读一下报错：ZeroDivisionError——什么东西是0？它什么时候会是0？"
+  L2: "问题和输入有关。你认为崩溃的输入是：A. 负数成绩  B. 空列表  C. 特别大的列表？"
+  L3: "一个函数对'没有数据'的情况应该怎么办？现在的代码假设了什么？"
+  L4: "看第3行，当 arr 是空列表时，这行会发生什么？"
+  L5: "讲解思路：len(arr)为0时除法崩溃，需要在计算前防护空集合的情况。怎么防护你自己写。"

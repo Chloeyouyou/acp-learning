@@ -1,0 +1,43 @@
+id: BP-LOOP-003
+name: 嵌套循环内层误用外层变量
+category: loop
+language: python
+knowledge_points: [嵌套循环]
+capability_dims: [Root_Cause_Reasoning, Log_Reading]
+difficulty: L2
+symptom: WA
+symptom_sample: |
+  （不报错，但乘法表的列数不对）
+buggy_code: |
+  def multiplication_table(n):
+      # 打印 n 行的乘法表，第i行有i列
+      lines = []
+      for i in range(1, n + 1):
+          row = []
+          for j in range(1, n + 1):
+              row.append(f"{j}x{i}={i * j}")
+          lines.append(" ".join(row))
+      return "\n".join(lines)
+
+  print(multiplication_table(3))
+  # 期望:
+  # 1x1=1
+  # 1x2=2 2x2=4
+  # 1x3=3 2x3=6 3x3=9
+mine_location:
+  file: main.py
+  line: 6
+trigger_input: "n=3"
+expected_fix: "range(1, i + 1)"
+fix_check: 'range\(1,\s*i\s*\+\s*1\)'
+root_cause: "内层循环边界应该依赖外层变量i（第i行只有i列），误写成n后每行都输出n列"
+internalize_questions:
+  - "外层变量i和内层变量j各自控制什么？内层的范围为什么要依赖i？"
+  - "这种不报错的输出错误，你是怎么发现的？对照期望输出有什么技巧？"
+hint_ladder:
+  L0: "运行一下，把实际输出和注释里的期望输出逐行对比，差在哪？"
+  L1: "第1行期望1列、实际3列——每行的列数是由哪段代码控制的？"
+  L2: "问题在内层循环。你认为：A. j的起点错  B. j的终点错  C. append的内容错？"
+  L3: "第i行应该有几列？内层range的终点现在依赖的是哪个变量？应该依赖哪个？"
+  L4: "看第6行 range 的第二个参数。它让每行都输出固定列数，说说为什么？"
+  L5: "讲解思路：内层边界应随外层变量变化（第i行i列），而不是固定的n。自己改。"

@@ -1,0 +1,39 @@
+id: BP-NULL-002
+name: 方法返回None未检查
+category: "null"
+language: python
+knowledge_points: [API契约, 函数返回值]
+capability_dims: [Root_Cause_Reasoning, Log_Reading]
+difficulty: L2
+symptom: RE
+symptom_sample: |
+  TypeError: 'NoneType' object is not subscriptable
+    File "main.py", line 10
+buggy_code: |
+  users = [{"id": 1, "name": "小明"}, {"id": 2, "name": "小红"}]
+
+  def find_user(uid):
+      for u in users:
+          if u["id"] == uid:
+              return u
+      # 找不到时隐式返回 None
+
+  user = find_user(99)
+  print(user["name"])
+mine_location:
+  file: main.py
+  line: 10
+trigger_input: "uid=99（不存在的用户）"
+root_cause: "find_user 找不到用户时隐式返回None，调用方没有检查就直接取下标——契约是'可能返回None'，调用方必须处理这种情况"
+expected_fix: "调用后先判断，如 if user is not None: 再使用"
+fix_check: 'is\s+not\s+None|if\s+user\s*:'
+internalize_questions:
+  - "find_user 在什么情况下返回什么？这个'契约'调用方知道吗？"
+  - "查字典、查数据库、调接口都可能'查不到'——以后你调用这类函数时会先做什么？"
+hint_ladder:
+  L0: "uid=1 时正常，uid=99 时崩溃——这两次调用有什么本质区别？"
+  L1: "报错说 'NoneType' object is not subscriptable——user 是 None。它为什么是 None？"
+  L2: "你认为：A. find_user写错了循环  B. find_user找不到时返回了None而调用方没处理  C. users数据有问题？"
+  L3: "一个函数没有显式return时，Python返回什么？find_user找不到用户时走的是哪条路径？"
+  L4: "看第10行，user可能是None却直接取了下标。调用方应该先做什么？"
+  L5: "讲解思路：函数可能返回None是它契约的一部分，调用方必须先检查再使用。怎么检查你自己写。"

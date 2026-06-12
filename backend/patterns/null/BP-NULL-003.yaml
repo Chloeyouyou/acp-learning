@@ -1,0 +1,39 @@
+id: BP-NULL-003
+name: 字典取值未判空（链式调用崩溃）
+category: "null"
+language: python
+knowledge_points: [字典, Optional处理]
+capability_dims: [Root_Cause_Reasoning, Boundary_Awareness]
+difficulty: L2
+symptom: RE
+symptom_sample: |
+  AttributeError: 'NoneType' object has no attribute 'upper'
+    File "main.py", line 7, in shout_city
+buggy_code: |
+  profiles = {
+      "小明": {"city": "北京"},
+      "小红": {},               # 还没填写城市
+  }
+
+  def shout_city(name):
+      return profiles[name].get("city").upper()
+
+  print(shout_city("小明"))
+  print(shout_city("小红"))
+mine_location:
+  file: main.py
+  line: 7
+trigger_input: '"小红"（city字段缺失）'
+root_cause: "dict.get() 在键不存在时返回None，链式调用 .get('city').upper() 没有中间检查，None直接调用upper()崩溃"
+expected_fix: "拆开检查或给默认值，如 .get('city', '')"
+fix_check: 'get\(\s*["'']city["'']\s*,|is\s+not\s+None'
+internalize_questions:
+  - "dict.get(key) 和 dict[key] 在键不存在时行为有什么区别？"
+  - "链式调用 a.b().c() 的风险是什么？什么时候应该拆开写？"
+hint_ladder:
+  L0: "小明正常，小红崩溃——看看两人的数据有什么不同？"
+  L1: "报错说 'NoneType' has no attribute 'upper'——是什么东西成了None？"
+  L2: "第7行是个链式调用。你认为None出现在：A. profiles[name]  B. .get('city')的结果  C. .upper()的结果？"
+  L3: "dict.get(key) 在键不存在时返回什么？小红的字典里有 city 这个键吗？"
+  L4: "看第7行，.get('city') 对小红返回None，紧接着的 .upper() 就崩了。怎么让缺字段时不崩？"
+  L5: "讲解思路：get可以给第二个参数作为默认值，或者把链式调用拆开先判空。具体怎么改你自己写。"
