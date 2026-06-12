@@ -8,7 +8,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 PATTERNS_DIR = BASE_DIR / "patterns"
 DATABASE_URL = f"sqlite:///{BASE_DIR / 'acp.db'}"
 
-TUTOR_MODEL = "claude-opus-4-8"
+TUTOR_MODEL = "deepseek-chat"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 # 04-能力事件模型 §2.2：低于此置信度的LLM判定事件入库但不参与画像
 CONFIDENCE_THRESHOLD = 0.7

@@ -13,7 +13,7 @@ cd backend
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env   # 填入 ANTHROPIC_API_KEY
+copy .env.example .env   # 填入 DEEPSEEK_API_KEY
 uvicorn app.main:app --reload
 ```
 
@@ -34,7 +34,7 @@ GET  /api/students/{id}/capabilities/{cap}/events   # 下钻：每个分数背�
 | 代码 | 设计文档 |
 |------|----------|
 | `app/services/mine_engine.py` | 01 埋雷引擎（MVP：模板题 + MineManifest） |
-| `app/services/tutor.py` | 02 AI导师（状态机①-⑤、引导阶梯、行为红线、结构化事件输出） |
+| `app/services/tutor.py` | 02 AI导师（状态机①-⑤、引导阶梯、行为红线、结构化事件输出；LLM后端为DeepSeek） |
 | `patterns/*/*.yaml` | 03 Bug模式库（首批3个种子模式，目标15个） |
 | `app/services/event_engine.py` + `app/registry.py` | 04 能力事件（注册表校验、双生产者、置信度过滤） |
 | `app/services/profile.py` | 05 画像（向量更新算法、知识点状态机、下钻） |
