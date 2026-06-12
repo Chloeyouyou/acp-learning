@@ -1,0 +1,37 @@
+id: BP-BOUNDARY-001
+name: 循环边界差一错误（off-by-one）
+category: boundary
+language: python
+knowledge_points: [数组, 循环]
+capability_dims: [Boundary_Awareness, Independent_Debug]
+difficulty: L1
+symptom: RE
+symptom_sample: |
+  IndexError: list index out of range
+    File "main.py", line 5, in total
+buggy_code: |
+  def total(arr):
+      s = 0
+      # 累加数组所有元素
+      for i in range(len(arr) + 1):
+          s += arr[i]
+      return s
+
+  print(total([1, 2, 3]))
+mine_location:
+  file: main.py
+  line: 4
+trigger_input: "[1, 2, 3]"
+root_cause: "range(len(arr) + 1) 使循环多走一步，最后一次迭代访问 arr[len(arr)]，越过数组末尾"
+expected_fix: "range(len(arr))"
+fix_check: 'range\(len\(arr\)\)\s*\)?:'
+internalize_questions:
+  - "为什么 range(len(arr) + 1) 会越界？列表合法下标的范围是什么？"
+  - "如果就是要访问最后一个元素，下标应该写什么？"
+hint_ladder:
+  L0: "你用什么输入测试过？换几种长度的列表试试，什么时候会出错？"
+  L1: "读一下报错：IndexError: list index out of range，它发生在第几行？那一行在访问什么？"
+  L2: "问题在循环附近。你认为是：A. s的初始值  B. range的参数  C. 列表本身？"
+  L3: "长度为n的列表，合法下标是0到n-1。你的循环里i最大能取到几？"
+  L4: "看第4行的 range(len(arr) + 1)。说说它为什么有问题？"
+  L5: "讲解思路：range(len(arr)+1) 产生 0..len(arr)，最后一个值越过了列表末尾。想想range的参数应该是什么（不要直接抄，自己改）。"

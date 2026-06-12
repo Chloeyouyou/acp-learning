@@ -1,0 +1,36 @@
+id: BP-LOOP-001
+name: 循环变量未更新（死循环）
+category: loop
+language: python
+knowledge_points: [循环, 循环不变式]
+capability_dims: [Hypothesis_Testing, Independent_Debug]
+difficulty: L1
+symptom: HANG
+symptom_sample: |
+  （程序无输出，一直运行不结束）
+buggy_code: |
+  def countdown(n):
+      result = []
+      while n > 0:
+          result.append(n)
+          # 忘记递减 n
+      return result
+
+  print(countdown(5))
+mine_location:
+  file: main.py
+  line: 4
+trigger_input: "任意 n > 0"
+root_cause: "循环体内没有更新循环变量 n，while 条件 n > 0 永远为真，循环永不退出"
+expected_fix: "循环体内加入 n -= 1"
+fix_check: 'n\s*-=\s*1|n\s*=\s*n\s*-\s*1'
+internalize_questions:
+  - "while 循环能退出的条件是什么？这个程序里谁负责让条件变假？"
+  - "以后写 while 循环，你会怎么快速自查会不会死循环？"
+hint_ladder:
+  L0: "程序没有报错但也没结束——这说明什么？它在干什么？"
+  L1: "程序卡住通常意味着某个循环停不下来。你的代码里有几个循环？"
+  L2: "看 while n > 0 这个循环。你认为问题是：A. 条件写反了  B. 循环体里少了什么  C. result有问题？"
+  L3: "while 循环要退出，条件必须在某次迭代后变成假。这个循环里，n 的值有变化吗？"
+  L4: "看循环体（第3-5行）。n 从头到尾都没变，说说为什么这是死循环？"
+  L5: "讲解思路：循环条件依赖 n，但循环体从不修改 n，条件永真。循环体里应该对 n 做什么？（自己改）"
