@@ -26,16 +26,27 @@ acp-learning/
 │       ├── 03-Bug模式库设计.md
 │       ├── 04-能力事件模型.md
 │       └── 05-学生能力画像模型.md
-├── backend/     # 后端服务（待搭建，计划 FastAPI）
-├── frontend/    # 前端应用（待搭建，计划 Vue3）
+├── backend/     # FastAPI：埋雷引擎/AI导师(DeepSeek)/事件引擎/画像 + 15模式题库
+├── frontend/    # Vue3 + Vite：训练场（代码+导师对话）/ 画像页（雷达图+事件下钻）
 └── README.md
+```
+
+## 快速启动
+
+```powershell
+# 后端（先复制 backend/.env.example 为 .env 填入 DEEPSEEK_API_KEY）
+cd backend; .venv\Scripts\activate; uvicorn app.main:app --port 8000
+
+# 前端（另开一个终端）
+cd frontend; npm install; npm run dev   # 打开 http://localhost:5173
 ```
 
 ## 路线图
 
 - [x] V0.1 产品概念方案
 - [x] V0.2 核心设计：埋雷引擎、AI导师策略、Bug模式库（首批15模式）、能力事件模型（9类事件）、能力画像模型
-- [ ] MVP：AI共脑调试空间（模块1）+ 最小Bug题库（模块2）
-- [ ] 能力画像引擎与可视化
+- [x] MVP 后端：埋雷→导师→事件→画像闭环（含15模式题库与入库校验）
+- [x] MVP 前端：Bug闯关训练场 + 能力画像页
+- [ ] V0.3：内化三关（反向提问/复述/变式）与「已内化」跃迁、沙箱真实判题、间隔复现队列
 - [ ] Vibe Coding训练场与提问能力训练
 - [ ] 本体扩展：知识点本体 → 错误模式本体 → 能力本体 → 学生数字孪生
