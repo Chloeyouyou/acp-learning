@@ -3,7 +3,7 @@
 from sqlalchemy.orm import Session
 
 from ..config import BASE_STEP, COLD_START_EVENTS, COLD_START_FACTOR, INITIAL_SCORE
-from ..models import CapabilityScore, Event, KnowledgeState
+from ..models import CapabilityScore, Event, ExecutionEvent, KnowledgeState
 from ..registry import CAPABILITY_REGISTRY
 
 
@@ -63,6 +63,8 @@ def get_profile(db: Session, student_id: str) -> dict:
                            "confidence": "low" if n < 5 else "normal"})
 
     states = db.query(KnowledgeState).filter_by(student_id=student_id).all()
+    mastery = knowledge_mastery(db, student_id)        # B0：知识点掌握度（纯画像）
+    practice = recommend_practice(db, student_id, mastery)  # B0：推荐（独立策略函数）
     return {
         "student_id": student_id,
         "dimensions": dimensions,
@@ -73,6 +75,8 @@ def get_profile(db: Session, student_id: str) -> dict:
              "variant": pick_variant(db, student_id, s.pattern_id) if s.state == "已内化" else None}
             for s in states
         ],
+        "knowledge_mastery": mastery,
+        "practice": practice,
     }
 
 
@@ -188,6 +192,102 @@ def transfer_source(db: Session, student_id: str, pattern_id: str) -> str | None
         except KeyError:
             continue
     return None
+
+
+def knowledge_mastery(db: Session, student_id: str) -> list[dict]:
+    """B0 派生视图（**只算画像/事实，不含推荐**，可替换的"计算器"）。
+    Mastery=学会没有；Confidence=证据是否充足（按 evidence_count，与 struggle 解耦）。
+    纯派生：读 knowledge_states + execution_events + 迁移事件，可重放，不存储掌握度。
+    """
+    from . import mine_engine
+
+    states = db.query(KnowledgeState).filter_by(student_id=student_id).all()
+    if not states:
+        return []
+    ex = db.query(ExecutionEvent).filter_by(student_id=student_id).all()
+
+    # 迁移已验证的知识点：来自 Internalization 的 transfer 事件，取变式题的知识点
+    transfer_kps: set[str] = set()
+    for e in db.query(Event).filter_by(student_id=student_id, capability="Internalization").all():
+        if (e.evidence or {}).get("type") == "transfer":
+            vp = ((e.evidence or {}).get("refs") or {}).get("variant_pattern")
+            try:
+                transfer_kps.update(mine_engine.get_pattern(vp).get("knowledge_points", []) if vp else [])
+            except KeyError:
+                pass
+
+    # kp -> 该生在含此 kp 的模式上的状态集合
+    kp_states: dict[str, set[str]] = {}
+    for s in states:
+        for kp in (s.knowledge_points or []):
+            kp_states.setdefault(kp, set()).add(s.state)
+
+    order = {"生疏": 0, "在学": 1, "掌握": 2, "熟练": 3}
+    out = []
+    for kp, st in kp_states.items():
+        # Mastery
+        if "已内化" in st and kp in transfer_kps:
+            mastery = "熟练"
+        elif "已内化" in st:
+            mastery = "掌握"
+        elif "已解决" in st:
+            mastery = "在学"
+        else:
+            mastery = "生疏"
+        # 证据 / struggle（来自观测层执行日志）
+        kp_ex = [e for e in ex if kp in (e.knowledge_points or [])]
+        evidence_count = len(kp_ex)
+        last_at = max((e.timestamp for e in kp_ex), default=None) \
+            or max((s.updated_at for s in states if kp in (s.knowledge_points or [])), default=None)
+        fails = sum(1 for e in kp_ex if e.source == "submit" and e.kind in ("RE", "WA", "HANG"))
+        # Confidence：证据充足度，绝不由失败决定
+        confidence = "高" if evidence_count > 10 else ("中" if evidence_count >= 3 else "低")
+        # weak / 理由
+        weak, reason = False, ""
+        if fails >= 2:
+            weak, reason = True, "提交多次失败，建议再练"
+        elif mastery == "生疏":
+            weak, reason = True, "还没真正解决过"
+        elif mastery == "在学":
+            weak, reason = True, "已解决，建议内化巩固"
+        out.append({"kp": kp, "mastery": mastery, "confidence": confidence,
+                    "evidence_count": evidence_count, "last_practiced_at": last_at,
+                    "weak": weak, "weak_reason": reason})
+    # 薄弱排前：掌握档位升序，再按证据少在前
+    out.sort(key=lambda x: (order[x["mastery"]], x["evidence_count"]))
+    return out
+
+
+def recommend_practice(db: Session, student_id: str, mastery_list: list[dict]) -> dict:
+    """B0 推荐策略（**独立、可替换**，与画像计算解耦）。规则版：给薄弱 kp 各挑一道
+    含该 kp 且未内化的题；并选一个「下一题推荐」。未来换知识图谱/数字孪生/RL 只改本函数。"""
+    from . import mine_engine
+
+    internalized = {
+        s.pattern_id for s in db.query(KnowledgeState)
+        .filter_by(student_id=student_id, state="已内化").all()
+    }
+    patterns = list(mine_engine.load_patterns().values())
+
+    def pick_for_kp(kp: str) -> dict | None:
+        for p in patterns:
+            if kp in (p.get("knowledge_points") or []) and p["id"] not in internalized:
+                return {"pattern_id": p["id"], "name": p["name"]}
+        return None
+
+    by_kp = {}
+    for m in mastery_list:
+        if m["weak"]:
+            pick = pick_for_kp(m["kp"])
+            if pick:
+                by_kp[m["kp"]] = pick
+    # 下一题 = 最薄弱（mastery_list 已排序）那个 kp 的练习
+    nxt = None
+    for m in mastery_list:
+        if m["weak"] and m["kp"] in by_kp:
+            nxt = {**by_kp[m["kp"]], "kp": m["kp"], "reason": m["weak_reason"]}
+            break
+    return {"next": nxt, "by_kp": by_kp}
 
 
 def get_capability_events(db: Session, student_id: str, capability: str) -> list[dict]:

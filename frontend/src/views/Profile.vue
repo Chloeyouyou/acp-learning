@@ -75,6 +75,15 @@ function fmtTime(ts) {
   return ts ? ts.slice(0, 19).replace('T', ' ') : ''
 }
 
+// B0 知识点掌握度：档位 → 4 格进度
+const MASTERY_LEVEL = { 生疏: 1, 在学: 2, 掌握: 3, 熟练: 4 }
+const mastery = computed(() => profile.value?.knowledge_mastery || [])
+const nextPractice = computed(() => profile.value?.practice?.next || null)
+function practiceKp(kp) {
+  const p = profile.value?.practice?.by_kp?.[kp]
+  if (p) router.push({ path: '/arena', query: { start: p.pattern_id } })
+}
+
 // 维度还没数据时，解释它测什么、怎么才会有分（避免空维度看起来像坏了）
 const DIM_HINT = {
   'AI协作能力': '衡量你「会不会用 AI」：审查 AI 给的代码、核对 AI 的说法对不对、把问题问清楚。在你和导师对话中主动质疑、验证它的说法时才会记录——目前还没有这类记录。',
@@ -159,6 +168,27 @@ const unevaluatedDims = computed(() =>
         </div>
       </div>
 
+      <div class="panel" v-if="mastery.length">
+        <div class="km-head">
+          <h3>知识点掌握度</h3>
+          <span v-if="nextPractice" class="km-next">
+            下一题推荐：{{ nextPractice.kp }}
+            <button class="km-next-btn" @click="practiceKp(nextPractice.kp)">去练 →</button>
+          </span>
+        </div>
+        <p class="note">掌握度 = 学会没有；稳定度 = 证据是否充足（练得越多越准）。薄弱的排在前面。</p>
+        <div v-for="m in mastery" :key="m.kp" class="km-row">
+          <span class="km-kp"><GlossaryText :text="m.kp" /></span>
+          <span class="km-dots" :title="m.mastery">
+            <i v-for="n in 4" :key="n" :class="['km-dot', { on: n <= MASTERY_LEVEL[m.mastery] }]" />
+          </span>
+          <span class="km-mastery" :class="m.mastery">{{ m.mastery }}</span>
+          <span class="km-conf">稳定度 {{ m.confidence }}</span>
+          <span v-if="m.weak" class="km-reason">⚠ {{ m.weak_reason }}</span>
+          <button v-if="m.weak && profile.practice.by_kp[m.kp]" class="km-go" @click="practiceKp(m.kp)">去练 →</button>
+        </div>
+      </div>
+
       <div class="panel">
         <h3>知识点状态</h3>
         <div v-if="!profile.knowledge_states.length" class="note">还没有挑战记录。</div>
@@ -210,6 +240,32 @@ h3 { margin-top: 0; font-size: 17px; }
 .ov-label { font-size: 14px; font-weight: 600; }
 .ov-sub { font-size: 12px; color: var(--muted); }
 .ov-empty { border-right: none; flex: 1; justify-content: center; min-width: 200px; padding-right: 0; }
+
+/* B0 知识点掌握度 */
+.km-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.km-next { font-size: 13px; color: var(--muted); }
+.km-next-btn, .km-go {
+  font-size: 12.5px; color: var(--primary); background: var(--accent-soft);
+  border: 1px solid var(--border); border-radius: 7px; padding: 2px 10px; white-space: nowrap;
+}
+.km-next-btn:hover, .km-go:hover { border-color: var(--primary); }
+.km-row {
+  display: flex; align-items: center; gap: 10px; padding: 9px 2px;
+  border-bottom: 1px solid var(--border); font-size: 13.5px; flex-wrap: wrap;
+}
+.km-row:last-child { border-bottom: none; }
+.km-kp { min-width: 96px; font-weight: 600; }
+.km-dots { display: inline-flex; gap: 3px; }
+.km-dot { width: 8px; height: 8px; border-radius: 50%; background: #e7e2d6; display: inline-block; }
+.km-dot.on { background: var(--primary); }
+.km-mastery { font-size: 12.5px; }
+.km-mastery.生疏 { color: var(--muted); }
+.km-mastery.在学 { color: var(--primary-dark); }
+.km-mastery.掌握 { color: var(--primary); }
+.km-mastery.熟练 { color: var(--green); font-weight: 600; }
+.km-conf { font-size: 12px; color: var(--muted); }
+.km-reason { font-size: 12px; color: #7a3f28; }
+.km-go { margin-left: auto; }
 
 .radar-panel { display: flex; flex-direction: column; align-items: center; }
 .radar-panel h3 { align-self: flex-start; }

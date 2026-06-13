@@ -50,6 +50,29 @@ class Event(Base):
     context: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class ExecutionEvent(Base):
+    """观测层事实日志（路线B/06v2/07）。学生每次 run/submit 真跑代码的结果，一行一条。
+
+    = Execution_Outcome 事件 + Debug Timeline（带时间戳）。是源数据、不是派生掌握度。
+    **铁律：append-only——只 INSERT，永不 UPDATE/DELETE；未来修正用追加 Correction Event。**
+    绝不影响 capability_scores（struggle 永不扣能力分）。
+    """
+
+    __tablename__ = "execution_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    version: Mapped[str] = mapped_column(String, default="v1")  # 事件格式版本，未来升级不迁表
+    student_id: Mapped[str] = mapped_column(String, index=True)
+    session_id: Mapped[str] = mapped_column(String, index=True)
+    pattern_id: Mapped[str] = mapped_column(String, index=True)
+    source: Mapped[str] = mapped_column(String)   # run / submit
+    kind: Mapped[str] = mapped_column(String)     # RE / WA / HANG / OK
+    error_family: Mapped[str | None] = mapped_column(String, nullable=True)  # IndexError/Timeout/WrongAnswer…
+    knowledge_points: Mapped[list] = mapped_column(JSON, default=list)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)  # 预留：ontology_tags/trace_snapshot_id/std*_summary
+    timestamp: Mapped[str] = mapped_column(String, default=now)
+
+
 class CapabilityScore(Base):
     """派生视图：能力向量（05文档 §2.2）。可由事件流重放重算。"""
 

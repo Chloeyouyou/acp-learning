@@ -1,11 +1,12 @@
 """能力事件引擎（04文档）。双生产者（rule / llm_judge）→ 校验 → append-only入库 → 画像聚合。"""
 
+import re
 import uuid
 
 from sqlalchemy.orm import Session
 
 from ..config import CONFIDENCE_THRESHOLD
-from ..models import Event, now
+from ..models import Event, ExecutionEvent, now
 from ..registry import CAPABILITY_REGISTRY, DELTA_MAX, DELTA_MIN, LLM_ALLOWED_CAPABILITIES
 from . import profile
 
@@ -59,6 +60,47 @@ def emit(
         profile.apply_event(db, event)
     db.commit()
     return event
+
+
+# ---- 观测层：执行事实日志（路线B/B0）。append-only，绝不影响 capability_scores ----
+
+# 从真实 stderr 末行解析异常类名（IndexError/TypeError/KeyError…）；非异常类的归一处理
+def _error_family(kind: str, stderr: str) -> str | None:
+    if kind == "HANG":
+        return "Timeout"
+    if kind == "WA":
+        return "WrongAnswer"
+    if kind == "OK":
+        return None
+    # RE：从 traceback 抓最后一行的异常类型，如 "IndexError: list index out of range"
+    for line in reversed((stderr or "").strip().splitlines()):
+        m = re.match(r"^([A-Za-z_][\w.]*Error|[A-Za-z_]\w*(?:Exception|Warning))\b", line.strip())
+        if m:
+            return m.group(1).split(".")[-1]
+    return "RuntimeError"
+
+
+def log_execution(db: Session, *, student_id: str, session_id: str, pattern_id: str,
+                  source: str, kind: str, stderr: str = "", knowledge_points: list | None = None):
+    """记一条执行事实（run/submit 的真跑结果）。只 INSERT，不碰 capability_scores。"""
+    ev = ExecutionEvent(
+        id=f"ex_{uuid.uuid4().hex[:16]}",
+        version="v1",
+        student_id=student_id,
+        session_id=session_id,
+        pattern_id=pattern_id,
+        source=source,
+        kind=kind,
+        error_family=_error_family(kind, stderr),
+        knowledge_points=knowledge_points or [],
+        # meta 预留默认形状，B0 不填充
+        meta={"ontology_tags": [], "trace_snapshot_id": None,
+              "stderr_summary": None, "stdout_summary": None},
+        timestamp=now(),
+    )
+    db.add(ev)
+    db.commit()
+    return ev
 
 
 # ---- 规则事件生产器（04文档 §2.1：确定性事件，不经过LLM）----

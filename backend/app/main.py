@@ -127,8 +127,14 @@ def get_session(session_id: str, db: Session = Depends(get_db)):
 @app.post("/api/sessions/{session_id}/run")
 def run_code_endpoint(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
     """运行按钮：真跑一遍学生当前代码，返回真实输出/报错。纯观察，不判分、不改阶段。"""
-    _get_session(db, session_id)  # 仅校验会话存在
+    session = _get_session(db, session_id)
     r = sandbox.run_code(req.code)
+    # 观测层：记一条执行事实（Debug Timeline）。run 无期望对比，kind 仅 RE/HANG/OK
+    kind = "HANG" if r.timed_out else ("RE" if r.has_error else "OK")
+    event_engine.log_execution(
+        db, student_id=session.student_id, session_id=session.id,
+        pattern_id=session.pattern_id, source="run", kind=kind, stderr=r.stderr,
+        knowledge_points=mine_engine.get_pattern(session.pattern_id).get("knowledge_points", []))
     return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out}
 
 
@@ -152,6 +158,13 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
         return {"passed": True, "stage": session.stage, "message": "修复已通过，无需重复提交。"}
 
     result = mine_engine.judge_fix(session.pattern_id, req.code)
+    # 观测层：记一条提交执行事实（Debug Timeline + Execution_Outcome），通过/失败都记
+    kind_map = {"ok": "OK", "RE": "RE", "WA": "WA", "HANG": "HANG"}
+    event_engine.log_execution(
+        db, student_id=session.student_id, session_id=session.id,
+        pattern_id=session.pattern_id, source="submit",
+        kind=kind_map.get(result["kind"], result["kind"]), stderr=result.get("stderr", ""),
+        knowledge_points=mine.get("knowledge_points", []))
     if not result["passed"]:
         diagnosis = tutor.judge_feedback(result)  # 真实运行结果（报错/输出差异/超时），非正则猜测
         fail_msg = (f"{tutor.FIX_FAILED_PREFIX}\n我提交的代码：\n{req.code}\n\n[真实运行结果] {diagnosis}")
