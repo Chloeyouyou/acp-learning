@@ -3,6 +3,7 @@ import { onMounted, reactive, ref, computed, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import GlossaryText from '../components/GlossaryText.vue'
+import { GLOSSARY } from '../glossary'
 
 const route = useRoute()
 const router = useRouter()
@@ -43,11 +44,24 @@ const recs = ref([])             // 个性化推荐（后端按能力画像生�
 const recsLoading = ref(false)
 const openCats = reactive({})    // 自己挑选模式：哪些分组已展开（默认只开第一组）
 const session = reactive({
-  id: null, code: '', task: '', stage: '①发现', hintLevel: 'L0',
+  id: null, patternId: null, code: '', task: '', stage: '①发现', hintLevel: 'L0',
   fixed: false,      // 代码已通过测试（进入⑤验证），但本关尚未结束
   done: false,       // ⑥内化判定通过，本关结束
   internalizeQuestions: [],
   variant: null,     // 内化通过后推荐的变式题（迁移检验）
+})
+const masteredKps = ref(new Set())   // 学生已内化的知识点（练前小灶用来标「已掌握」）
+const showPrimer = ref(true)         // 练前小灶是否展开
+
+// 练前小灶：这道题涉及的概念，用大白话先补一补；已掌握的标出来，只重点补没学过的
+const primerConcepts = computed(() => {
+  const p = patterns.value.find((x) => x.id === session.patternId)
+  if (!p || !p.knowledge_points) return []
+  return p.knowledge_points.map((kp) => ({
+    kp,
+    desc: GLOSSARY[kp] || GLOSSARY[kp.toLowerCase()] || '',
+    mastered: masteredKps.value.has(kp),
+  }))
 })
 function toggleCat(c) { openCats[c] = !openCats[c] }
 const messages = ref([]) // {role: 'student'|'tutor'|'system', text}
@@ -65,6 +79,7 @@ onMounted(async () => {
     error.value = '无法连接后端：' + e.message
   }
   loadRecs()
+  loadMastered()
   // 从能力画像「做变式巩固」跳来：自动开始指定关卡（优先于续做）
   if (route.query.start) {
     const pid = String(route.query.start)
@@ -79,6 +94,7 @@ onMounted(async () => {
       const d = await api.getSession(saved)
       if (d.status === 'active') {
         session.id = d.session_id
+        session.patternId = d.pattern_id
         session.code = d.code
         session.stage = d.stage
         session.hintLevel = d.hint_level
@@ -108,11 +124,24 @@ async function loadRecs() {
   }
 }
 
+async function loadMastered() {
+  try {
+    const prof = await api.getProfile()
+    const set = new Set()
+    for (const s of prof.knowledge_states || []) {
+      if (s.state === '已内化') (s.knowledge_points || []).forEach((k) => set.add(k))
+    }
+    masteredKps.value = set
+  } catch (e) { /* 拿不到就当都没掌握，照常显示 */ }
+}
+
 async function start(patternId) {
   error.value = ''
   try {
     const data = await api.createSession(patternId)
     session.id = data.session_id
+    session.patternId = patternId
+    showPrimer.value = true   // 新关卡默认展开练前小灶
     localStorage.setItem('active_session', data.session_id)  // 记下当前关卡，供刷新后续做
     session.code = data.code
     session.task = data.task
@@ -269,6 +298,25 @@ function quit() {
       <div class="stage-meta">
         <span class="hint-level">提示级别 <b>{{ session.hintLevel }}</b></span>
         <button @click="quit">退出关卡</button>
+      </div>
+    </div>
+
+    <!-- 练前小灶：这道题用到的概念，看不懂代码先补一补（个性化：已掌握的标出来） -->
+    <div v-if="primerConcepts.length" class="primer panel">
+      <button class="primer-head" @click="showPrimer = !showPrimer">
+        <span class="primer-caret" :class="{ open: showPrimer }">▸</span>
+        💡 <b>练前小灶</b> · 这道题会用到这些概念，看不懂代码先花一分钟补一补
+      </button>
+      <div v-show="showPrimer" class="primer-body">
+        <div v-for="c in primerConcepts" :key="c.kp" class="primer-item">
+          <div class="primer-term">
+            {{ c.kp }}
+            <span v-if="c.mastered" class="primer-tag done">✓ 你已掌握</span>
+            <span v-else class="primer-tag new">新概念</span>
+          </div>
+          <div class="primer-desc">{{ c.desc || '（这个概念暂时没有简介，遇到不懂的随时问导师）' }}</div>
+        </div>
+        <p class="primer-foot">做题时，对话里带虚线的词也能悬停看解释。准备好了就直接和导师开始吧 👇</p>
       </div>
     </div>
 
@@ -449,6 +497,25 @@ function quit() {
 .stage-meta { display: flex; align-items: center; gap: 16px; }
 .hint-level { font-size: 13px; color: var(--muted); }
 .hint-level b { color: var(--text); }
+
+/* ---------- 练前小灶 ---------- */
+.primer { padding: 0; overflow: hidden; }
+.primer-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: var(--accent-soft); border: none; padding: 14px 20px; cursor: pointer;
+  font-size: 14.5px; color: var(--text); border-radius: 14px 14px 0 0;
+}
+.primer-head b { font-weight: 600; }
+.primer-caret { color: var(--primary); font-size: 12px; transition: transform 0.18s; }
+.primer-caret.open { transform: rotate(90deg); }
+.primer-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+.primer-item { display: flex; flex-direction: column; gap: 3px; }
+.primer-term { font-family: var(--serif); font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 9px; }
+.primer-tag { font-size: 11.5px; font-weight: 500; padding: 1px 8px; border-radius: 999px; font-family: 'Segoe UI', sans-serif; }
+.primer-tag.done { background: #e4ede0; color: #3f5837; }
+.primer-tag.new { background: var(--accent-soft); color: var(--primary-dark); }
+.primer-desc { font-size: 13.5px; color: var(--muted); line-height: 1.65; }
+.primer-foot { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
 
 /* ---------- 双栏 ---------- */
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
