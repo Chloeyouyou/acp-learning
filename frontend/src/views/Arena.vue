@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref, computed, nextTick } from 'vue'
+import { onMounted, reactive, ref, computed, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import GlossaryText from '../components/GlossaryText.vue'
@@ -57,6 +57,8 @@ const walkthrough = ref('')          // 逐行讲解文本（点按钮自动生�
 const walkLoading = ref(false)
 const running = ref(false)           // 运行按钮状态
 const runResult = ref(null)          // {stdout, stderr, timed_out}
+// 代码一改，旧的运行结果就作废——否则会出现"删了代码却还显示上次成功输出"的错觉
+watch(() => session.code, () => { runResult.value = null })
 
 async function runCurrentCode() {
   if (running.value || !session.id) return
@@ -255,6 +257,9 @@ async function send() {
 async function submit() {
   if (submitting.value) return
   submitting.value = true
+  // 先显示"你提交了一次"这个动作——否则提交失败时只剩导师回复，连提两次会像导师自言自语
+  messages.value.push({ role: 'student', text: '📤 我提交了一版修复' })
+  scrollChat()
   try {
     const d = await api.submitFix(session.id, session.code)
     if (d.stage) session.stage = d.stage

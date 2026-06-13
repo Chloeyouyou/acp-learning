@@ -109,6 +109,10 @@ def get_session(session_id: str, db: Session = Depends(get_db)):
             continue
         if m["role"] == "assistant" and any(s in m["content"] for s in stale):
             continue
+        # 提交失败回流的整段代码，恢复时收成简短动作标记（与训练场内一致，避免大段代码刷屏）
+        if m["role"] == "user" and m["content"].startswith(tutor.FIX_FAILED_PREFIX):
+            messages.append({"role": "student", "text": "📤 我提交了一版修复"})
+            continue
         messages.append({"role": role_map.get(m["role"], "system"), "text": m["content"]})
     return {
         "session_id": session.id,
