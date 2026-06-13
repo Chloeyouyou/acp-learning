@@ -471,37 +471,43 @@ def _call_llm(system: str, history: list[dict]) -> TutorTurn:
     raise RuntimeError(f"导师输出格式校验失败: {last_err}")
 
 
-# 逐行讲解：把一道题的代码用大白话讲给零基础，故意不点破 bug（留给学生发现）。按 pattern 缓存。
+# 逐行讲解：把一道题的代码用大白话讲给零基础，故意不点破 bug（留给学生发现）。按 pattern+档位 缓存。
 _WALKTHROUGH_CACHE: dict[str, str] = {}
 
-WALKTHROUGH_SYSTEM = """你是编程启蒙老师，面对一个完全没学过编程的初学者。
+WALKTHROUGH_SYSTEM = """你是编程启蒙老师，面对一个完全没学过编程的初学者（连函数、括号都没见过）。
 把下面这段代码逐行用最朴素的大白话讲一遍，让他能读懂"每行在做什么"。
 要求：
-- 一行代码配一句解释，按从上到下的顺序；中文，必要时打个生活化的小比方。
+- 严格一行代码配一条解释，按从上到下顺序，不要漏行、不要合并行。
+- 中文、口语化；把这行里出现的每个名字/符号都顺带点一下是什么，必要时打个生活化小比方。
 - 只讲每行"字面在做什么"。绝对不要评价对错、不要指出哪里有 bug、不要说"这里多了/少了/有问题/应该改成"——找问题是学生自己的任务，剧透就毁了练习。
-- 不要任何前言后语或总结。
-输出格式：每行一条，写成「<代码原文> —— <大白话解释>」。"""
+- 不要任何前言、后语或总结。
+输出格式：每行一条，严格写成「<代码原文> —— <大白话解释>」，代码原文和解释之间用「 —— 」隔开。"""
+
+WALKTHROUGH_DEEP = """
+这个学生基础特别弱，请讲得更细：每行可以用 2~3 句话，把这行里出现的每一个词、每一个符号都掰开解释一遍，多用身边的小例子和比方，假设他什么都不懂。仍然不要剧透 bug。"""
 
 
-def explain_code(pattern_id: str) -> str:
-    """LLM 逐行讲解某题代码（大白话、不剧透 bug），结果按 pattern 缓存。"""
-    if pattern_id in _WALKTHROUGH_CACHE:
-        return _WALKTHROUGH_CACHE[pattern_id]
+def explain_code(pattern_id: str, deep: bool = False) -> str:
+    """LLM 逐行讲解某题代码（大白话、不剧透 bug）。deep=更详细。按 pattern+档位 缓存。"""
+    key = f"{pattern_id}:{'deep' if deep else 'std'}"
+    if key in _WALKTHROUGH_CACHE:
+        return _WALKTHROUGH_CACHE[key]
     code = mine_engine.get_pattern(pattern_id)["buggy_code"]
+    system = WALKTHROUGH_SYSTEM + (WALKTHROUGH_DEEP if deep else "")
     try:
         resp = client.chat.completions.create(
             model=TUTOR_MODEL,
-            messages=[{"role": "system", "content": WALKTHROUGH_SYSTEM},
+            messages=[{"role": "system", "content": system},
                       {"role": "user", "content": code}],
             temperature=0.2,
-            max_tokens=1200,
+            max_tokens=2000 if deep else 1200,
         )
         text = (resp.choices[0].message.content or "").strip()
     except Exception:
         text = ""
     if not text:
         text = "暂时讲不了这段代码（导师有点忙），你可以把看不懂的那一行直接发给导师问。"
-    _WALKTHROUGH_CACHE[pattern_id] = text
+    _WALKTHROUGH_CACHE[key] = text
     return text
 
 

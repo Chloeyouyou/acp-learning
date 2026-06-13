@@ -31,7 +31,8 @@ export const api = {
   submitFix: (sessionId, code) =>
     request('POST', `/sessions/${sessionId}/submit`, { code }),
   getSession: (sessionId) => request('GET', `/sessions/${sessionId}`),
-  getWalkthrough: (patternId) => request('GET', `/patterns/${patternId}/walkthrough`),
+  getWalkthrough: (patternId, deep = false) =>
+    request('GET', `/patterns/${patternId}/walkthrough${deep ? '?deep=true' : ''}`),
   getProfile: () => request('GET', `/students/${getStudentId()}/profile`),
   getRecommendations: () => request('GET', `/students/${getStudentId()}/recommendations`),
   getCapabilityEvents: (capability) =>

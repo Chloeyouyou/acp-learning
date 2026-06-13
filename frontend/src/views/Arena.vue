@@ -55,13 +55,41 @@ const showPrimer = ref(true)         // 练前小灶是否展开
 const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否展开（默认收起，需要的人点开）
 const walkthrough = ref('')          // 逐行讲解文本（点按钮自动生成）
 const walkLoading = ref(false)
+const walkDeep = ref(false)          // 是否已是「更详细」档
+// 已掌握的语法符号（用户点「懂了」后记住，以后不再展示，列表越用越短）
+const learnedBricks = ref(new Set(JSON.parse(localStorage.getItem('learned_bricks') || '[]')))
 
-async function loadWalkthrough() {
-  if (walkthrough.value || walkLoading.value || !session.patternId) return
+// 把「代码 —— 解释」文本解析成一行行，渲染成和代码一一对应的样子
+const walkRows = computed(() => {
+  if (!walkthrough.value) return []
+  return walkthrough.value.split('\n').map((l) => l.trim()).filter(Boolean).map((line) => {
+    const i = line.indexOf('——')
+    if (i === -1) return { code: '', explain: line }
+    return { code: line.slice(0, i).replace(/—+$/, '').trim(), explain: line.slice(i + 2).trim() }
+  })
+})
+
+// 过滤掉用户已标「懂了」的符号
+const visibleBricks = computed(() => syntaxBricks.value.filter((b) => !learnedBricks.value.has(b.name)))
+const hiddenBrickCount = computed(() => syntaxBricks.value.length - visibleBricks.value.length)
+
+function markBrickLearned(name) {
+  learnedBricks.value.add(name)
+  localStorage.setItem('learned_bricks', JSON.stringify([...learnedBricks.value]))
+}
+function resetLearnedBricks() {
+  learnedBricks.value = new Set()
+  localStorage.removeItem('learned_bricks')
+}
+
+async function loadWalkthrough(deep = false) {
+  if (walkLoading.value || !session.patternId) return
+  if (!deep && walkthrough.value) return        // 标准档已加载过就不重复
   walkLoading.value = true
   try {
-    const d = await api.getWalkthrough(session.patternId)
+    const d = await api.getWalkthrough(session.patternId, deep)
     walkthrough.value = d.walkthrough || ''
+    walkDeep.value = deep
   } catch (e) {
     walkthrough.value = '讲解生成失败，可以把看不懂的那一行直接发给导师问。'
   } finally {
@@ -162,6 +190,7 @@ async function start(patternId) {
     session.patternId = patternId
     showPrimer.value = true   // 新关卡默认展开练前小灶
     walkthrough.value = ''    // 清掉上一题的逐行讲解
+    walkDeep.value = false
     localStorage.setItem('active_session', data.session_id)  // 记下当前关卡，供刷新后续做
     session.code = data.code
     session.task = data.task
@@ -328,26 +357,48 @@ function quit() {
         💡 <b>练前小灶</b> · 这道题会用到这些概念，看不懂代码先花一分钟补一补
       </button>
       <div v-show="showPrimer" class="primer-body">
-        <!-- 代码符号扫盲：完全没见过代码的人先认认这些符号 -->
-        <div v-if="syntaxBricks.length" class="syntax-box">
+        <!-- 代码符号扫盲：完全没见过代码的人先认认这些符号；标「懂了」的不再出现 -->
+        <div v-if="visibleBricks.length" class="syntax-box">
           <button class="syntax-head" @click="showSyntax = !showSyntax">
             <span class="primer-caret" :class="{ open: showSyntax }">▸</span>
-            🔤 完全没接触过代码？先认认这道题里的符号（{{ syntaxBricks.length }} 个）
+            🔤 完全没接触过代码？先认认这道题里的符号（{{ visibleBricks.length }} 个）
           </button>
           <div v-show="showSyntax" class="syntax-list">
-            <div v-for="b in syntaxBricks" :key="b.name" class="syntax-item">
-              <span class="syntax-name">{{ b.name }}</span>
+            <div v-for="b in visibleBricks" :key="b.name" class="syntax-item">
+              <div class="syntax-row">
+                <span class="syntax-name">{{ b.name }}</span>
+                <button class="brick-known" title="标记懂了，以后不再显示" @click="markBrickLearned(b.name)">✓ 懂了</button>
+              </div>
               <span class="syntax-desc">{{ b.desc }}</span>
             </div>
+            <p v-if="hiddenBrickCount" class="brick-hidden">
+              已隐藏 {{ hiddenBrickCount }} 个你标记懂了的符号 ·
+              <button class="brick-reset" @click="resetLearnedBricks">全部恢复显示</button>
+            </p>
           </div>
         </div>
-        <!-- 逐行讲解：AI 把这段代码翻译成大白话（不剧透 bug） -->
+        <p v-else-if="hiddenBrickCount" class="brick-hidden">
+          这道题的符号你都标记懂了 👍 ·
+          <button class="brick-reset" @click="resetLearnedBricks">恢复显示</button>
+        </p>
+        <!-- 逐行讲解：AI 把代码翻译成大白话，和代码一行一行对应（不剧透 bug） -->
         <div class="walk-box">
-          <button v-if="!walkthrough && !walkLoading" class="walk-btn" @click="loadWalkthrough">
+          <button v-if="!walkthrough && !walkLoading" class="walk-btn" @click="loadWalkthrough(false)">
             📖 还是看不懂这段代码？让导师逐行讲给我听
           </button>
           <div v-else-if="walkLoading" class="walk-loading">导师正在逐行讲解…</div>
-          <div v-else class="walk-text">{{ walkthrough }}</div>
+          <template v-else>
+            <div class="walk-rows">
+              <div v-for="(r, i) in walkRows" :key="i" class="walk-row">
+                <code v-if="r.code" class="walk-code">{{ r.code }}</code>
+                <div class="walk-exp">{{ r.explain }}</div>
+              </div>
+            </div>
+            <button v-if="!walkDeep" class="walk-deep" @click="loadWalkthrough(true)">
+              还不够懂？再讲细一点 →
+            </button>
+            <div v-else class="walk-deep-done">已是最详细的讲法 · 还不懂就把那一行发给导师问</div>
+          </template>
         </div>
         <div class="primer-sub">这道题涉及的概念：</div>
         <div v-for="c in primerConcepts" :key="c.kp" class="primer-item">
@@ -569,10 +620,18 @@ function quit() {
 }
 .syntax-list { padding: 6px 14px 12px; display: flex; flex-direction: column; gap: 9px; }
 .syntax-item { display: flex; flex-direction: column; gap: 2px; }
+.syntax-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .syntax-name {
   font-family: Consolas, monospace; font-size: 13px; font-weight: 700; color: var(--primary-dark);
 }
 .syntax-desc { font-size: 13px; color: var(--muted); line-height: 1.6; }
+.brick-known {
+  flex-shrink: 0; font-size: 11.5px; color: var(--muted); border: 1px solid var(--border);
+  background: none; padding: 1px 8px; border-radius: 999px;
+}
+.brick-known:hover { border-color: var(--green); color: var(--green); }
+.brick-hidden { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+.brick-reset { font-size: 12px; color: var(--primary); background: none; border: none; padding: 0; cursor: pointer; }
 
 /* 逐行讲解 */
 .walk-btn {
@@ -582,10 +641,24 @@ function quit() {
 }
 .walk-btn:hover { color: var(--primary); }
 .walk-loading { font-size: 13px; color: var(--muted); padding: 8px 2px; }
-.walk-text {
-  font-size: 13.5px; color: var(--text); line-height: 1.85; white-space: pre-wrap;
-  background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+.walk-rows { display: flex; flex-direction: column; gap: 2px; }
+.walk-row {
+  display: grid; grid-template-columns: 1fr; gap: 2px;
+  padding: 9px 0; border-bottom: 1px dashed var(--border);
 }
+.walk-row:last-child { border-bottom: none; }
+.walk-code {
+  font-family: Consolas, monospace; font-size: 13px; color: var(--code-text);
+  background: var(--code-bg); border-radius: 6px; padding: 5px 9px; white-space: pre-wrap;
+  align-self: start; justify-self: start; max-width: 100%;
+}
+.walk-exp { font-size: 13.5px; color: var(--text); line-height: 1.7; padding-left: 2px; }
+.walk-deep {
+  margin-top: 10px; font-size: 13px; color: var(--primary); background: none;
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+}
+.walk-deep:hover { border-color: var(--primary); }
+.walk-deep-done { margin-top: 10px; font-size: 12px; color: var(--muted); }
 
 /* ---------- 双栏 ---------- */
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }

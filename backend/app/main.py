@@ -214,11 +214,12 @@ def get_recommendations(student_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/api/patterns/{pattern_id}/walkthrough")
-def code_walkthrough(pattern_id: str):
-    """逐行讲解该题代码（大白话、不剧透 bug），给零基础读懂代码用。"""
+def code_walkthrough(pattern_id: str, deep: bool = False):
+    """逐行讲解该题代码（大白话、不剧透 bug），给零基础读懂代码用。deep=讲更细。"""
     if pattern_id not in mine_engine.load_patterns():
         raise HTTPException(404, "pattern not found")
-    return {"pattern_id": pattern_id, "walkthrough": tutor.explain_code(pattern_id)}
+    return {"pattern_id": pattern_id, "deep": deep,
+            "walkthrough": tutor.explain_code(pattern_id, deep=deep)}
 
 
 @app.get("/api/patterns")
