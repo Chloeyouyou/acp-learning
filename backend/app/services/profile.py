@@ -68,7 +68,9 @@ def get_profile(db: Session, student_id: str) -> dict:
         "dimensions": dimensions,
         "vector": vector,
         "knowledge_states": [
-            {"pattern_id": s.pattern_id, "knowledge_points": s.knowledge_points, "state": s.state}
+            {"pattern_id": s.pattern_id, "knowledge_points": s.knowledge_points, "state": s.state,
+             # 已内化的知识点：若还有未内化的同类变式，挂上来供画像页「做变式巩固」
+             "variant": pick_variant(db, student_id, s.pattern_id) if s.state == "已内化" else None}
             for s in states
         ],
     }

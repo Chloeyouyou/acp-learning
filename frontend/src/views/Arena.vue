@@ -1,7 +1,11 @@
 <script setup>
 import { onMounted, reactive, ref, computed, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import GlossaryText from '../components/GlossaryText.vue'
+
+const route = useRoute()
+const router = useRouter()
 
 const STAGES = ['①发现', '②定位', '③归因', '④修复', '⑤验证', '⑥内化']
 
@@ -61,6 +65,12 @@ onMounted(async () => {
     error.value = '无法连接后端：' + e.message
   }
   loadRecs()
+  // 从能力画像「做变式巩固」跳来：自动开始指定关卡
+  if (route.query.start) {
+    const pid = String(route.query.start)
+    router.replace({ query: {} })  // 清掉 query，避免刷新重复触发
+    start(pid)
+  }
 })
 
 async function loadRecs() {

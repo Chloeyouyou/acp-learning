@@ -1,8 +1,14 @@
 <script setup>
 import { onMounted, ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '../api'
 import RadarChart from '../components/RadarChart.vue'
 import GlossaryText from '../components/GlossaryText.vue'
+
+const router = useRouter()
+function practiceVariant(pid) {
+  router.push({ path: '/arena', query: { start: pid } })
+}
 
 const ZH = {
   Log_Reading: '日志阅读', Boundary_Awareness: '边界意识', Root_Cause_Reasoning: '根因分析',
@@ -147,7 +153,7 @@ function fmtTime(ts) {
         <div v-if="!profile.knowledge_states.length" class="note">还没有挑战记录。</div>
         <table v-else class="ks-table">
           <thead>
-            <tr><th>挑战过的题</th><th>涉及知识点</th><th>状态</th></tr>
+            <tr><th>挑战过的题</th><th>涉及知识点</th><th>状态</th><th></th></tr>
           </thead>
           <tbody>
             <tr v-for="s in profile.knowledge_states" :key="s.pattern_id">
@@ -158,6 +164,11 @@ function fmtTime(ts) {
                 </span>
               </td>
               <td><span :class="['state', s.state]">{{ s.state }}</span></td>
+              <td>
+                <button v-if="s.variant" class="variant-link"
+                        :title="'做变式：' + s.variant.name"
+                        @click="practiceVariant(s.variant.id)">做变式巩固 →</button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -237,4 +248,9 @@ h3 { margin-top: 0; font-size: 17px; }
 .state.已接触 { background: #f3ecd6; color: #87651f; }
 .state.已解决 { background: var(--accent-soft); color: var(--primary-dark); }
 .state.已内化 { background: #e4ede0; color: #3f5837; }
+.variant-link {
+  font-size: 12.5px; padding: 4px 10px; border-radius: 7px; white-space: nowrap;
+  border: 1px solid var(--border); background: var(--accent-soft); color: var(--primary-dark);
+}
+.variant-link:hover { border-color: var(--primary); color: var(--primary); }
 </style>
