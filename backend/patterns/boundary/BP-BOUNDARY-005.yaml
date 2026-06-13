@@ -14,7 +14,7 @@ buggy_code: |
       while left < right:
           mid = (left + right) // 2
           if arr[mid] < target:
-              left = mid        # 收缩时没有排除mid本身
+              left = mid
           else:
               right = mid
       return left if arr[left] == target else -1

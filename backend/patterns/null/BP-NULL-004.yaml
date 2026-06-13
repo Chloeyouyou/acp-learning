@@ -12,18 +12,18 @@ symptom_sample: |
 buggy_code: |
   class UserService:
       def __init__(self, repo=None):
-          self.repo = repo     # 第3行：repo可能是None，但这里不会报错
+          self.repo = repo
 
       def login(self, username):
-          user = self.repo.get(username)   # 第6行：首次使用时才崩
+          user = self.repo.get(username)
           if user is None:
               return "用户不存在"
           return f"欢迎, {user['name']}"
 
   # ……项目里很多其他代码……
 
-  service = UserService()       # 第13行：忘了传repo
-  print(service.login("小明"))  # 第14行：报错指向login内部
+  service = UserService()
+  print(service.login("小明"))
 mine_location:
   file: main.py
   line: 13
