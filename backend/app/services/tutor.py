@@ -534,7 +534,21 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
         system += SUPPORT_LAYER_TEMPLATE.format(
             analogy=ANALOGY_HINTS.get(category, DEFAULT_ANALOGY), floor_note=floor)
 
-    turn = _call_llm(system, history)
+    try:
+        turn = _call_llm(system, history)
+    except RuntimeError:
+        # LLM 偶发返回坏 JSON（截断/空白）→ 优雅降级：温和兜底一句，状态全部不变，
+        # 对话与本轮发言不丢，绝不让模型抽风把整局拖崩
+        turn = TutorTurn(
+            reply="抱歉，我刚刚走神了一下，没接住你这句。能麻烦你再说一遍，或者换个说法吗？",
+            stage_transition=None,
+            hint_level_used=session.hint_level,
+            student_progressed=True,  # 非学生之过，不累加无进展轮数
+            answer_begging=False,
+            attribution_step=session.attribution_step or None,
+            internalization=None,
+            events=[],
+        )
 
     mine = session.manifest["mines"][0]
 
