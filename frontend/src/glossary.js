@@ -42,6 +42,47 @@ export const GLOSSARY = {
   API契约: '一个函数/接口承诺的输入输出规则，双方都要遵守。',
 }
 
+// 语法砖块：比知识点更底层的"代码符号"，给完全没见过代码的人扫盲。
+// match：用来判断这段代码里有没有出现这个砖块（出现才展示，做到「贴着本题代码」）。
+export const SYNTAX_BRICKS = [
+  { name: 'def（定义函数）', match: (c) => /\bdef\b/.test(c),
+    desc: '定义一段可以反复使用的代码，并给它起个名字。例：def total(arr): 就是定义一个叫 total 的函数。' },
+  { name: '( ) 圆括号', match: (c) => c.includes('('),
+    desc: '跟在函数名后面，里面放这个函数要处理的东西（叫"参数"）。例：total(arr) 里的 arr。' },
+  { name: ': 冒号', match: (c) => /:/.test(c),
+    desc: '意思是"下面缩进的这几行，归我管"。def、for、while、if 后面都要跟一个冒号。' },
+  { name: '缩进（行首空格）', match: (c) => /\n[ \t]+\S/.test(c),
+    desc: 'Python 靠每行开头的空格分清层次——缩进对齐的几行，属于它们上面那一行。' },
+  { name: '= 赋值', match: (c) => /[^=!<>]=[^=]/.test(c),
+    desc: '把右边的值存进左边的名字里。例：s = 0 让 s 这个名字代表 0。（注意：这不是数学的"相等"）' },
+  { name: 'return（返回结果）', match: (c) => /\breturn\b/.test(c),
+    desc: '把函数算好的结果"交出去"。没有 return，函数就等于没给结果（返回 None）。' },
+  { name: 'for … in range(…)（循环）', match: (c) => /\bfor\b/.test(c),
+    desc: '重复执行一段代码若干次。range(3) 会让它跑 3 次，每次的编号是 0、1、2。' },
+  { name: 'while 条件（循环）', match: (c) => /\bwhile\b/.test(c),
+    desc: '只要条件还成立，就一直重复，直到条件不成立才停。' },
+  { name: 'if 条件（判断）', match: (c) => /\bif\b/.test(c),
+    desc: '如果条件成立，就执行下面缩进的代码；不成立就跳过。' },
+  { name: '[ ] 方括号 / 下标', match: (c) => c.includes('['),
+    desc: '方括号是"列表"（一串东西）；arr[0] 表示取列表里第 0 个（也就是第一个）。' },
+  { name: '.append( )（往列表加东西）', match: (c) => c.includes('.append'),
+    desc: '往列表的末尾加一个新元素。例：arr.append(5) 把 5 加到 arr 后面。' },
+  { name: 'print( )（打印）', match: (c) => /\bprint\(/.test(c),
+    desc: '把括号里的东西显示出来，方便你看到程序算出了什么。' },
+  { name: '# 注释', match: (c) => /#/.test(c),
+    desc: '井号后面是写给人看的说明，程序会自动忽略它，不影响运行。' },
+  { name: 'None（空值）', match: (c) => /\bNone\b/.test(c),
+    desc: '表示"什么都没有/空"。在 None 上调用方法或取属性会报错。' },
+  { name: 'class（类）', match: (c) => /\bclass\b/.test(c),
+    desc: '定义一种"对象的模板"，里面可以装数据和函数。例：class Student: 定义"学生"这种对象。' },
+]
+
+// 返回这段代码里实际出现的语法砖块（只讲它用到的，不堆砌）
+export function bricksInCode(code) {
+  if (!code) return []
+  return SYNTAX_BRICKS.filter((b) => b.match(code))
+}
+
 // 把一段文本里命中的术语包成 <span class="term">，返回 [{text, term?}] 片段列表。
 // 只匹配整词边界附近的术语，长词优先，避免“range”误伤“orange”等。
 export function annotate(text) {

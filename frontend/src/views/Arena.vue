@@ -3,7 +3,7 @@ import { onMounted, reactive, ref, computed, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import GlossaryText from '../components/GlossaryText.vue'
-import { GLOSSARY } from '../glossary'
+import { GLOSSARY, bricksInCode } from '../glossary'
 
 const route = useRoute()
 const router = useRouter()
@@ -52,6 +52,10 @@ const session = reactive({
 })
 const masteredKps = ref(new Set())   // 学生已内化的知识点（练前小灶用来标「已掌握」）
 const showPrimer = ref(true)         // 练前小灶是否展开
+const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否展开（默认收起，需要的人点开）
+
+// 「代码怎么读」：这道题代码里实际出现的语法符号，给完全没见过代码的人扫盲
+const syntaxBricks = computed(() => bricksInCode(session.code))
 
 // 练前小灶：这道题涉及的概念，用大白话先补一补；已掌握的标出来，只重点补没学过的
 const primerConcepts = computed(() => {
@@ -308,6 +312,20 @@ function quit() {
         💡 <b>练前小灶</b> · 这道题会用到这些概念，看不懂代码先花一分钟补一补
       </button>
       <div v-show="showPrimer" class="primer-body">
+        <!-- 代码符号扫盲：完全没见过代码的人先认认这些符号 -->
+        <div v-if="syntaxBricks.length" class="syntax-box">
+          <button class="syntax-head" @click="showSyntax = !showSyntax">
+            <span class="primer-caret" :class="{ open: showSyntax }">▸</span>
+            🔤 完全没接触过代码？先认认这道题里的符号（{{ syntaxBricks.length }} 个）
+          </button>
+          <div v-show="showSyntax" class="syntax-list">
+            <div v-for="b in syntaxBricks" :key="b.name" class="syntax-item">
+              <span class="syntax-name">{{ b.name }}</span>
+              <span class="syntax-desc">{{ b.desc }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="primer-sub">这道题涉及的概念：</div>
         <div v-for="c in primerConcepts" :key="c.kp" class="primer-item">
           <div class="primer-term">
             {{ c.kp }}
@@ -516,6 +534,21 @@ function quit() {
 .primer-tag.new { background: var(--accent-soft); color: var(--primary-dark); }
 .primer-desc { font-size: 13.5px; color: var(--muted); line-height: 1.65; }
 .primer-foot { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
+.primer-sub { font-size: 13px; font-weight: 600; color: var(--text); margin-top: 2px; }
+
+/* 代码符号扫盲 */
+.syntax-box { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.syntax-head {
+  display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
+  background: var(--bg); border: none; padding: 10px 14px; cursor: pointer;
+  font-size: 13.5px; color: var(--text);
+}
+.syntax-list { padding: 6px 14px 12px; display: flex; flex-direction: column; gap: 9px; }
+.syntax-item { display: flex; flex-direction: column; gap: 2px; }
+.syntax-name {
+  font-family: Consolas, monospace; font-size: 13px; font-weight: 700; color: var(--primary-dark);
+}
+.syntax-desc { font-size: 13px; color: var(--muted); line-height: 1.6; }
 
 /* ---------- 双栏 ---------- */
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
