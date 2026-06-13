@@ -1,8 +1,19 @@
-"""非LLM路径冒烟测试：埋雷 → 提交修复（规则判定）→ 事件 → 画像 → 下钻。"""
+"""非LLM路径冒烟测试：埋雷 → 提交修复（规则判定）→ 事件 → 画像 → 下钻。
+
+失败提交的导师反馈走LLM，这里打桩保持非LLM性质。
+"""
+
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services import tutor
+
+FAKE_TURN = tutor.TutorTurn(
+    reply="（桩）我看到你的提交没通过，我们回到刚才的分析。",
+    stage_transition=None, hint_level_used="L0",
+    student_progressed=False, answer_begging=False, events=[])
 
 client = TestClient(app)
 with client:
@@ -15,7 +26,8 @@ with client:
     sid = r.json()["session_id"]
     print("session:", sid, "| code contains mine:", "len(arr) + 1" in r.json()["code"])
 
-    r = client.post(f"/api/sessions/{sid}/submit", json={"code": "for i in range(len(arr) + 1):"})
+    with patch.object(tutor, "_call_llm", lambda s, h: FAKE_TURN):
+        r = client.post(f"/api/sessions/{sid}/submit", json={"code": "for i in range(len(arr) + 1):"})
     assert r.json()["passed"] is False
     print("wrong fix rejected: OK")
 

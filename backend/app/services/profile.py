@@ -74,6 +74,79 @@ def get_profile(db: Session, student_id: str) -> dict:
     }
 
 
+def _rec_item(p: dict, state: str, reason: str) -> dict:
+    return {"id": p["id"], "name": p["name"], "category": p["category"],
+            "difficulty": p["difficulty"], "knowledge_points": p.get("knowledge_points", []),
+            "state": state, "reason": reason}
+
+
+def recommend_patterns(db: Session, student_id: str, patterns: list[dict], limit: int = 3) -> list[dict]:
+    """个性化推荐：基于能力向量（弱项优先）+ 知识点状态（已内化的不再推、已解决的转复习）。
+    新手只给一道最基础的入门题；老手按「最能补强弱项」排序给若干。每条都带可读的推荐理由。"""
+    prof = get_profile(db, student_id)
+    states = {s["pattern_id"]: s["state"] for s in prof["knowledge_states"]}
+    vector = prof["vector"]
+    total_events = sum(v["events_count"] for v in vector.values())
+
+    def cap_priority(cap: str) -> float:
+        v = vector.get(cap)
+        if not v or v["events_count"] == 0:
+            return 100.0          # 从未训练过的能力，最该练
+        return 100.0 - v["score"]  # 分数越低越该练
+
+    # 学生已接触过的知识点（用于识别「全新领域」的题）
+    seen_kps = set()
+    for s in prof["knowledge_states"]:
+        seen_kps.update(s.get("knowledge_points") or [])
+
+    scored = []
+    for p in patterns:
+        state = states.get(p["id"], "未接触")
+        if state == "已内化":
+            continue              # 已掌握，不再推荐
+        caps = p.get("capability_dims") or []
+        target = max(caps, key=cap_priority) if caps else None
+        value = sum(cap_priority(c) for c in caps) / len(caps) if caps else 0.0
+        new_kps = [k for k in (p.get("knowledge_points") or []) if k not in seen_kps]
+        scored.append({"p": p, "state": state, "value": value, "target": target,
+                       "new_kps": new_kps})
+
+    if not scored:
+        return []
+
+    # 新手（零事件）：只给一道最容易的入门题，避免一上来就被一堆选择压住
+    if total_events == 0:
+        p = min(scored, key=lambda x: x["p"]["difficulty"])["p"]
+        return [_rec_item(p, "未接触", "新手起点 · 从最基础的一题开始，先熟悉闯关六步")]
+
+    # 老手：贪心选出多样的几道——兼顾补强弱项、拓展新知识点、覆盖不同 Bug 类型，
+    # 避免清一色「补强同一个能力」。每选一题就惩罚同类型/同弱项的后续候选。
+    order = {"未接触": 0, "已接触": 1, "已解决": 2}
+    picked_cats, picked_targets = set(), set()
+    out = []
+    while scored and len(out) < limit:
+        def rank(s):
+            div = (1 if s["p"]["category"] in picked_cats else 0) \
+                + (1 if s["target"] in picked_targets else 0)
+            kp_bonus = 12 if s["new_kps"] else 0  # 能拓展新知识点的题加权
+            return (-(s["value"] + kp_bonus - div * 18), order.get(s["state"], 3), s["p"]["difficulty"])
+        s = min(scored, key=rank)
+        scored.remove(s)
+        cap_zh = CAPABILITY_REGISTRY.get(s["target"], {}).get("zh") if s["target"] else None
+        if s["state"] == "已解决":
+            reason = f"复习巩固 · 再练一遍「{cap_zh}」" if cap_zh else "复习巩固"
+        elif s["new_kps"]:
+            reason = f"拓展新领域 · 「{'、'.join(s['new_kps'][:2])}」"
+        elif cap_zh:
+            reason = f"补强你较薄弱的「{cap_zh}」"
+        else:
+            reason = "推荐挑战"
+        out.append(_rec_item(s["p"], s["state"], reason))
+        picked_cats.add(s["p"]["category"])
+        picked_targets.add(s["target"])
+    return out
+
+
 def get_capability_events(db: Session, student_id: str, capability: str) -> list[dict]:
     """下钻链路：能力 → 事件流 → evidence（05文档 §5.2）。"""
     rows = (db.query(Event)

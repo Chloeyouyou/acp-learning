@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 from ..config import CONFIDENCE_THRESHOLD
-from ..models import Event
+from ..models import Event, now
 from ..registry import CAPABILITY_REGISTRY, DELTA_MAX, DELTA_MIN, LLM_ALLOWED_CAPABILITIES
 from . import profile
 
@@ -38,10 +38,12 @@ def emit(
     if producer == "rule":
         confidence = 1.0
 
+    # 列默认值flush才生效，而apply_event在flush前就要读timestamp，必须构造时显式赋值
     event = Event(
         event_id=f"evt_{uuid.uuid4().hex[:16]}",
         student_id=student_id,
         session_id=session_id,
+        timestamp=now(),
         capability=capability,
         delta=delta,
         polarity="positive" if delta > 0 else "negative",
@@ -103,6 +105,27 @@ def on_boundary_located(db: Session, *, student_id: str, session_id: str, mine: 
             "refs": {"mine_id": mine["mine_id"], "pattern_id": mine["pattern_id"]},
         },
         context={"hint_level": hint_level, "knowledge_points": mine["knowledge_points"]},
+    )
+
+
+def on_internalized(db: Session, *, student_id: str, session_id: str, mine: dict, axes: dict):
+    """雷 fixed→internalized 结算：复述判定（成因/定位/迁移≥2轴）通过。
+    Internalization 不在 LLM 白名单内——三轴判定虽由 LLM 报告，结算事件始终是规则产出。"""
+    passed = [k for k, v in axes.items() if v]
+    return emit(
+        db,
+        student_id=student_id,
+        session_id=session_id,
+        capability="Internalization",
+        delta=3,
+        producer="rule",
+        evidence={
+            "type": "mine_transition",
+            "summary": f"复述判定通过（{len(passed)}/3轴：{'、'.join(passed)}），"
+                       f"知识点已内化（{mine['pattern_id']}）",
+            "refs": {"mine_id": mine["mine_id"], "pattern_id": mine["pattern_id"]},
+        },
+        context={"axes": axes, "knowledge_points": mine["knowledge_points"]},
     )
 
 

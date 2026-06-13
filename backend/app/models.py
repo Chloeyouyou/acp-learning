@@ -22,6 +22,10 @@ class TutorSession(Base):
     stage: Mapped[str] = mapped_column(String, default="①发现")
     hint_level: Mapped[str] = mapped_column(String, default="L0")
     mine_status: Mapped[str] = mapped_column(String, default="planted")  # planted/found/fixed/internalized
+    # ③归因三步进度：variable_trace/rule_compare/root_cause_expression，未进③时为空
+    attribution_step: Mapped[str] = mapped_column(String, default="")
+    # ⑥内化三轴累计判定：{cause, locate, prevent} -> bool，≥2为通过
+    internalize_scores: Mapped[dict] = mapped_column(JSON, default=dict)
     history: Mapped[list] = mapped_column(JSON, default=list)  # [{role, content}]
     stalled_turns: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String, default="active")  # active/completed

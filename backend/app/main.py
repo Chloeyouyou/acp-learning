@@ -89,16 +89,32 @@ def send_message(session_id: str, req: MessageReq, db: Session = Depends(get_db)
 
 @app.post("/api/sessions/{session_id}/submit")
 def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
-    """④修复的判定走规则引擎，不走LLM（04文档：规则能判的绝不交给LLM）。"""
+    """④修复的判定走规则引擎，不走LLM（04文档：规则能判的绝不交给LLM）。
+    失败的提交回流到导师对话做针对性引导；通过则进⑤验证，会话保持活跃。"""
     session = _get_session(db, session_id)
+    if session.status != "active":
+        raise HTTPException(409, "session already completed")
     mine = session.manifest["mines"][0]
+    if session.mine_status == "fixed":
+        return {"passed": True, "stage": session.stage, "message": "修复已通过，无需重复提交。"}
 
     if not mine_engine.verify_fix(session.pattern_id, req.code):
-        return {"passed": False, "message": "测试仍然失败，回到导师对话继续分析。"}
+        diagnosis = tutor.diagnose_failed_fix(session.pattern_id, req.code)
+        fail_msg = (f"{tutor.FIX_FAILED_PREFIX}\n我提交的代码：\n{req.code}\n\n[系统诊断] {diagnosis}")
+        try:
+            feedback = tutor.run_turn(db, session, fail_msg)
+            return {"passed": False, "stage": feedback["stage"], "message": feedback["reply"]}
+        except Exception:
+            # LLM不可用时降级：失败记录仍进对话历史，下次对话导师能看到
+            session.history = list(session.history) + [{"role": "user", "content": fail_msg}]
+            db.commit()
+            return {"passed": False, "stage": session.stage,
+                    "message": f"测试未通过。{diagnosis}。回到对话里和导师继续分析。"}
 
     session.mine_status = "fixed"
-    session.stage = "⑥内化"
-    session.status = "completed"  # MVP：内化关1留给下个迭代，先结算
+    session.stage = "⑤验证"
+    session.history = list(session.history) + [
+        {"role": "user", "content": "（系统：我提交的修复已通过测试）"}]
     event_engine.on_mine_fixed(
         db, student_id=session.student_id, session_id=session.id,
         mine=mine, max_hint_level=session.hint_level)
@@ -108,7 +124,9 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
     db.commit()
     return {
         "passed": True,
-        "message": "测试通过。注意：当前状态是「已解决」——要升级为「已内化」，还需通过反向提问与变式（V0.3）。",
+        "stage": "⑤验证",
+        "message": "测试通过，雷已排除！进入⑤验证：和导师聊聊你会用哪些输入验证这次修复。"
+                   "当前知识点状态是「已解决」——继续完成 ⑤验证与 ⑥内化（复述成因、定位、迁移）即可升级为「已内化」。",
         "internalize_questions": mine["internalize_questions"],
     }
 
@@ -125,9 +143,16 @@ def get_capability_events(student_id: str, capability: str, db: Session = Depend
     return profile.get_capability_events(db, student_id, capability)
 
 
+@app.get("/api/students/{student_id}/recommendations")
+def get_recommendations(student_id: str, db: Session = Depends(get_db)):
+    patterns = list(mine_engine.load_patterns().values())
+    return profile.recommend_patterns(db, student_id, patterns)
+
+
 @app.get("/api/patterns")
 def list_patterns():
     return [
-        {"id": p["id"], "name": p["name"], "category": p["category"], "difficulty": p["difficulty"]}
+        {"id": p["id"], "name": p["name"], "category": p["category"],
+         "difficulty": p["difficulty"], "knowledge_points": p.get("knowledge_points", [])}
         for p in mine_engine.load_patterns().values()
     ]

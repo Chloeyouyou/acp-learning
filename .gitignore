@@ -19,3 +19,6 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# 临时备份（改 UI 时的手工回滚点，不入库）
+*.bak

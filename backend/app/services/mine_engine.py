@@ -47,6 +47,8 @@ def build_manifest(student_id: str, pattern: dict) -> dict:
                 "fix_check": pattern["fix_check"],
                 "hint_ladder": pattern["hint_ladder"],
                 "internalize_questions": pattern["internalize_questions"],
+                # V0.3变式题库预留接口：有则⑥内化后可出相似Bug检查迁移能力
+                "variant_pool": pattern.get("variant_pool", []),
                 "knowledge_points": pattern["knowledge_points"],
                 "symptom": pattern["symptom"],
                 "symptom_sample": pattern["symptom_sample"],

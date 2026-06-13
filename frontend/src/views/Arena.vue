@@ -1,14 +1,50 @@
 <script setup>
-import { onMounted, reactive, ref, nextTick } from 'vue'
+import { onMounted, reactive, ref, computed, nextTick } from 'vue'
 import { api } from '../api'
+import GlossaryText from '../components/GlossaryText.vue'
 
 const STAGES = ['①发现', '②定位', '③归因', '④修复', '⑤验证', '⑥内化']
 
+// Bug 分类：中文名 + 一句话说明（决定大厅分组的顺序与文案）
+const CATEGORY_META = {
+  boundary: { label: '边界类', desc: '数组越界、差一错误——和「范围」打交道时最常见的坑。' },
+  loop: { label: '循环类', desc: '循环次数、终止条件、累加逻辑里的细节失误。' },
+  null: { label: '空值类', desc: '空对象、缺字段、None——没防住「什么都没有」的情况。' },
+  arithmetic: { label: '算术类', desc: '除零、溢出等数值运算中的边界问题。' },
+}
+const CATEGORY_ORDER = ['boundary', 'loop', 'null', 'arithmetic']
+function catMeta(c) {
+  return CATEGORY_META[c] || { label: c, desc: '' }
+}
+function stageIndex(s) { return STAGES.indexOf(s) }
+
+// 按类型分组（固定顺序，组内按难度升序），降低「一次 15 张卡」的密度
+const grouped = computed(() => {
+  const byCat = {}
+  for (const p of patterns.value) (byCat[p.category] ||= []).push(p)
+  const order = [...CATEGORY_ORDER, ...Object.keys(byCat).filter((c) => !CATEGORY_ORDER.includes(c))]
+  return order
+    .filter((c) => byCat[c]?.length)
+    .map((c) => ({
+      category: c,
+      ...catMeta(c),
+      items: byCat[c].sort((a, b) => (a.difficulty || '').localeCompare(b.difficulty || '')),
+    }))
+})
+
+
 const patterns = ref([])
+const lobbyMode = ref('smart')   // 'smart' 智能推荐 | 'browse' 自己挑选
+const recs = ref([])             // 个性化推荐（后端按能力画像生成）
+const recsLoading = ref(false)
+const openCats = reactive({})    // 自己挑选模式：哪些分组已展开（默认只开第一组）
 const session = reactive({
   id: null, code: '', task: '', stage: '①发现', hintLevel: 'L0',
-  completed: false, internalizeQuestions: [],
+  fixed: false,      // 代码已通过测试（进入⑤验证），但本关尚未结束
+  done: false,       // ⑥内化判定通过，本关结束
+  internalizeQuestions: [],
 })
+function toggleCat(c) { openCats[c] = !openCats[c] }
 const messages = ref([]) // {role: 'student'|'tutor'|'system', text}
 const draft = ref('')
 const sending = ref(false)
@@ -19,10 +55,23 @@ const chatBox = ref(null)
 onMounted(async () => {
   try {
     patterns.value = await api.listPatterns()
+    if (grouped.value[0]) openCats[grouped.value[0].category] = true  // 默认只展开第一组
   } catch (e) {
     error.value = '无法连接后端：' + e.message
   }
+  loadRecs()
 })
+
+async function loadRecs() {
+  recsLoading.value = true
+  try {
+    recs.value = await api.getRecommendations()
+  } catch (e) {
+    recs.value = []
+  } finally {
+    recsLoading.value = false
+  }
+}
 
 async function start(patternId) {
   error.value = ''
@@ -33,7 +82,8 @@ async function start(patternId) {
     session.task = data.task
     session.stage = '①发现'
     session.hintLevel = 'L0'
-    session.completed = false
+    session.fixed = false
+    session.done = false
     session.internalizeQuestions = []
     messages.value = [{ role: 'system', text: data.task }]
   } catch (e) {
@@ -58,6 +108,10 @@ async function send() {
     messages.value.push({ role: 'tutor', text: d.reply })
     session.stage = d.stage
     session.hintLevel = d.hint_level
+    if (d.session_status === 'completed') {
+      session.done = true
+      messages.value.push({ role: 'system', text: '🎉 内化判定通过！该知识点已升级为「已内化」，本关完成。' })
+    }
   } catch (e) {
     messages.value.push({ role: 'system', text: '出错了：' + e.message })
   } finally {
@@ -71,13 +125,14 @@ async function submit() {
   submitting.value = true
   try {
     const d = await api.submitFix(session.id, session.code)
+    if (d.stage) session.stage = d.stage
     if (d.passed) {
-      session.completed = true
-      session.stage = '⑥内化'
+      session.fixed = true
       session.internalizeQuestions = d.internalize_questions || []
       messages.value.push({ role: 'system', text: d.message })
     } else {
-      messages.value.push({ role: 'system', text: d.message })
+      // 失败反馈来自导师（针对提交代码的具体引导），按导师气泡展示
+      messages.value.push({ role: 'tutor', text: d.message })
     }
   } catch (e) {
     messages.value.push({ role: 'system', text: '提交失败：' + e.message })
@@ -90,6 +145,7 @@ async function submit() {
 function quit() {
   session.id = null
   messages.value = []
+  loadRecs()  // 闯关后能力可能变化，回大厅刷新个性化推荐
 }
 </script>
 
@@ -97,66 +153,127 @@ function quit() {
   <div v-if="error" class="panel error">{{ error }}</div>
 
   <!-- 选题 -->
-  <div v-if="!session.id">
-    <h2>选择一个关卡</h2>
-    <p class="hint">每一关的代码里都藏着一个真实Bug。你的任务：发现它、和AI导师一起定位它、自己修好它。</p>
-    <div class="cards">
-      <div v-for="p in patterns" :key="p.id" class="panel card">
-        <div class="card-head">
-          <span class="tag">{{ p.category }}</span>
-          <span class="tag difficulty">{{ p.difficulty }}</span>
-        </div>
-        <h3>{{ p.name }}</h3>
-        <div class="card-id">{{ p.id }}</div>
-        <button class="primary" @click="start(p.id)">开始挑战</button>
-      </div>
+  <div v-if="!session.id" class="lobby">
+    <div class="lobby-hero">
+      <h2>Bug 闯关训练场</h2>
+      <p class="hint">
+        每一关的代码里都藏着一个真实 Bug。你的任务是<b>发现它</b>、和 AI 导师一起<b>定位它</b>、
+        亲手<b>修好它</b>，再讲清楚它为什么会发生——走完六步，知识点才真正属于你。
+      </p>
     </div>
+
+    <!-- 模式切换 -->
+    <div class="mode-tabs">
+      <button :class="['mode-tab', { on: lobbyMode === 'smart' }]" @click="lobbyMode = 'smart'">✦ 智能推荐</button>
+      <button :class="['mode-tab', { on: lobbyMode === 'browse' }]" @click="lobbyMode = 'browse'">浏览全部题目</button>
+    </div>
+
+    <!-- 智能推荐：只给少数几题 + 推荐理由 -->
+    <div v-if="lobbyMode === 'smart'" class="smart">
+      <p v-if="recsLoading" class="hint">正在根据你的能力画像生成推荐…</p>
+      <p v-else-if="!recs.length" class="hint">暂时没有可推荐的题目——你可能已经把现有题目都内化了，去「浏览全部题目」复习吧。</p>
+      <div v-else class="rec-list">
+        <button v-for="(r, i) in recs" :key="r.id" :class="['rec-card', { featured: i === 0 }]" @click="start(r.id)">
+          <div class="rec-main">
+            <span class="rec-reason">{{ i === 0 ? '🎯 ' : '' }}{{ r.reason }}</span>
+            <span class="rec-name">{{ r.name }}</span>
+            <div class="rec-meta">
+              <span class="diff-badge">{{ r.difficulty }}</span>
+              <span v-for="kp in r.knowledge_points" :key="kp" class="kp-tag">{{ kp }}</span>
+              <span v-if="r.state !== '未接触'" class="state-chip">{{ r.state }}</span>
+            </div>
+          </div>
+          <span class="rec-cta">{{ i === 0 ? '开始挑战 →' : '挑战 →' }}</span>
+        </button>
+      </div>
+      <p class="smart-foot">想自己挑？切到「浏览全部题目」，{{ patterns.length }} 道题按类型分好了组。</p>
+    </div>
+
+    <!-- 自己挑选：按类型分组，默认只展开第一组 -->
+    <template v-else>
+      <section v-for="g in grouped" :key="g.category" class="cat-group">
+        <button class="cat-group-head" @click="toggleCat(g.category)">
+          <span class="cat-caret" :class="{ open: openCats[g.category] }">▸</span>
+          <span class="cat-title">{{ g.label }}<span class="cat-count">{{ g.items.length }} 题</span></span>
+          <span class="cat-desc">{{ g.desc }}</span>
+        </button>
+        <div v-show="openCats[g.category]" class="cards">
+          <button v-for="p in g.items" :key="p.id" class="card" @click="start(p.id)">
+            <div class="card-head">
+              <h3>{{ p.name }}</h3>
+              <span class="diff-badge">{{ p.difficulty }}</span>
+            </div>
+            <div v-if="p.knowledge_points?.length" class="kp-tags">
+              <span v-for="kp in p.knowledge_points" :key="kp" class="kp-tag">{{ kp }}</span>
+            </div>
+            <span class="card-cta">开始挑战 →</span>
+          </button>
+        </div>
+      </section>
+    </template>
   </div>
 
   <!-- 做题 -->
   <div v-else class="workspace">
     <div class="stage-bar panel">
-      <span
-        v-for="s in STAGES" :key="s"
-        :class="['stage', { active: s === session.stage, done: STAGES.indexOf(s) < STAGES.indexOf(session.stage) }]"
-      >{{ s }}</span>
-      <span class="spacer" />
-      <span class="hint-level">提示级别 {{ session.hintLevel }}</span>
-      <button @click="quit">退出关卡</button>
+      <ol class="stepper">
+        <li
+          v-for="s in STAGES" :key="s"
+          :class="['step', { active: s === session.stage, done: stageIndex(s) < stageIndex(session.stage) }]"
+        >
+          <span class="step-no">{{ stageIndex(s) < stageIndex(session.stage) ? '✓' : s.charAt(0) }}</span>
+          <span class="step-label">{{ s.slice(1) }}</span>
+        </li>
+      </ol>
+      <div class="stage-meta">
+        <span class="hint-level">提示级别 <b>{{ session.hintLevel }}</b></span>
+        <button @click="quit">退出关卡</button>
+      </div>
     </div>
 
     <div class="cols">
       <div class="panel code-panel">
         <div class="panel-title">
-          代码（直接在这里修改）
-          <button class="primary" :disabled="submitting || session.completed" @click="submit">
+          <span class="title-text">代码 · 直接在这里修改</span>
+          <button class="primary" :disabled="submitting || session.fixed" @click="submit">
             {{ submitting ? '判定中…' : '提交修复' }}
           </button>
         </div>
-        <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.completed" />
-        <div v-if="session.completed" class="success">
-          ✅ 已通过！该知识点现在是「已解决」——想升级为「已内化」，先回答下面的问题（向导师发送你的回答）：
-          <ol>
-            <li v-for="q in session.internalizeQuestions" :key="q">{{ q }}</li>
-          </ol>
+        <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
+        <div v-if="session.done" class="banner banner-done">
+          🎉 <b>本关完成！</b>该知识点已升级为「已内化」（成因 / 定位 / 迁移复述通过）。去能力画像看看，或挑战下一题。
+        </div>
+        <div v-else-if="session.fixed" class="banner banner-fixed">
+          ✅ <b>修复通过测试</b>，知识点现在是「已解决」。别急着结束——继续和导师完成 ⑤验证（边界测试）与
+          ⑥内化（复述成因、定位、迁移），才能升级为「已内化」。
         </div>
       </div>
 
       <div class="panel chat-panel">
-        <div class="panel-title">AI导师（只引导，不给答案）</div>
+        <div class="panel-title">
+          <span class="title-text"><span class="tutor-avatar">AI</span>AI 导师</span>
+          <span class="title-sub">只引导，不给答案</span>
+        </div>
         <div ref="chatBox" class="chat">
           <div v-for="(m, i) in messages" :key="i" :class="['msg', m.role]">
-            <div class="bubble">{{ m.text }}</div>
+            <div v-if="m.role === 'tutor'" class="avatar tutor-avatar">AI</div>
+            <div class="bubble">
+              <GlossaryText v-if="m.role !== 'student'" :text="m.text" />
+              <template v-else>{{ m.text }}</template>
+            </div>
           </div>
-          <div v-if="sending" class="msg tutor"><div class="bubble typing">导师思考中…</div></div>
+          <div v-if="sending" class="msg tutor">
+            <div class="avatar tutor-avatar">AI</div>
+            <div class="bubble typing"><span /><span /><span /></div>
+          </div>
         </div>
         <div class="composer">
           <textarea
             v-model="draft" rows="2"
-            placeholder="描述你观察到的现象、你的猜测、你的验证过程…（Ctrl+Enter发送）"
+            placeholder="描述你观察到的现象、你的猜测、你的验证过程…（Ctrl+Enter 发送）"
             @keydown.ctrl.enter="send"
           />
-          <button class="primary" :disabled="sending" @click="send">发送</button>
+          <button class="primary send-btn" :disabled="sending" @click="send">发送</button>
         </div>
       </div>
     </div>
@@ -165,50 +282,189 @@ function quit() {
 
 <style scoped>
 .error { border-color: var(--red); color: var(--red); margin-bottom: 16px; }
-.hint { color: var(--muted); }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
-.card { display: flex; flex-direction: column; gap: 8px; }
-.card h3 { margin: 0; font-size: 15px; }
-.card-head { display: flex; gap: 8px; }
-.tag.difficulty { background: #fef3c7; color: #92400e; }
-.card-id { font-size: 12px; color: var(--muted); font-family: Consolas, monospace; }
-.card button { margin-top: auto; }
 
-.workspace { display: flex; flex-direction: column; gap: 16px; }
-.stage-bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; }
-.stage { font-size: 13px; color: var(--muted); }
-.stage.active { color: var(--primary); font-weight: 700; }
-.stage.done { color: var(--green); }
-.spacer { flex: 1; }
+/* ========== 方向 D：Anthropic 暖调克制风（象牙底 + 陶土点缀 + 衬线标题 + 大留白） ========== */
+/* ---------- 选题大厅 ---------- */
+.lobby { padding-top: 4px; }
+.lobby-hero {
+  margin-bottom: 28px;
+  max-width: 720px;
+}
+.lobby-hero h2 { margin: 0 0 14px; font-size: 30px; font-weight: 600; line-height: 1.25; }
+.hint { color: var(--muted); margin: 0; line-height: 1.8; font-size: 15px; }
+.hint b { color: var(--text); font-weight: 600; }
+
+/* 模式切换 */
+.mode-tabs { display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 26px;
+  background: #ece6da; border-radius: 11px; }
+.mode-tab {
+  border: none; background: transparent; color: var(--muted); font-size: 14px;
+  padding: 7px 16px; border-radius: 8px; font-family: var(--serif);
+}
+.mode-tab:hover:not(.on) { color: var(--text); }
+.mode-tab.on { background: var(--panel); color: var(--primary); box-shadow: 0 1px 3px rgba(43,41,36,0.08); }
+
+/* 智能推荐 */
+.rec-list { display: flex; flex-direction: column; gap: 14px; }
+.rec-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%;
+  text-align: left; padding: 18px 22px; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.rec-card:hover {
+  transform: translateY(-2px); color: inherit; border-color: #dac9b8;
+  box-shadow: 0 14px 30px -16px rgba(193, 95, 60, 0.4);
+}
+/* 高亮卡：用 featured 而非 primary，避免和全局 button.primary（实心橙底）冲突 */
+.rec-card.featured { background: var(--accent-soft); border-color: #e0cdbb; }
+/* 高亮卡背景已是浅陶土，标签/状态需换底色才不会和卡片融在一起 */
+.rec-card.featured .kp-tag { background: var(--panel); }
+.rec-card.featured .state-chip { background: var(--panel); border-color: #d8c6b4; }
+.rec-main { display: flex; flex-direction: column; gap: 7px; }
+.rec-reason { font-size: 13px; font-weight: 600; color: var(--primary); }
+.rec-name { font-family: var(--serif); font-size: 17px; font-weight: 600; color: var(--text); }
+.rec-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.rec-cta {
+  font-family: var(--serif); font-size: 14.5px; font-weight: 600; color: var(--primary); flex-shrink: 0;
+  transition: transform 0.18s;
+}
+.rec-card:hover .rec-cta { transform: translateX(4px); }
+.state-chip {
+  font-size: 11.5px; color: var(--muted); border: 1px solid var(--border);
+  padding: 1px 8px; border-radius: 999px;
+}
+.smart-foot { margin: 20px 0 0; font-size: 13px; color: var(--muted); }
+
+/* 分类分组（可折叠） */
+.cat-group { margin-bottom: 14px; border-bottom: 1px solid var(--border); padding-bottom: 14px; }
+.cat-group:last-child { border-bottom: none; }
+.cat-group-head {
+  display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+  background: none; border: none; padding: 8px 2px; margin-bottom: 6px; cursor: pointer; flex-wrap: wrap;
+}
+.cat-caret { color: var(--muted); font-size: 12px; transition: transform 0.18s; align-self: center; }
+.cat-caret.open { transform: rotate(90deg); }
+.cat-title { font-family: var(--serif); font-size: 18px; font-weight: 600; color: var(--text); }
+.cat-count { font-size: 12.5px; font-weight: 400; color: var(--muted); margin-left: 8px; }
+.cat-desc { font-size: 13px; color: var(--muted); line-height: 1.6; flex: 1; min-width: 200px; }
+.cards { margin-top: 14px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 16px; }
+.card {
+  display: flex; flex-direction: column; align-items: stretch; gap: 12px; text-align: left;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  padding: 20px; cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.card:hover {
+  transform: translateY(-3px); border-color: #dac9b8; color: inherit;
+  box-shadow: 0 14px 30px -16px rgba(193, 95, 60, 0.4);
+}
+.card-head { display: flex; gap: 10px; align-items: flex-start; }
+.card-head h3 { margin: 0; font-size: 15.5px; line-height: 1.45; font-weight: 600; flex: 1; }
+.diff-badge {
+  margin-left: auto; flex-shrink: 0; font-size: 12px; color: var(--muted);
+  border: 1px solid var(--border); padding: 2px 9px; border-radius: 6px;
+}
+.kp-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.kp-tag {
+  font-size: 12px; padding: 2px 9px; border-radius: 6px;
+  background: var(--accent-soft); color: var(--primary-dark);
+}
+.card-cta {
+  margin-top: 4px; font-size: 13.5px; font-weight: 500; color: var(--primary);
+  font-family: var(--serif); transition: transform 0.18s;
+}
+.card:hover .card-cta { transform: translateX(4px); }
+
+/* ---------- 阶段步进条 ---------- */
+.workspace { display: flex; flex-direction: column; gap: 20px; }
+.stage-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 14px 22px; flex-wrap: wrap;
+}
+.stepper { display: flex; align-items: center; gap: 0; margin: 0; padding: 0; list-style: none; flex-wrap: wrap; }
+.step { display: flex; align-items: center; gap: 8px; color: var(--muted); position: relative; padding-right: 6px; }
+.step:not(:last-child)::after {
+  content: ''; width: 26px; height: 1px; background: var(--border); margin: 0 10px 0 8px;
+}
+.step-no {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 50%; font-size: 12px; font-weight: 600;
+  background: #ece6da; color: var(--muted); transition: all 0.2s;
+}
+.step-label { font-size: 13.5px; }
+.step.active .step-no { background: var(--primary); color: #fff; box-shadow: 0 0 0 4px var(--accent-soft); }
+.step.active .step-label { color: var(--text); font-weight: 600; }
+.step.done .step-no { background: #cbb9a6; color: #fff; }
+.step.done .step-label { color: var(--muted); }
+.stage-meta { display: flex; align-items: center; gap: 16px; }
 .hint-level { font-size: 13px; color: var(--muted); }
+.hint-level b { color: var(--text); }
 
-.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+/* ---------- 双栏 ---------- */
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+@media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
 .panel-title {
   display: flex; justify-content: space-between; align-items: center;
-  font-weight: 600; margin-bottom: 10px;
+  font-weight: 600; margin-bottom: 14px;
 }
+.title-text { display: inline-flex; align-items: center; gap: 9px; font-family: var(--serif); font-size: 15.5px; }
+.title-sub { font-size: 12px; font-weight: 400; color: var(--muted); }
+
+/* ---------- 代码区 ---------- */
 .code {
   width: 100%; height: 420px; resize: vertical;
   background: var(--code-bg); color: var(--code-text);
   font-family: Consolas, 'Courier New', monospace; font-size: 14px;
-  line-height: 1.5; border: none; border-radius: 8px; padding: 14px;
+  line-height: 1.6; border: none; border-radius: 10px; padding: 16px;
   white-space: pre; tab-size: 4;
 }
-.success { margin-top: 12px; color: var(--green); font-size: 14px; }
-.success ol { color: var(--text); }
-
-.chat-panel { display: flex; flex-direction: column; height: 520px; }
-.chat { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px; }
-.msg { display: flex; }
-.msg.student { justify-content: flex-end; }
-.bubble {
-  max-width: 80%; padding: 8px 12px; border-radius: 12px;
-  font-size: 14px; line-height: 1.6; white-space: pre-wrap;
+.code:disabled { opacity: 0.78; }
+.banner {
+  margin-top: 14px; padding: 13px 16px; border-radius: 10px; font-size: 13.5px; line-height: 1.75;
+  background: var(--accent-soft); color: #7a3f28;
+  border-left: 3px solid var(--primary);
 }
-.msg.tutor .bubble { background: #f1f5f9; border-bottom-left-radius: 4px; }
-.msg.student .bubble { background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
-.msg.system .bubble { background: #fefce8; color: #854d0e; font-size: 13px; max-width: 100%; }
-.typing { color: var(--muted); font-style: italic; }
-.composer { display: flex; gap: 8px; margin-top: 10px; align-items: flex-end; }
+.banner b { font-weight: 600; }
+
+/* ---------- 对话区 ---------- */
+.tutor-avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 27px; height: 27px; border-radius: 8px; font-size: 11px; font-weight: 700;
+  background: var(--accent-soft); color: var(--primary-dark); flex-shrink: 0;
+}
+.chat-panel { display: flex; flex-direction: column; height: 548px; }
+.chat { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 4px 2px; }
+.msg { display: flex; align-items: flex-end; gap: 9px; }
+.msg.student { justify-content: flex-end; }
+.msg .avatar { align-self: flex-start; }
+.bubble {
+  max-width: 78%; padding: 11px 14px; border-radius: 14px;
+  font-size: 14px; line-height: 1.7; white-space: pre-wrap;
+}
+.msg.tutor .bubble {
+  background: #f3eee4; color: var(--text); border-bottom-left-radius: 5px;
+}
+.msg.student .bubble {
+  background: var(--primary); color: #fff; border-bottom-right-radius: 5px;
+}
+.msg.system { justify-content: center; }
+.msg.system .bubble {
+  background: transparent; color: var(--muted); font-size: 13px; max-width: 100%;
+  border: 1px solid var(--border); border-radius: 10px; text-align: center;
+}
+.typing { display: inline-flex; gap: 4px; align-items: center; }
+.typing span {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--primary); opacity: 0.4;
+  animation: blink 1.2s infinite both;
+}
+.typing span:nth-child(2) { animation-delay: 0.2s; }
+.typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%, 60%, 100% { opacity: 0.25; } 30% { opacity: 1; } }
+
+.composer { display: flex; gap: 8px; margin-top: 12px; align-items: flex-end; }
 .composer textarea { resize: none; }
+.send-btn { align-self: stretch; }
 </style>

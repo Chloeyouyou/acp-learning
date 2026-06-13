@@ -31,6 +31,7 @@ export const api = {
   submitFix: (sessionId, code) =>
     request('POST', `/sessions/${sessionId}/submit`, { code }),
   getProfile: () => request('GET', `/students/${getStudentId()}/profile`),
+  getRecommendations: () => request('GET', `/students/${getStudentId()}/recommendations`),
   getCapabilityEvents: (capability) =>
     request('GET', `/students/${getStudentId()}/capabilities/${capability}/events`),
 }
