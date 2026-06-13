@@ -168,6 +168,8 @@ async function submit() {
       session.fixed = true
       session.internalizeQuestions = d.internalize_questions || []
       messages.value.push({ role: 'system', text: d.message })
+      // 导师主动开场，引导进入⑤验证——学生不用自己猜该说什么
+      if (d.tutor_opening) messages.value.push({ role: 'tutor', text: d.tutor_opening })
     } else {
       // 失败反馈来自导师（针对提交代码的具体引导），按导师气泡展示
       messages.value.push({ role: 'tutor', text: d.message })

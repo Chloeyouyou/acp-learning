@@ -146,8 +146,17 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
 
     session.mine_status = "fixed"
     session.stage = "⑤验证"
+    # 导师主动开场：提交通过后直接抛出⑤验证的第一个问题，学生顺着答即可，不用自己猜该说什么。
+    # 确定性生成（按题型的边界测试建议），不走 LLM——稳、零延迟。
+    _cat = mine_engine.get_pattern(session.pattern_id)["category"]
+    _sug = tutor.BOUNDARY_TEST_SUGGESTIONS.get(_cat, tutor.DEFAULT_BOUNDARY_SUGGESTION)
+    _first = _sug.split("、")[0]
+    tutor_opening = (f"漂亮，修好了！🎉 不过——通过这一次测试，不代表它在所有情况下都稳。"
+                     f"我们一起验证一下：你觉得还该用哪些输入来测它？"
+                     f"比如「{_first}」传进去会发生什么，你预期结果是什么？")
     session.history = list(session.history) + [
-        {"role": "user", "content": "（系统：我提交的修复已通过测试）"}]
+        {"role": "user", "content": "（系统：我提交的修复已通过测试）"},
+        {"role": "assistant", "content": tutor_opening}]
     event_engine.on_mine_fixed(
         db, student_id=session.student_id, session_id=session.id,
         mine=mine, max_hint_level=session.hint_level)
@@ -181,6 +190,7 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
         "skipped_understanding": skipped_understanding,
         "transfer_confirmed": transfer_confirmed,
         "message": message,
+        "tutor_opening": tutor_opening,
         "internalize_questions": mine["internalize_questions"],
     }
 
