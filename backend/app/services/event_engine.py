@@ -63,24 +63,24 @@ def emit(
 
 # ---- 规则事件生产器（04文档 §2.1：确定性事件，不经过LLM）----
 
-HINT_DELTA = {"L0": 3, "L1": 3, "L2": 2, "L3": 1}  # L4/L5 不计正分
+# 评分理念（用户确认）：用提示不扣分——这是学习工具不是考试。完成即给固定正分，
+# 提示级别只记入 context 供洞察/将来做"强化信号"，不影响得分。
+FIX_DELTA = 3
+LOCATE_DELTA = 2
 
 
 def on_mine_fixed(db: Session, *, student_id: str, session_id: str, mine: dict, max_hint_level: str):
-    """雷 found→fixed 结算：Independent_Debug 按全程最高提示级别定档（04文档 §4.4）。"""
-    delta = HINT_DELTA.get(max_hint_level, 0)
-    if delta == 0:
-        return None
+    """雷 found→fixed 结算：Independent_Debug +固定分。用了多少提示不扣分（只记录）。"""
     return emit(
         db,
         student_id=student_id,
         session_id=session_id,
         capability="Independent_Debug",
-        delta=delta,
+        delta=FIX_DELTA,
         producer="rule",
         evidence={
             "type": "mine_transition",
-            "summary": f"在≤{max_hint_level}提示下完成修复（{mine['pattern_id']}）",
+            "summary": f"完成修复（{mine['pattern_id']}）",
             "refs": {"mine_id": mine["mine_id"], "pattern_id": mine["pattern_id"]},
         },
         context={"hint_level": max_hint_level, "knowledge_points": mine["knowledge_points"]},
@@ -88,20 +88,17 @@ def on_mine_fixed(db: Session, *, student_id: str, session_id: str, mine: dict, 
 
 
 def on_boundary_located(db: Session, *, student_id: str, session_id: str, mine: dict, hint_level: str):
-    """boundary类雷定位成功：Boundary_Awareness 按提示级别衰减（04文档 §4.2）。"""
-    delta = {"L0": 2, "L1": 2, "L2": 1, "L3": 1}.get(hint_level, 0)
-    if delta == 0:
-        return None
+    """boundary类雷定位成功：Boundary_Awareness +固定分。用了多少提示不扣分（只记录）。"""
     return emit(
         db,
         student_id=student_id,
         session_id=session_id,
         capability="Boundary_Awareness",
-        delta=delta,
+        delta=LOCATE_DELTA,
         producer="rule",
         evidence={
             "type": "mine_transition",
-            "summary": f"在{hint_level}提示下定位边界类雷（{mine['pattern_id']}）",
+            "summary": f"定位边界类雷（{mine['pattern_id']}）",
             "refs": {"mine_id": mine["mine_id"], "pattern_id": mine["pattern_id"]},
         },
         context={"hint_level": hint_level, "knowledge_points": mine["knowledge_points"]},
