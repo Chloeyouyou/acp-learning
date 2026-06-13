@@ -80,6 +80,34 @@ def _get_session(db: Session, session_id: str) -> TutorSession:
     return session
 
 
+@app.get("/api/sessions/{session_id}")
+def get_session(session_id: str, db: Session = Depends(get_db)):
+    """断点续做：返回会话当前状态，供前端刷新/重开后恢复界面（对话、阶段）。
+    注意：学生未提交的代码编辑不持久化，恢复时代码区回到原始带雷代码。"""
+    session = _get_session(db, session_id)
+    mine = session.manifest["mines"][0]
+    pattern = mine_engine.get_pattern(session.pattern_id)
+    role_map = {"user": "student", "assistant": "tutor"}
+    messages = [{"role": "system", "text": "运行这段代码，看看它的行为是否符合预期。有问题就和导师讨论。"}]
+    for m in session.history:
+        # 系统回流的占位消息（如"我提交的修复已通过测试"）不展示给学生
+        if m["role"] == "user" and m["content"].startswith(("（系统", "(系统")):
+            continue
+        messages.append({"role": role_map.get(m["role"], "system"), "text": m["content"]})
+    return {
+        "session_id": session.id,
+        "pattern_id": session.pattern_id,
+        "code": pattern["buggy_code"],
+        "stage": session.stage,
+        "hint_level": session.hint_level,
+        "status": session.status,
+        "fixed": session.mine_status in ("fixed", "internalized"),
+        "done": session.status == "completed",
+        "messages": messages,
+        "internalize_questions": mine["internalize_questions"],
+    }
+
+
 @app.post("/api/sessions/{session_id}/messages")
 def send_message(session_id: str, req: MessageReq, db: Session = Depends(get_db)):
     session = _get_session(db, session_id)

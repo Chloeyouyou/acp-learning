@@ -30,6 +30,7 @@ export const api = {
     request('POST', `/sessions/${sessionId}/messages`, { content }),
   submitFix: (sessionId, code) =>
     request('POST', `/sessions/${sessionId}/submit`, { code }),
+  getSession: (sessionId) => request('GET', `/sessions/${sessionId}`),
   getProfile: () => request('GET', `/students/${getStudentId()}/profile`),
   getRecommendations: () => request('GET', `/students/${getStudentId()}/recommendations`),
   getCapabilityEvents: (capability) =>

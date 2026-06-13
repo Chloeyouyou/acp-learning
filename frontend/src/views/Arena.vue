@@ -65,11 +65,35 @@ onMounted(async () => {
     error.value = '无法连接后端：' + e.message
   }
   loadRecs()
-  // 从能力画像「做变式巩固」跳来：自动开始指定关卡
+  // 从能力画像「做变式巩固」跳来：自动开始指定关卡（优先于续做）
   if (route.query.start) {
     const pid = String(route.query.start)
     router.replace({ query: {} })  // 清掉 query，避免刷新重复触发
     start(pid)
+    return
+  }
+  // 断点续做：上次有未完成的关卡（非主动退出）→ 自动恢复对话与阶段
+  const saved = localStorage.getItem('active_session')
+  if (saved) {
+    try {
+      const d = await api.getSession(saved)
+      if (d.status === 'active') {
+        session.id = d.session_id
+        session.code = d.code
+        session.stage = d.stage
+        session.hintLevel = d.hint_level
+        session.fixed = d.fixed
+        session.done = d.done
+        session.internalizeQuestions = d.internalize_questions || []
+        session.variant = null
+        messages.value = d.messages
+        messages.value.push({ role: 'system', text: '↩️ 已恢复你上次未完成的关卡，接着来吧。' })
+      } else {
+        localStorage.removeItem('active_session')
+      }
+    } catch (e) {
+      localStorage.removeItem('active_session')
+    }
   }
 })
 
@@ -89,6 +113,7 @@ async function start(patternId) {
   try {
     const data = await api.createSession(patternId)
     session.id = data.session_id
+    localStorage.setItem('active_session', data.session_id)  // 记下当前关卡，供刷新后续做
     session.code = data.code
     session.task = data.task
     session.stage = '①发现'
@@ -156,6 +181,7 @@ async function submit() {
 }
 
 function quit() {
+  localStorage.removeItem('active_session')  // 主动退出 = 放弃续做
   session.id = null
   messages.value = []
   loadRecs()  // 闯关后能力可能变化，回大厅刷新个性化推荐
