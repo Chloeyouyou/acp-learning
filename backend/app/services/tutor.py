@@ -296,7 +296,7 @@ REPAIR_LAYER_TEMPLATE = """
 
 # ⑤验证：按Bug模式类型推荐边界测试方向（02文档：训练边界测试意识）
 BOUNDARY_TEST_SUGGESTIONS = {
-    "boundary": "空列表 []、单元素列表 [5]、多元素典型列表 [1,2,3]",
+    "boundary": "最小输入（空列表 [] 或空字符串 \"\"）、只有一个元素的输入（[5] 或 \"a\"）、典型的多元素输入",
     "loop": "让循环走0次的空输入、恰好走1次的输入、典型多步输入",
     "null": "None、正常对象、缺字段/缺键的对象",
     "arithmetic": "空列表、正常列表、会让分母趋零的极端值",
@@ -580,9 +580,9 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
 
     try:
         turn = _call_llm(system, history)
-    except RuntimeError:
-        # LLM 偶发返回坏 JSON（截断/空白）→ 优雅降级：温和兜底一句，状态全部不变，
-        # 对话与本轮发言不丢，绝不让模型抽风把整局拖崩
+    except Exception:
+        # LLM 任何失败（坏 JSON / API 超时 / 限流 / 网络抖动…）都优雅降级：温和兜底一句，
+        # 状态全部不变，对话与本轮发言不丢，绝不让模型抽风把整局拖崩成 500
         turn = TutorTurn(
             reply="抱歉，我刚刚走神了一下，没接住你这句。能麻烦你再说一遍，或者换个说法吗？",
             stage_transition=None,
