@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from .config import STAGES
 from .db import get_db, init_db
 from .models import TutorSession
 from .services import event_engine, mine_engine, profile, tutor
@@ -111,6 +112,10 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
             return {"passed": False, "stage": session.stage,
                     "message": f"测试未通过。{diagnosis}。回到对话里和导师继续分析。"}
 
+    # 学生若在讲清原因之前（还停在①②③）就直接提交了正确代码——不拦截，尊重已会的学生，
+    # 但记下「跳过了理解对话」，反馈里温和提醒：修对≠学会，请在⑤⑥把「为什么」补上。
+    skipped_understanding = STAGES.index(session.stage) < STAGES.index("④修复")
+
     session.mine_status = "fixed"
     session.stage = "⑤验证"
     session.history = list(session.history) + [
@@ -122,11 +127,18 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
         db, student_id=session.student_id, pattern_id=session.pattern_id,
         knowledge_points=mine["knowledge_points"], new_state="已解决")
     db.commit()
+    if skipped_understanding:
+        message = ("测试通过，雷已排除！不过你是直接改对的——修好代码只算「已解决」。"
+                   "真正学会是能讲清它为什么错：接下来和导师过一遍 ⑤验证与 ⑥内化（说清成因、定位、迁移），"
+                   "知识点才会升级为「已内化」。")
+    else:
+        message = ("测试通过，雷已排除！进入⑤验证：和导师聊聊你会用哪些输入验证这次修复。"
+                   "当前知识点状态是「已解决」——继续完成 ⑤验证与 ⑥内化（复述成因、定位、迁移）即可升级为「已内化」。")
     return {
         "passed": True,
         "stage": "⑤验证",
-        "message": "测试通过，雷已排除！进入⑤验证：和导师聊聊你会用哪些输入验证这次修复。"
-                   "当前知识点状态是「已解决」——继续完成 ⑤验证与 ⑥内化（复述成因、定位、迁移）即可升级为「已内化」。",
+        "skipped_understanding": skipped_understanding,
+        "message": message,
         "internalize_questions": mine["internalize_questions"],
     }
 
