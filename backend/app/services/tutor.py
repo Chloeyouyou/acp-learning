@@ -384,7 +384,6 @@ VARIANT_NOTE = """
 # 用负向先行断言避开常见误伤：「会不会」「知不知道」不算受挫。
 FRUSTRATION_RE = re.compile(
     r"(?<!会)不会(?!不)|(?<!知)不知道|不懂|看不懂|不明白|没思路|没头绪|没想法|想不出|想不到|毫无头绪|"
-    r"卡住|卡了|卡死|卡在|"
     r"太难|好难|有点难|难度|完全不|一点都不|"
     r"不行了|我不行|做不出|做不到|搞不定|"
     r"放弃|算了|不想做|懒得|不做了|"
@@ -392,9 +391,19 @@ FRUSTRATION_RE = re.compile(
     r"帮帮我|帮我一下|给点提示|给个提示|提示一下|"
     r"\?{3,}|？{3,}|啊啊+|唉+")
 
+# 「卡住/卡了/死循环」是描述程序的高频词（尤其 loop/HANG 类题），不能一律当学生受挫
+STUCK_RE = re.compile(r"卡住|卡了|卡死|卡在|卡壳")
+PROGRAM_HANG_CTX = re.compile(r"程序|代码|循环|运行|死循环|输出|跑|一直|结束|停不|countdown|while|for")
+
 
 def detect_frustration(message: str) -> bool:
-    return bool(FRUSTRATION_RE.search(message or ""))
+    msg = message or ""
+    if FRUSTRATION_RE.search(msg):
+        return True
+    # 「卡住」仅当不是在描述程序卡死时，才算学生本人受挫
+    if STUCK_RE.search(msg) and not PROGRAM_HANG_CTX.search(msg):
+        return True
+    return False
 
 
 # 各 Bug 类型的生活化类比，受挫时优先喂给导师把概念讲软
