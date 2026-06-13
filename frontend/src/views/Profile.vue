@@ -74,6 +74,14 @@ async function drill(cap) {
 function fmtTime(ts) {
   return ts ? ts.slice(0, 19).replace('T', ' ') : ''
 }
+
+// 维度还没数据时，解释它测什么、怎么才会有分（避免空维度看起来像坏了）
+const DIM_HINT = {
+  'AI协作能力': '衡量你「会不会用 AI」：审查 AI 给的代码、核对 AI 的说法对不对、把问题问清楚。在你和导师对话中主动质疑、验证它的说法时才会记录——目前还没有这类记录。',
+  'Debug能力': '衡量你自己排错的本事：读报错、想边界、找根因、独立调试。完成闯关就会累计。',
+}
+const unevaluatedDims = computed(() =>
+  (profile.value?.dimensions || []).filter((d) => d.score == null))
 </script>
 
 <template>
@@ -109,6 +117,9 @@ function fmtTime(ts) {
       <RadarChart :dimensions="profile.dimensions" />
       <div class="legend">
         <span class="dot low" /> 灰色 = 数据还少（事件少于 5 个），多练几关会更准
+      </div>
+      <div v-for="d in unevaluatedDims" :key="d.name" class="dim-hint">
+        <b>「{{ d.name }}」还未评估</b>{{ DIM_HINT[d.name] ? '——' + DIM_HINT[d.name] : '，多练几关就会有数据。' }}
       </div>
     </div>
 
@@ -203,6 +214,11 @@ h3 { margin-top: 0; font-size: 17px; }
 .radar-panel { display: flex; flex-direction: column; align-items: center; }
 .radar-panel h3 { align-self: flex-start; }
 .legend { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.dim-hint {
+  font-size: 12.5px; color: var(--muted); line-height: 1.65; margin-top: 10px;
+  background: var(--bg); border-radius: 8px; padding: 9px 11px;
+}
+.dim-hint b { color: var(--text); font-weight: 600; }
 .dot.low { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 
 .right-col { display: flex; flex-direction: column; gap: 18px; }

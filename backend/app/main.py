@@ -48,8 +48,20 @@ class SubmitReq(BaseModel):
 
 # ---- 会话（埋雷 + 共脑调试）----
 
+def _cleanup_abandoned(db: Session, student_id: str):
+    """清掉该学生"开了题但几乎没动"的废弃会话（停在①发现、planted、学生发言≤1）。
+    每次开新题时顺手清，既清存量又防堆积；不碰真正进行中/已完成的会话。"""
+    for s in db.query(TutorSession).filter_by(student_id=student_id, status="active",
+                                              stage="①发现", mine_status="planted").all():
+        stu_msgs = [m for m in (s.history or [])
+                    if m["role"] == "user" and not m["content"].startswith(("（系统", "(系统"))]
+        if len(stu_msgs) <= 1:
+            db.delete(s)
+
+
 @app.post("/api/sessions")
 def create_session(req: CreateSessionReq, db: Session = Depends(get_db)):
+    _cleanup_abandoned(db, req.student_id)
     pattern = mine_engine.pick_pattern(req.pattern_id)
     manifest = mine_engine.build_manifest(req.student_id, pattern)
     session = TutorSession(
@@ -88,10 +100,14 @@ def get_session(session_id: str, db: Session = Depends(get_db)):
     mine = session.manifest["mines"][0]
     pattern = mine_engine.get_pattern(session.pattern_id)
     role_map = {"user": "student", "assistant": "tutor"}
+    # 续做时过滤掉修复前留下的旧脏消息：导师虚构"你运行时…"那类（已修复，但老会话历史里还在）
+    stale = ("你运行代码时", "你运行时", "你刚才运行", "你输入了什么", "你看到了什么报错")
     messages = [{"role": "system", "text": "运行这段代码，看看它的行为是否符合预期。有问题就和导师讨论。"}]
     for m in session.history:
         # 系统回流的占位消息（如"我提交的修复已通过测试"）不展示给学生
         if m["role"] == "user" and m["content"].startswith(("（系统", "(系统")):
+            continue
+        if m["role"] == "assistant" and any(s in m["content"] for s in stale):
             continue
         messages.append({"role": role_map.get(m["role"], "system"), "text": m["content"]})
     return {
