@@ -126,8 +126,21 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
     profile.update_knowledge_state(
         db, student_id=session.student_id, pattern_id=session.pattern_id,
         knowledge_points=mine["knowledge_points"], new_state="已解决")
+
+    # V0.3 迁移检验：本题是某已内化题的变式，且学生以低提示（≤L1）独立解出 → 记「迁移已验证」
+    transfer_confirmed = False
+    src = profile.transfer_source(db, session.student_id, session.pattern_id)
+    if src and session.hint_level in ("L0", "L1"):
+        event_engine.on_transfer_confirmed(
+            db, student_id=session.student_id, session_id=session.id,
+            mine=mine, source_pattern=src, hint_level=session.hint_level)
+        transfer_confirmed = True
     db.commit()
-    if skipped_understanding:
+    if transfer_confirmed:
+        message = ("测试通过，雷已排除！🎯 这是你已内化知识点的变式题，你独立解出来了——"
+                   "说明你不只是会背，而是真的能把学到的道理用到新问题上。迁移能力已记入画像。"
+                   "再和导师过一遍 ⑤验证 巩固一下。")
+    elif skipped_understanding:
         message = ("测试通过，雷已排除！不过你是直接改对的——修好代码只算「已解决」。"
                    "真正学会是能讲清它为什么错：接下来和导师过一遍 ⑤验证与 ⑥内化（说清成因、定位、迁移），"
                    "知识点才会升级为「已内化」。")
@@ -138,6 +151,7 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
         "passed": True,
         "stage": "⑤验证",
         "skipped_understanding": skipped_understanding,
+        "transfer_confirmed": transfer_confirmed,
         "message": message,
         "internalize_questions": mine["internalize_questions"],
     }

@@ -610,6 +610,7 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
     # ⑥内化结算：LLM报告三轴累计判定，规则层先拦截纯表态（「我懂了」不携带机制信息）；
     # ≥2轴true → Internalization规则事件 + 知识点「已内化」+ 会话completed
     # （刚进⑥的当轮不评分——学生此轮只是完成了验证，复述还没开始）
+    variant = None  # 内化通过后推荐的变式题（V0.3 迁移检验）
     if (stage_before_llm == "⑥内化" and not rule_advanced and turn.internalization is not None
             and session.mine_status != "internalized" and is_substantive(student_message)):
         acc = dict(session.internalize_scores or {})
@@ -626,6 +627,8 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
             profile.update_knowledge_state(
                 db, student_id=session.student_id, pattern_id=session.pattern_id,
                 knowledge_points=mine["knowledge_points"], new_state="已内化")
+            # 复述过关后，推荐一道同类异形的变式题，用实战检验迁移能力
+            variant = profile.pick_variant(db, session.student_id, session.pattern_id)
 
     # 规则事件：索要答案扣分。但受挫情境下的求助是「求助」不是「耍赖」，豁免扣分——
     # 共情止损与扣分惩罚不应同时发生（导师此轮已切到扶一把模式）。
@@ -664,5 +667,6 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
         "session_status": session.status,
         "hint_level": session.hint_level,
         "support_mode": support_mode,
+        "variant": variant,
         "events_emitted": [e.capability for e in turn.events],
     }

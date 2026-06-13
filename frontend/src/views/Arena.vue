@@ -43,6 +43,7 @@ const session = reactive({
   fixed: false,      // 代码已通过测试（进入⑤验证），但本关尚未结束
   done: false,       // ⑥内化判定通过，本关结束
   internalizeQuestions: [],
+  variant: null,     // 内化通过后推荐的变式题（迁移检验）
 })
 function toggleCat(c) { openCats[c] = !openCats[c] }
 const messages = ref([]) // {role: 'student'|'tutor'|'system', text}
@@ -85,6 +86,7 @@ async function start(patternId) {
     session.fixed = false
     session.done = false
     session.internalizeQuestions = []
+    session.variant = null
     messages.value = [{ role: 'system', text: data.task }]
   } catch (e) {
     error.value = e.message
@@ -111,6 +113,7 @@ async function send() {
     if (d.session_status === 'completed') {
       session.done = true
       messages.value.push({ role: 'system', text: '🎉 内化判定通过！该知识点已升级为「已内化」，本关完成。' })
+      session.variant = d.variant || null   // 推荐的变式题（迁移检验）
     }
   } catch (e) {
     messages.value.push({ role: 'system', text: '出错了：' + e.message })
@@ -242,6 +245,12 @@ function quit() {
         <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
         <div v-if="session.done" class="banner banner-done">
           🎉 <b>本关完成！</b>该知识点已升级为「已内化」（成因 / 定位 / 迁移复述通过）。去能力画像看看，或挑战下一题。
+          <div v-if="session.variant" class="variant-offer">
+            <span class="variant-label">想检验是否真的学会？试试这道<b>同类变式题</b>——独立解出才算迁移到位：</span>
+            <button class="primary variant-btn" @click="start(session.variant.id)">
+              挑战变式：{{ session.variant.name }} →
+            </button>
+          </div>
         </div>
         <div v-else-if="session.fixed" class="banner banner-fixed">
           ✅ <b>修复通过测试</b>，知识点现在是「已解决」。别急着结束——继续和导师完成 ⑤验证（边界测试）与
@@ -428,6 +437,9 @@ function quit() {
   border-left: 3px solid var(--primary);
 }
 .banner b { font-weight: 600; }
+.variant-offer { margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0cdbb; display: flex; flex-direction: column; gap: 8px; }
+.variant-label { font-size: 13px; }
+.variant-btn { align-self: flex-start; }
 
 /* ---------- 对话区 ---------- */
 .tutor-avatar {

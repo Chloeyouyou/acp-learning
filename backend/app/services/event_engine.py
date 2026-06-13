@@ -129,6 +129,28 @@ def on_internalized(db: Session, *, student_id: str, session_id: str, mine: dict
     )
 
 
+def on_transfer_confirmed(db: Session, *, student_id: str, session_id: str,
+                          mine: dict, source_pattern: str, hint_level: str):
+    """V0.3 迁移检验：学生在「已内化」题目的变式上独立解决（低提示）→ Internalization +2。
+    这是比复述更硬的内化证据——把学到的道理用到了新的、相似的问题上。"""
+    return emit(
+        db,
+        student_id=student_id,
+        session_id=session_id,
+        capability="Internalization",
+        delta=2,
+        producer="rule",
+        evidence={
+            "type": "transfer",
+            "summary": f"迁移已验证：在 {source_pattern} 的变式（{mine['pattern_id']}）上"
+                       f"以≤{hint_level}提示独立解决",
+            "refs": {"mine_id": mine["mine_id"], "source_pattern": source_pattern,
+                     "variant_pattern": mine["pattern_id"]},
+        },
+        context={"hint_level": hint_level, "source_pattern": source_pattern},
+    )
+
+
 def on_answer_begging(db: Session, *, student_id: str, session_id: str, mine: dict):
     """学生索要答案被拒后再次索要：Independent_Debug -1（04文档 §4.4 负向事件）。"""
     return emit(

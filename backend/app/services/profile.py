@@ -147,6 +147,47 @@ def recommend_patterns(db: Session, student_id: str, patterns: list[dict], limit
     return out
 
 
+def pick_variant(db: Session, student_id: str, pattern_id: str) -> dict | None:
+    """V0.3 迁移检验：从 pattern 的 variant_pool 里挑一道学生还没内化的变式题。
+    同类异形的 Bug——能独立解出来才证明真的迁移会了，而不只是会背。"""
+    from . import mine_engine
+    try:
+        pool = mine_engine.get_pattern(pattern_id).get("variant_pool") or []
+    except KeyError:
+        return None
+    internalized = {
+        s.pattern_id for s in db.query(KnowledgeState)
+        .filter_by(student_id=student_id, state="已内化").all()
+    }
+    for vid in pool:
+        if vid in internalized:
+            continue
+        try:
+            vp = mine_engine.get_pattern(vid)
+        except KeyError:
+            continue
+        return {"id": vid, "name": vp["name"], "category": vp["category"],
+                "difficulty": vp["difficulty"]}
+    return None
+
+
+def transfer_source(db: Session, student_id: str, pattern_id: str) -> str | None:
+    """若 pattern_id 是某个「学生已内化」题目的变式，返回那个源题 id——
+    说明这是一次迁移检验（学生在相似 Bug 上的实战）。否则 None。"""
+    from . import mine_engine
+    internalized = {
+        s.pattern_id for s in db.query(KnowledgeState)
+        .filter_by(student_id=student_id, state="已内化").all()
+    }
+    for src in internalized:
+        try:
+            if pattern_id in (mine_engine.get_pattern(src).get("variant_pool") or []):
+                return src
+        except KeyError:
+            continue
+    return None
+
+
 def get_capability_events(db: Session, student_id: str, capability: str) -> list[dict]:
     """下钻链路：能力 → 事件流 → evidence（05文档 §5.2）。"""
     rows = (db.query(Event)
