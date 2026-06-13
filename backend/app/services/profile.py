@@ -236,12 +236,17 @@ def knowledge_mastery(db: Session, student_id: str) -> list[dict]:
             mastery = "生疏"
         # 证据 / struggle（来自观测层执行日志）
         kp_ex = [e for e in ex if kp in (e.knowledge_points or [])]
-        evidence_count = len(kp_ex)
+        evidence_count = len(kp_ex)   # 真实执行次数（保持纯净，供 Timeline/遗忘曲线用）
         last_at = max((e.timestamp for e in kp_ex), default=None) \
             or max((s.updated_at for s in states if kp in (s.knowledge_points or [])), default=None)
         fails = sum(1 for e in kp_ex if e.source == "submit" and e.kind in ("RE", "WA", "HANG"))
-        # Confidence：证据充足度，绝不由失败决定
-        confidence = "高" if evidence_count > 10 else ("中" if evidence_count >= 3 else "低")
+        # Confidence=证据是否充足。已达成的状态本身就是强证据（避免"已掌握却证据0"的矛盾），
+        # 与执行次数合并判定；仍不让失败影响（解耦保持）。
+        state_evidence = (3 if "已内化" in st else 2 if "已解决" in st else 1 if "已接触" in st else 0)
+        if kp in transfer_kps:
+            state_evidence += 2
+        basis = evidence_count + state_evidence
+        confidence = "高" if basis > 8 else ("中" if basis >= 3 else "低")
         # weak / 理由
         weak, reason = False, ""
         if fails >= 2:

@@ -77,6 +77,8 @@ function fmtTime(ts) {
 
 // B0 知识点掌握度：档位 → 4 格进度
 const MASTERY_LEVEL = { 生疏: 1, 在学: 2, 掌握: 3, 熟练: 4 }
+// 把 confidence 换成大白话「练习多少」，避免「已掌握+稳定度低」的认知矛盾
+const PRACTICE_LABEL = { 高: '练习充分', 中: '练习适中', 低: '练习还少' }
 const mastery = computed(() => profile.value?.knowledge_mastery || [])
 const nextPractice = computed(() => profile.value?.practice?.next || null)
 function practiceKp(kp) {
@@ -171,20 +173,22 @@ const unevaluatedDims = computed(() =>
       <div class="panel" v-if="mastery.length">
         <div class="km-head">
           <h3>知识点掌握度</h3>
-          <span v-if="nextPractice" class="km-next">
-            下一题推荐：{{ nextPractice.kp }}
+          <div v-if="nextPractice" class="km-next">
+            <span class="km-next-label">下一题推荐</span>
+            <span class="km-next-kp">{{ nextPractice.kp }}</span>
+            <span class="km-next-reason">{{ nextPractice.reason }}</span>
             <button class="km-next-btn" @click="practiceKp(nextPractice.kp)">去练 →</button>
-          </span>
+          </div>
         </div>
-        <p class="note">掌握度 = 学会没有；稳定度 = 证据是否充足（练得越多越准）。薄弱的排在前面。</p>
+        <p class="note">掌握度 = 学会没有；练习多少 = 这个判断有多少证据（练得越多越准）。薄弱的排在前面。</p>
         <div v-for="m in mastery" :key="m.kp" class="km-row">
           <span class="km-kp"><GlossaryText :text="m.kp" /></span>
           <span class="km-dots" :title="m.mastery">
             <i v-for="n in 4" :key="n" :class="['km-dot', { on: n <= MASTERY_LEVEL[m.mastery] }]" />
           </span>
           <span class="km-mastery" :class="m.mastery">{{ m.mastery }}</span>
-          <span class="km-conf">稳定度 {{ m.confidence }}</span>
-          <span v-if="m.weak" class="km-reason">⚠ {{ m.weak_reason }}</span>
+          <span class="km-conf">{{ PRACTICE_LABEL[m.confidence] }}</span>
+          <span v-if="m.weak" class="km-reason">建议：{{ m.weak_reason }}</span>
           <button v-if="m.weak && profile.practice.by_kp[m.kp]" class="km-go" @click="practiceKp(m.kp)">去练 →</button>
         </div>
       </div>
@@ -243,7 +247,11 @@ h3 { margin-top: 0; font-size: 17px; }
 
 /* B0 知识点掌握度 */
 .km-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.km-next { font-size: 13px; color: var(--muted); }
+.km-next { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--accent-soft); border-radius: 8px; padding: 5px 10px; }
+.km-next-label { font-size: 12px; color: var(--primary-dark); font-weight: 600; }
+.km-next-kp { font-size: 13px; font-weight: 600; }
+.km-next-reason { font-size: 12px; color: var(--muted); }
 .km-next-btn, .km-go {
   font-size: 12.5px; color: var(--primary); background: var(--accent-soft);
   border: 1px solid var(--border); border-radius: 7px; padding: 2px 10px; white-space: nowrap;

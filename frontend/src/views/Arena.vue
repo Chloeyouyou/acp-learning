@@ -443,13 +443,21 @@ function quit() {
           </span>
         </div>
         <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
-        <!-- 运行结果：学生自己跑、自己看真实输出/报错（路线A） -->
+        <!-- 运行结果：学生自己跑、自己看真实输出/报错（路线A，真运行非AI猜） -->
         <div v-if="runResult" class="run-result">
-          <div class="run-result-head">运行结果</div>
-          <pre v-if="runResult.stdout" class="run-out">{{ runResult.stdout }}</pre>
-          <pre v-if="runResult.stderr" class="run-err">{{ runResult.stderr }}</pre>
-          <div v-if="runResult.timed_out" class="run-err">⏱ 运行超时——程序跑不结束，很可能是死循环。</div>
-          <div v-if="!runResult.stdout && !runResult.stderr && !runResult.timed_out" class="run-empty">（没有任何输出）</div>
+          <div class="run-result-head" :class="{ ok: !runResult.stderr && !runResult.timed_out, bad: runResult.stderr || runResult.timed_out }">
+            {{ runResult.timed_out ? '⏱ 运行超时（很可能死循环）' : (runResult.stderr ? '✗ 程序报错了' : '✓ 程序运行成功') }}
+            <span class="run-real">真实运行结果</span>
+          </div>
+          <div v-if="runResult.stdout" class="run-block">
+            <div class="run-label">标准输出 stdout</div>
+            <pre class="run-out">{{ runResult.stdout }}</pre>
+          </div>
+          <div v-if="runResult.stderr" class="run-block">
+            <div class="run-label">报错 stderr</div>
+            <pre class="run-err">{{ runResult.stderr }}</pre>
+          </div>
+          <div v-if="!runResult.stdout && !runResult.stderr && !runResult.timed_out" class="run-empty">（程序没有任何输出）</div>
         </div>
         <div v-if="session.done" class="banner banner-done">
           🎉 <b>本关完成！</b>该知识点已升级为「已内化」（成因 / 定位 / 迁移复述通过）。去能力画像看看，或挑战下一题。
@@ -461,8 +469,11 @@ function quit() {
           </div>
         </div>
         <div v-else-if="session.fixed" class="banner banner-fixed">
-          ✅ <b>修复通过测试</b>，知识点现在是「已解决」。别急着结束——继续和导师完成 ⑤验证（边界测试）与
-          ⑥内化（复述成因、定位、迁移），才能升级为「已内化」。
+          <div class="bf-title">代码修对了 · 进度到 ⑤验证（还没结束）</div>
+          <div class="bf-body">
+            这只是<b>「已解决」</b>——会改 ≠ 真懂。<b>「已解决」≠「已掌握」</b>。
+            接着和导师走完 ⑤验证（边界测试）与 ⑥内化（讲清成因/定位/迁移），知识点才升级为「已内化」，这一关才算真正学会。
+          </div>
         </div>
       </div>
 
@@ -714,16 +725,24 @@ function quit() {
   border-left: 3px solid var(--primary);
 }
 .banner b { font-weight: 600; }
+.bf-title { font-weight: 600; color: var(--primary-dark); margin-bottom: 4px; }
+.bf-body { font-size: 13px; line-height: 1.7; }
 .code-actions { display: inline-flex; gap: 8px; }
 .run-result {
   margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
 }
 .run-result-head {
-  font-size: 12px; color: var(--muted); padding: 7px 12px; background: var(--bg);
-  border-bottom: 1px solid var(--border);
+  font-size: 13px; font-weight: 600; padding: 8px 12px; background: var(--bg);
+  border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;
 }
+.run-result-head.ok { color: var(--green); }
+.run-result-head.bad { color: var(--red); }
+.run-real { font-size: 11px; font-weight: 400; color: var(--muted); }
+.run-block { border-bottom: 1px solid var(--border); }
+.run-block:last-child { border-bottom: none; }
+.run-label { font-size: 11px; color: var(--muted); padding: 6px 12px 0; font-family: Consolas, monospace; }
 .run-out, .run-err {
-  margin: 0; padding: 10px 12px; font-family: Consolas, monospace; font-size: 13px;
+  margin: 0; padding: 4px 12px 10px; font-family: Consolas, monospace; font-size: 13px;
   line-height: 1.55; white-space: pre-wrap; word-break: break-word;
 }
 .run-out { color: var(--text); }
