@@ -53,6 +53,21 @@ const session = reactive({
 const masteredKps = ref(new Set())   // 学生已内化的知识点（练前小灶用来标「已掌握」）
 const showPrimer = ref(true)         // 练前小灶是否展开
 const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否展开（默认收起，需要的人点开）
+const walkthrough = ref('')          // 逐行讲解文本（点按钮自动生成）
+const walkLoading = ref(false)
+
+async function loadWalkthrough() {
+  if (walkthrough.value || walkLoading.value || !session.patternId) return
+  walkLoading.value = true
+  try {
+    const d = await api.getWalkthrough(session.patternId)
+    walkthrough.value = d.walkthrough || ''
+  } catch (e) {
+    walkthrough.value = '讲解生成失败，可以把看不懂的那一行直接发给导师问。'
+  } finally {
+    walkLoading.value = false
+  }
+}
 
 // 「代码怎么读」：这道题代码里实际出现的语法符号，给完全没见过代码的人扫盲
 const syntaxBricks = computed(() => bricksInCode(session.code))
@@ -146,6 +161,7 @@ async function start(patternId) {
     session.id = data.session_id
     session.patternId = patternId
     showPrimer.value = true   // 新关卡默认展开练前小灶
+    walkthrough.value = ''    // 清掉上一题的逐行讲解
     localStorage.setItem('active_session', data.session_id)  // 记下当前关卡，供刷新后续做
     session.code = data.code
     session.task = data.task
@@ -324,6 +340,14 @@ function quit() {
               <span class="syntax-desc">{{ b.desc }}</span>
             </div>
           </div>
+        </div>
+        <!-- 逐行讲解：AI 把这段代码翻译成大白话（不剧透 bug） -->
+        <div class="walk-box">
+          <button v-if="!walkthrough && !walkLoading" class="walk-btn" @click="loadWalkthrough">
+            📖 还是看不懂这段代码？让导师逐行讲给我听
+          </button>
+          <div v-else-if="walkLoading" class="walk-loading">导师正在逐行讲解…</div>
+          <div v-else class="walk-text">{{ walkthrough }}</div>
         </div>
         <div class="primer-sub">这道题涉及的概念：</div>
         <div v-for="c in primerConcepts" :key="c.kp" class="primer-item">
@@ -549,6 +573,19 @@ function quit() {
   font-family: Consolas, monospace; font-size: 13px; font-weight: 700; color: var(--primary-dark);
 }
 .syntax-desc { font-size: 13px; color: var(--muted); line-height: 1.6; }
+
+/* 逐行讲解 */
+.walk-btn {
+  width: 100%; text-align: left; font-size: 13.5px; color: var(--primary-dark);
+  background: var(--accent-soft); border: 1px dashed var(--primary); border-radius: 10px;
+  padding: 11px 14px; cursor: pointer;
+}
+.walk-btn:hover { color: var(--primary); }
+.walk-loading { font-size: 13px; color: var(--muted); padding: 8px 2px; }
+.walk-text {
+  font-size: 13.5px; color: var(--text); line-height: 1.85; white-space: pre-wrap;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+}
 
 /* ---------- 双栏 ---------- */
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
