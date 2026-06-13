@@ -22,6 +22,8 @@ trigger_input: '"hello"'
 root_cause: "长度为n的字符串合法下标是0到n-1，s[len(s)]访问的是第n个位置，越过了末尾"
 expected_fix: "s[len(s) - 1] 或 s[-1]"
 fix_check: 's\[-1\]|len\(s\)\s*-\s*1'
+expected_output: |
+  o
 internalize_questions:
   - "长度为5的字符串，最后一个字符的下标是几？为什么不是5？"
   - "Python还有什么更简洁的方式取最后一个元素？"

@@ -28,6 +28,9 @@ trigger_input: "target=9（目标在区间右端时）"
 root_cause: "left = mid 没有排除已检查过的mid。当区间缩到两个元素且目标在右边时，mid恒等于left，区间不再收缩，死循环——应为 left = mid + 1"
 expected_fix: "left = mid + 1"
 fix_check: 'left\s*=\s*mid\s*\+\s*1'
+expected_output: |
+  3
+  4
 internalize_questions:
   - "用 left=3, right=4 手动模拟一遍：mid是几？下一轮left和right变成什么？"
   - "二分查找保证不死循环的条件是什么？每轮迭代必须发生什么？"

@@ -265,7 +265,7 @@ FIX_FAILED_PREFIX = "（我提交了修复，但测试未通过）"
 
 
 def diagnose_failed_fix(pattern_id: str, code: str) -> str:
-    """失败提交的规则诊断：雷行没动 vs 动了但不对。给导师做针对性引导的抓手。"""
+    """（旧·正则诊断，已被 judge_feedback 的真实运行结果取代，保留作兜底）"""
     hit = mine_line_text(pattern_id)
     if hit:
         line_text, line_no = hit
@@ -273,6 +273,21 @@ def diagnose_failed_fix(pattern_id: str, code: str) -> str:
             return f"雷行未被修改：出问题的第{line_no}行 `{line_text}` 在提交代码中原样保留"
         return "雷行已被修改，但新写法仍未通过修复检查"
     return "未通过修复检查"
+
+
+def judge_feedback(result: dict) -> str:
+    """把 judge_fix 的真实运行结果转成给导师的真实证据（路线A：导师据真相引导，不再瞎猜）。"""
+    kind = result.get("kind")
+    if kind == "RE":
+        err = (result.get("stderr") or "").strip()
+        return f"程序运行报错了，真实报错如下：\n{err[-600:]}"
+    if kind == "HANG":
+        return "程序运行超时、跑不结束——很可能是死循环（循环条件一直为真）。"
+    if kind == "WA":
+        got = (result.get("stdout") or "").strip()
+        exp = (result.get("expected") or "").strip()
+        return f"程序能正常跑完、但结果不对。\n实际输出：\n{got}\n期望输出：\n{exp}"
+    return "未通过测试。"
 
 
 # ④修复阶段常驻注入：学生自己提思路、自己改代码；失败反馈针对诊断引导，不复读「测试失败」。

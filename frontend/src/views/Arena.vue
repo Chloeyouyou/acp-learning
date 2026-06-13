@@ -55,6 +55,21 @@ const showPrimer = ref(true)         // 练前小灶是否展开
 const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否展开（默认收起，需要的人点开）
 const walkthrough = ref('')          // 逐行讲解文本（点按钮自动生成）
 const walkLoading = ref(false)
+const running = ref(false)           // 运行按钮状态
+const runResult = ref(null)          // {stdout, stderr, timed_out}
+
+async function runCurrentCode() {
+  if (running.value || !session.id) return
+  running.value = true
+  runResult.value = null
+  try {
+    runResult.value = await api.runCode(session.id, session.code)
+  } catch (e) {
+    runResult.value = { stdout: '', stderr: '运行失败：' + e.message, timed_out: false }
+  } finally {
+    running.value = false
+  }
+}
 const walkDeep = ref(false)          // 是否已是「更详细」档
 // 已掌握的语法符号（用户点「懂了」后记住，以后不再展示，列表越用越短）
 const learnedBricks = ref(new Set(JSON.parse(localStorage.getItem('learned_bricks') || '[]')))
@@ -191,6 +206,7 @@ async function start(patternId) {
     showPrimer.value = true   // 新关卡默认展开练前小灶
     walkthrough.value = ''    // 清掉上一题的逐行讲解
     walkDeep.value = false
+    runResult.value = null
     localStorage.setItem('active_session', data.session_id)  // 记下当前关卡，供刷新后续做
     session.code = data.code
     session.task = data.task
@@ -417,11 +433,24 @@ function quit() {
       <div class="panel code-panel">
         <div class="panel-title">
           <span class="title-text">代码 · 直接在这里修改</span>
-          <button class="primary" :disabled="submitting || session.fixed" @click="submit">
-            {{ submitting ? '判定中…' : '提交修复' }}
-          </button>
+          <span class="code-actions">
+            <button :disabled="running" @click="runCurrentCode">
+              {{ running ? '运行中…' : '▶ 运行' }}
+            </button>
+            <button class="primary" :disabled="submitting || session.fixed" @click="submit">
+              {{ submitting ? '判定中…' : '提交修复' }}
+            </button>
+          </span>
         </div>
         <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
+        <!-- 运行结果：学生自己跑、自己看真实输出/报错（路线A） -->
+        <div v-if="runResult" class="run-result">
+          <div class="run-result-head">运行结果</div>
+          <pre v-if="runResult.stdout" class="run-out">{{ runResult.stdout }}</pre>
+          <pre v-if="runResult.stderr" class="run-err">{{ runResult.stderr }}</pre>
+          <div v-if="runResult.timed_out" class="run-err">⏱ 运行超时——程序跑不结束，很可能是死循环。</div>
+          <div v-if="!runResult.stdout && !runResult.stderr && !runResult.timed_out" class="run-empty">（没有任何输出）</div>
+        </div>
         <div v-if="session.done" class="banner banner-done">
           🎉 <b>本关完成！</b>该知识点已升级为「已内化」（成因 / 定位 / 迁移复述通过）。去能力画像看看，或挑战下一题。
           <div v-if="session.variant" class="variant-offer">
@@ -685,6 +714,21 @@ function quit() {
   border-left: 3px solid var(--primary);
 }
 .banner b { font-weight: 600; }
+.code-actions { display: inline-flex; gap: 8px; }
+.run-result {
+  margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+}
+.run-result-head {
+  font-size: 12px; color: var(--muted); padding: 7px 12px; background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.run-out, .run-err {
+  margin: 0; padding: 10px 12px; font-family: Consolas, monospace; font-size: 13px;
+  line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+}
+.run-out { color: var(--text); }
+.run-err { color: var(--red); }
+.run-empty { padding: 10px 12px; font-size: 13px; color: var(--muted); }
 .variant-offer { margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0cdbb; display: flex; flex-direction: column; gap: 8px; }
 .variant-label { font-size: 13px; }
 .variant-btn { align-self: flex-start; }

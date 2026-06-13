@@ -30,6 +30,8 @@ export const api = {
     request('POST', `/sessions/${sessionId}/messages`, { content }),
   submitFix: (sessionId, code) =>
     request('POST', `/sessions/${sessionId}/submit`, { code }),
+  runCode: (sessionId, code) =>
+    request('POST', `/sessions/${sessionId}/run`, { code }),
   getSession: (sessionId) => request('GET', `/sessions/${sessionId}`),
   getWalkthrough: (patternId, deep = false) =>
     request('GET', `/patterns/${patternId}/walkthrough${deep ? '?deep=true' : ''}`),

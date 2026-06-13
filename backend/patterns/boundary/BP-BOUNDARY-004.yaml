@@ -26,6 +26,8 @@ trigger_input: "[[1, 2, 3], [4, 5, 6]]"
 root_cause: "第6行下标用反了：外层循环i走的是列（0..2），却被用作matrix的行下标，i=2时访问matrix[2]越界——转置时应该是matrix[j][i]"
 expected_fix: "matrix[j][i]"
 fix_check: 'matrix\[j\]\[i\]'
+expected_output: |
+  [[1, 4], [2, 5], [3, 6]]
 internalize_questions:
   - "i 和 j 各自的取值范围是什么？matrix[i][j] 里它们分别该对应行还是列？"
   - "为什么 3行3列 的方阵测不出这个Bug？这对你设计测试用例有什么启发？"

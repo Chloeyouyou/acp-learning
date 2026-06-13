@@ -25,6 +25,8 @@ trigger_input: "[1, 2, 3]"
 root_cause: "range(len(arr) + 1) 使循环多走一步，最后一次迭代访问 arr[len(arr)]，越过数组末尾"
 expected_fix: "range(len(arr))"
 fix_check: 'range\(len\(arr\)\)\s*\)?:'
+expected_output: |
+  6
 internalize_questions:
   - "为什么 range(len(arr) + 1) 会越界？列表合法下标的范围是什么？"
   - "如果就是要访问最后一个元素，下标应该写什么？"

@@ -26,6 +26,8 @@ trigger_input: "[90, 85, -1, 70, 60]"
 root_cause: "break终止整个循环，continue才是跳过本次迭代——注释里的意图是'跳过这一个继续算'，用break导致-1后面的70和60全被丢弃"
 expected_fix: "continue"
 fix_check: 'continue'
+expected_output: |
+  305
 internalize_questions:
   - "break 和 continue 的区别是什么？各自适用什么场景？"
   - "这个Bug为什么不报错？你是靠什么发现结果不对的？"

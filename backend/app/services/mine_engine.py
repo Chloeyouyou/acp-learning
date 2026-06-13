@@ -7,6 +7,7 @@ import uuid
 import yaml
 
 from ..config import PATTERNS_DIR
+from . import sandbox
 
 _patterns: dict[str, dict] = {}
 
@@ -58,16 +59,29 @@ def build_manifest(student_id: str, pattern: dict) -> dict:
     }
 
 
-def verify_fix(pattern_id: str, code: str) -> bool:
-    """MVP判定：检查学生提交的代码是否包含预期修复（fix_check正则）。
+def judge_fix(pattern_id: str, code: str) -> dict:
+    """路线A判题：真跑学生代码，按运行结果判对错（替代正则文字匹配）。
 
-    容忍括号/方括号内外的装饰性空格——range(len(arr) ) 与 range(len(arr)) 等价，
-    避免把语义正确、只是多打了个空格的修复误判为失败。不动关键字间的空格
-    （如 while n > 0、n -= 1），以免影响依赖空格的 fix_check。
-
-    V0.3 换成沙箱真实运行触发测试（雷会响/不响）。
+    返回 {passed, kind, stdout, stderr, expected}：
+    - 跑通且无报错且（有 expected_output 时）输出匹配 → passed=True, kind="ok"
+    - 超时 → kind="HANG"；报错 → kind="RE"；跑通但输出不符 → kind="WA"
+    expected_output 可选：确定型题目精确比对；优雅处理型题目（如空输入）省略，只要求不报错。
     """
     pattern = get_pattern(pattern_id)
-    normalized = re.sub(r"\s+([)\]])", r"\1", code)       # 去掉 ) ] 前的空格
-    normalized = re.sub(r"([(\[])\s+", r"\1", normalized)  # 去掉 ( [ 后的空格
-    return re.search(pattern["fix_check"], normalized) is not None
+    r = sandbox.run_code(code)
+    expected = pattern.get("expected_output")
+    if r.timed_out:
+        kind, passed = "HANG", False
+    elif r.has_error:
+        kind, passed = "RE", False
+    elif expected is not None and sandbox.normalize_output(r.stdout) != sandbox.normalize_output(expected):
+        kind, passed = "WA", False
+    else:
+        kind, passed = "ok", True
+    return {"passed": passed, "kind": kind, "stdout": r.stdout,
+            "stderr": r.stderr, "expected": expected}
+
+
+def verify_fix(pattern_id: str, code: str) -> bool:
+    """布尔判定（向后兼容）：真跑学生代码判对错。详见 judge_fix。"""
+    return judge_fix(pattern_id, code)["passed"]

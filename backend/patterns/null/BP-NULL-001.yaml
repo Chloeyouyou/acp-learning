@@ -28,6 +28,8 @@ trigger_input: "任意 add_score 调用"
 root_cause: "scores 字段在构造时被赋为 None 而不是空列表，第7行首次调用 append 时报错——报错行只是案发现场，根因在第4行的初始化"
 expected_fix: "self.scores = []"
 fix_check: 'self\.scores\s*=\s*\[\]'
+expected_output: |
+  [95]
 internalize_questions:
   - "为什么崩在第7行，错却在第4行？这两行是什么关系？"
   - "看到 NoneType 报错，你应该先问'谁是None'还是'哪行崩了'？为什么？"

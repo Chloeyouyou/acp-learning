@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .config import STAGES
 from .db import get_db, init_db
 from .models import TutorSession
-from .services import event_engine, mine_engine, profile, tutor
+from .services import event_engine, mine_engine, profile, sandbox, tutor
 
 app = FastAPI(title="ACP Learning API", version="0.1.0")
 
@@ -124,6 +124,14 @@ def get_session(session_id: str, db: Session = Depends(get_db)):
     }
 
 
+@app.post("/api/sessions/{session_id}/run")
+def run_code_endpoint(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
+    """运行按钮：真跑一遍学生当前代码，返回真实输出/报错。纯观察，不判分、不改阶段。"""
+    _get_session(db, session_id)  # 仅校验会话存在
+    r = sandbox.run_code(req.code)
+    return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out}
+
+
 @app.post("/api/sessions/{session_id}/messages")
 def send_message(session_id: str, req: MessageReq, db: Session = Depends(get_db)):
     session = _get_session(db, session_id)
@@ -143,9 +151,10 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
     if session.mine_status == "fixed":
         return {"passed": True, "stage": session.stage, "message": "修复已通过，无需重复提交。"}
 
-    if not mine_engine.verify_fix(session.pattern_id, req.code):
-        diagnosis = tutor.diagnose_failed_fix(session.pattern_id, req.code)
-        fail_msg = (f"{tutor.FIX_FAILED_PREFIX}\n我提交的代码：\n{req.code}\n\n[系统诊断] {diagnosis}")
+    result = mine_engine.judge_fix(session.pattern_id, req.code)
+    if not result["passed"]:
+        diagnosis = tutor.judge_feedback(result)  # 真实运行结果（报错/输出差异/超时），非正则猜测
+        fail_msg = (f"{tutor.FIX_FAILED_PREFIX}\n我提交的代码：\n{req.code}\n\n[真实运行结果] {diagnosis}")
         try:
             feedback = tutor.run_turn(db, session, fail_msg)
             return {"passed": False, "stage": feedback["stage"], "message": feedback["reply"]}
@@ -154,7 +163,7 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
             session.history = list(session.history) + [{"role": "user", "content": fail_msg}]
             db.commit()
             return {"passed": False, "stage": session.stage,
-                    "message": f"测试未通过。{diagnosis}。回到对话里和导师继续分析。"}
+                    "message": f"测试未通过。{diagnosis}\n回到对话里和导师继续分析。"}
 
     # 学生若在讲清原因之前（还停在①②③）就直接提交了正确代码——不拦截，尊重已会的学生，
     # 但记下「跳过了理解对话」，反馈里温和提醒：修对≠学会，请在⑤⑥把「为什么」补上。

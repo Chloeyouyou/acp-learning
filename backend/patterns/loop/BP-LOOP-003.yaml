@@ -31,6 +31,10 @@ trigger_input: "n=3"
 expected_fix: "range(1, i + 1)"
 fix_check: 'range\(1,\s*i\s*\+\s*1\)'
 root_cause: "内层循环边界应该依赖外层变量i（第i行只有i列），误写成n后每行都输出n列"
+expected_output: |
+  1x1=1
+  1x2=2 2x2=4
+  1x3=3 2x3=6 3x3=9
 internalize_questions:
   - "外层变量i和内层变量j各自控制什么？内层的范围为什么要依赖i？"
   - "这种不报错的输出错误，你是怎么发现的？对照期望输出有什么技巧？"

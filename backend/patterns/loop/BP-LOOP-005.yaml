@@ -24,6 +24,8 @@ trigger_input: "[45, 50, 80, 90]（连续两个不及格）"
 root_cause: "一边遍历一边remove：删掉45后所有元素前移，迭代器的游标却继续后移，50被跳过没有检查。遍历中修改正在遍历的列表会让迭代器错位——应遍历副本或用列表推导式重建"
 expected_fix: "遍历副本 for s in scores[:] 或列表推导 [s for s in scores if s >= 60]"
 fix_check: 'scores\[:\]|list\(scores\)|for\s+s\s+in\s+scores\s+if|if\s+s\s*>=\s*60'
+expected_output: |
+  [80, 90]
 internalize_questions:
   - "删掉45之后，列表变成什么样？此时迭代器的游标指向第几个位置？下一个被检查的是谁？"
   - "为什么 [45, 80, 50, 90]（不及格不相邻）就能侥幸全删掉？这种'有时对有时错'的Bug为什么特别危险？"

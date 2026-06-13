@@ -23,6 +23,8 @@ trigger_input: "任意 n > 0"
 root_cause: "循环体内没有更新循环变量 n，while 条件 n > 0 永远为真，循环永不退出"
 expected_fix: "循环体内加入 n -= 1"
 fix_check: 'n\s*-=\s*1|n\s*=\s*n\s*-\s*1'
+expected_output: |
+  [5, 4, 3, 2, 1]
 internalize_questions:
   - "while 循环能退出的条件是什么？这个程序里谁负责让条件变假？"
   - "以后写 while 循环，你会怎么快速自查会不会死循环？"
