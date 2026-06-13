@@ -321,9 +321,14 @@ VERIFY_LAYER_TEMPLATE = """
 - 学生主动提出可检验的边界输入（说清测什么）→ Hypothesis_Testing +1
 - 学生构造输入并解释了预期结果/推演了变量值 → Hypothesis_Testing +2
 
-阶段放行（从严）：
-- 学生至少完成一个边界测试的完整解释（输入是什么、预期结果是什么、为什么）后，才在 stage_transition 填「⑥内化」
-- 只口头说「都能过/没问题」不算完成，不要放行
+阶段放行：
+- 理想：学生说清一个边界测试（输入 + 预期结果 + 为什么）→ stage_transition 填「⑥内化」
+- 学生在挣扎时放宽：只要他指出了一个边界输入、并大致说出该返回什么（哪怕只是「None」「空」「报错」这种简短回答），就算达成，可以放行——不要追着要完整的「为什么」把他困住。
+- 只空泛说「都能过/没问题」、什么具体输入都没提，才不放行。
+
+[绝对禁止绕圈]
+- 绝不重复你上一轮问过的话。学生只要回答了（哪怕很短，如「None」「空」「是的」），就先接住并确认他的答案，然后往前推进或换一个不同的小问题，绝不把同一个问题再问一遍。
+- 如果你发现自己已经问了两三轮类似的问题，就直接小结、肯定，然后放行进入下一阶段，不要再原地打转。
 
 内化问题（进入⑥后系统会用，本阶段可顺带预热一个）：
 {internalize_questions}
@@ -340,6 +345,26 @@ EXPECT_RE = re.compile(
 
 def message_explains_boundary_test(message: str) -> bool:
     return bool(BOUNDARY_INPUT_RE.search(message)) and bool(EXPECT_RE.search(message))
+
+
+_SUBMIT_PASS_MARKER = "我提交的修复已通过测试"
+
+
+def verify_phase(history: list) -> tuple[str, int]:
+    """统计进入⑤验证后（以提交通过的系统消息为界）：学生发言合集 + 导师已问了几轮。
+    用来在学生碎片化作答/绕圈时累计判断，并作为防死循环的依据。"""
+    stu, ai, seen = [], 0, False
+    for m in history:
+        if m["role"] == "user" and _SUBMIT_PASS_MARKER in m["content"]:
+            stu, ai, seen = [], 0, True
+            continue
+        if not seen:
+            continue
+        if m["role"] == "user" and not m["content"].startswith(("（系统", "(系统")):
+            stu.append(m["content"])
+        elif m["role"] == "assistant":
+            ai += 1
+    return " ".join(stu), ai
 
 
 # 纯表态（我懂了/会了/以后注意）不携带任何机制信息，规则层直接拦截，不交给LLM判
@@ -523,6 +548,7 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
     auto_advanced = None    # ①→②：消息含明确异常签名
     auto_located = False    # ②→③：消息引用雷行代码或点名行号
     auto_verified = False   # ⑤→⑥：消息同时说出边界输入和预期结果
+    frustrated = detect_frustration(student_message)  # ⑤判定与止损都要用，提前算
     if session.stage == "①发现":
         hit = detect_error_signature(student_message)
         if hit:
@@ -532,14 +558,20 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
         auto_located = True
         session.stage = "③归因"
         session.attribution_step = "variable_trace"
-    elif session.stage == "⑤验证" and message_explains_boundary_test(student_message):
-        auto_verified = True
-        session.stage = "⑥内化"
+    elif session.stage == "⑤验证":
+        # 放行条件（任一）：单条说全边界测试；或受挫+累计提到过边界输入；或已绕≥4轮（防死循环兜底）
+        stu_text, ai_turns = verify_phase(session.history)
+        joined = stu_text + " " + student_message
+        struggling = frustrated or session.stalled_turns >= 2
+        if (message_explains_boundary_test(student_message)
+                or (struggling and BOUNDARY_INPUT_RE.search(joined))
+                or ai_turns >= 4):
+            auto_verified = True
+            session.stage = "⑥内化"
     rule_advanced = bool(auto_advanced) or auto_located or auto_verified
 
     # 止损共情层：检测受挫（明说不会/想放弃，或连续≥2轮无进展）→ 主动降难+共情+类比。
     # 规则层先把提示级别升一格，确保台阶真的降下来，不只靠 LLM 自觉（刚跃迁的当轮不触发）。
-    frustrated = detect_frustration(student_message)
     support_mode = not rule_advanced and (frustrated or session.stalled_turns >= 2)
     if support_mode and HINT_LEVELS.index(session.hint_level) < len(HINT_LEVELS) - 1:
         session.hint_level = HINT_LEVELS[HINT_LEVELS.index(session.hint_level) + 1]
