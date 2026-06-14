@@ -101,12 +101,18 @@ const kpPatterns = computed(() => {
 function kpVariant(kp) {
   return (kpPatterns.value[kp] || []).map((p) => p.variant).find(Boolean) || null
 }
-// 翻转态（点击切换）
-const flippedKps = ref(new Set())
-function toggleFlip(kp) {
-  const s = flippedKps.value
+// 展开态（点击切换，往下顶、自动撑高，不裁字不滚动）
+const expandedKps = ref(new Set())
+function toggleExpand(kp) {
+  const s = expandedKps.value
   s.has(kp) ? s.delete(kp) : s.add(kp)
 }
+// 按「该不该练」排序：建议再练的排前，已掌握/熟练垫后 —— 一眼看到该补哪
+const sortedMastery = computed(() =>
+  [...mastery.value].sort((a, b) => {
+    if (a.weak !== b.weak) return a.weak ? -1 : 1
+    return (MASTERY_LEVEL[a.mastery] || 0) - (MASTERY_LEVEL[b.mastery] || 0)
+  }))
 
 // 下半部分用标签页：一次只看一块，避免页面又长又吵
 const tab = ref('知识点')   // '知识点' | '能力'
@@ -189,11 +195,11 @@ const unevaluatedDims = computed(() =>
       </div>
     </div>
 
-    <!-- 知识点翻转卡 -->
+    <!-- 知识点展开卡 -->
     <div v-show="tab === '知识点'" class="tab-pane">
       <div class="panel" v-if="mastery.length">
         <div class="km-head">
-          <h3>知识点 <small class="h3-sub">点卡片翻面看详情</small></h3>
+          <h3>知识点 <small class="h3-sub">点卡片展开看详情</small></h3>
           <div v-if="nextPractice" class="km-next">
             <span class="km-next-label">下一题推荐</span>
             <span class="km-next-kp">{{ nextPractice.kp }}</span>
@@ -201,26 +207,28 @@ const unevaluatedDims = computed(() =>
           </div>
         </div>
         <div class="kpc-grid">
-          <div v-for="m in mastery" :key="m.kp"
-               :class="['kpc', { flipped: flippedKps.has(m.kp) }]" @click="toggleFlip(m.kp)">
-            <div class="kpc-inner">
-              <!-- 正面：简约概览 -->
-              <div class="kpc-face kpc-front">
-                <div class="kpc-name"><GlossaryText :text="m.kp" /></div>
-                <div class="kpc-dots" :title="m.mastery">
-                  <i v-for="n in 4" :key="n" :class="['kpc-dot', { on: n <= MASTERY_LEVEL[m.mastery] }]" />
-                </div>
-                <div class="kpc-mastery" :class="m.mastery">{{ m.mastery }}</div>
-                <div v-if="m.weak" class="kpc-flag">建议再练</div>
-                <div class="kpc-hintflip">点我看详情 ⤵</div>
+          <div v-for="m in sortedMastery" :key="m.kp"
+               :class="['kpc', { open: expandedKps.has(m.kp) }]" @click="toggleExpand(m.kp)">
+            <!-- 收起：名字 + 掌握度 + 一句话状态 -->
+            <div class="kpc-head">
+              <div class="kpc-name"><GlossaryText :text="m.kp" /></div>
+              <div class="kpc-dots" :title="m.mastery">
+                <i v-for="n in 4" :key="n" :class="['kpc-dot', { on: n <= MASTERY_LEVEL[m.mastery] }]" />
               </div>
-              <!-- 背面：详情（练习/建议/相关题/去练） -->
-              <div class="kpc-face kpc-back">
+            </div>
+            <div class="kpc-status">
+              <span class="kpc-mastery" :class="m.mastery">{{ m.mastery }}</span>
+              <span v-if="m.weak" class="kpc-flag">· 建议再练</span>
+              <span class="kpc-caret">{{ expandedKps.has(m.kp) ? '▴' : '▾' }}</span>
+            </div>
+            <!-- 展开：练习 + 建议 + 相关题 + 去练（向下撑高，不裁不滚） -->
+            <div class="kpc-detail">
+              <div class="kpc-detail-inner">
                 <div class="kpc-back-line">练习：{{ PRACTICE_LABEL[m.confidence] }}</div>
                 <div v-if="m.weak" class="kpc-back-line reason">建议：{{ m.weak_reason }}</div>
                 <div v-if="kpPatterns[m.kp]?.length" class="kpc-pats">
                   <div v-for="(p, i) in kpPatterns[m.kp]" :key="i" class="kpc-pat">
-                    {{ p.name }}<span :class="['state', p.state]">{{ p.state }}</span>
+                    <span class="kpc-pat-name">{{ p.name }}</span><span :class="['state', p.state]">{{ p.state }}</span>
                   </div>
                 </div>
                 <button v-if="profile.practice.by_kp[m.kp]" class="kpc-go"
@@ -284,38 +292,40 @@ h3 { margin-top: 0; font-size: 17px; }
 .km-next-btn:hover { border-color: var(--primary); }
 .km-foot { margin-top: 12px; }
 
-.kpc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-top: 12px; }
-.kpc { perspective: 800px; height: 118px; cursor: pointer; }
-.kpc-inner {
-  position: relative; width: 100%; height: 100%; transition: transform 0.5s;
-  transform-style: preserve-3d;
-}
-.kpc.flipped .kpc-inner { transform: rotateY(180deg); }
-.kpc-face {
-  position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden;
+.kpc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-top: 12px; align-items: start; }
+.kpc {
   border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--panel);
-  display: flex; flex-direction: column; box-shadow: 0 1px 2px rgba(43,41,36,0.04);
+  cursor: pointer; box-shadow: 0 1px 2px rgba(43,41,36,0.04); transition: border-color 0.15s, box-shadow 0.15s;
 }
-.kpc-front { gap: 7px; }
-.kpc-name { font-family: var(--serif); font-size: 15px; font-weight: 600; }
-.kpc-dots { display: inline-flex; gap: 4px; }
-.kpc-dot { width: 9px; height: 9px; border-radius: 50%; background: #e7e2d6; display: inline-block; }
+.kpc:hover { border-color: var(--primary); }
+.kpc.open { border-color: var(--primary); box-shadow: 0 2px 8px rgba(43,41,36,0.07); }
+.kpc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.kpc-name { font-family: var(--serif); font-size: 15px; font-weight: 600; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.kpc-dots { display: inline-flex; gap: 4px; padding-top: 5px; flex-shrink: 0; }
+.kpc-dot { width: 8px; height: 8px; border-radius: 50%; background: #e7e2d6; display: inline-block; }
 .kpc-dot.on { background: var(--primary); }
-.kpc-mastery { font-size: 13px; }
+.kpc-status { display: flex; align-items: center; gap: 4px; margin-top: 7px; font-size: 13px; }
 .kpc-mastery.生疏 { color: var(--muted); }
 .kpc-mastery.在学 { color: var(--primary-dark); }
 .kpc-mastery.掌握 { color: var(--primary); }
 .kpc-mastery.熟练 { color: var(--green); font-weight: 600; }
-.kpc-flag { font-size: 11.5px; color: #7a3f28; background: var(--accent-soft); align-self: flex-start; padding: 1px 8px; border-radius: 999px; }
-.kpc-hintflip { margin-top: auto; font-size: 11px; color: var(--muted); }
-.kpc-back { transform: rotateY(180deg); gap: 5px; overflow: auto; background: var(--bg); }
+.kpc-flag { font-size: 12px; color: #7a3f28; }
+.kpc-caret { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+/* 展开详情：grid-rows 0fr→1fr 平滑撑高，自动高度，不裁不滚 */
+.kpc-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.28s ease; }
+.kpc.open .kpc-detail { grid-template-rows: 1fr; }
+.kpc-detail-inner { overflow: hidden; display: flex; flex-direction: column; gap: 5px; }
+.kpc.open .kpc-detail-inner { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
 .kpc-back-line { font-size: 12.5px; color: var(--text); }
-.kpc-back-line.reason { color: #7a3f28; }
-.kpc-pats { display: flex; flex-direction: column; gap: 3px; margin: 2px 0; }
+.kpc-back-line.reason { color: #7a3f28; line-height: 1.4; }
+.kpc-pats { display: flex; flex-direction: column; gap: 4px; margin: 2px 0; min-width: 0; }
 .kpc-pat { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; justify-content: space-between; }
+.kpc-pat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kpc-go {
-  margin-top: auto; align-self: flex-start; font-size: 12.5px; color: var(--primary);
-  background: var(--accent-soft); border: 1px solid var(--border); border-radius: 7px; padding: 2px 10px;
+  align-self: flex-start; margin-top: 3px; font-size: 12.5px; color: var(--primary);
+  background: var(--accent-soft); border: 1px solid var(--border); border-radius: 7px; padding: 3px 11px;
 }
 .kpc-go:hover { border-color: var(--primary); }
 
