@@ -85,12 +85,13 @@ const walkDeep = ref(false)          // 是否已是「更详细」档
 const learnedBricks = ref(new Set(JSON.parse(localStorage.getItem('learned_bricks') || '[]')))
 
 // 把「代码 —— 解释」文本解析成一行行，渲染成和代码一一对应的样子
+// 容错：LLM 偶尔用单个 — 或 –，统一按 em-dash 连写切分（代码几乎不含破折号，安全）
 const walkRows = computed(() => {
   if (!walkthrough.value) return []
   return walkthrough.value.split('\n').map((l) => l.trim()).filter(Boolean).map((line) => {
-    const i = line.indexOf('——')
-    if (i === -1) return { code: '', explain: line }
-    return { code: line.slice(0, i).replace(/—+$/, '').trim(), explain: line.slice(i + 2).trim() }
+    const m = line.match(/[—–]+/)
+    if (!m) return { code: '', explain: line }
+    return { code: line.slice(0, m.index).trim(), explain: line.slice(m.index + m[0].length).trim() }
   })
 })
 
