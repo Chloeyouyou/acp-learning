@@ -51,7 +51,7 @@ const session = reactive({
   variant: null,     // 内化通过后推荐的变式题（迁移检验）
 })
 const masteredKps = ref(new Set())   // 学生已内化的知识点（练前小灶用来标「已掌握」）
-const showPrimer = ref(true)         // 练前小灶是否展开
+const showPrimer = ref(false)        // 练前小灶默认收起（需要的人再点开），避免页面被撑长
 const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否展开（默认收起，需要的人点开）
 const walkthrough = ref('')          // 逐行讲解文本（点按钮自动生成）
 const walkLoading = ref(false)
@@ -68,6 +68,10 @@ async function runCurrentCode() {
     runResult.value = await api.runCode(session.id, session.code)
     // B0.5：每关首次运行、且还在①发现阶段，弹观察卡（软桥，不锁聊天）
     if (!observationDone.value && session.stage === '①发现') {
+      // 按真实运行结果智能预勾，降低零基础负担（学生仍可改）
+      Object.keys(obsChecks).forEach((k) => { obsChecks[k] = false })
+      if (runResult.value.timed_out) obsChecks['程序卡住了/跑不完'] = true
+      else if (runResult.value.stderr) obsChecks['程序报错了'] = true
       observationPending.value = true
     }
   } catch (e) {
@@ -92,13 +96,21 @@ const walkRows = computed(() => {
 
 // 过滤掉用户已标「懂了」的符号
 const visibleBricks = computed(() => syntaxBricks.value.filter((b) => !learnedBricks.value.has(b.name)))
-const hiddenBrickCount = computed(() => syntaxBricks.value.length - visibleBricks.value.length)
+const hiddenBricks = computed(() => syntaxBricks.value.filter((b) => learnedBricks.value.has(b.name)))
+const showHiddenBricks = ref(false)   // 「已隐藏的符号」管理区是否展开
 
-function markBrickLearned(name) {
-  learnedBricks.value.add(name)
+function persistBricks() {
   localStorage.setItem('learned_bricks', JSON.stringify([...learnedBricks.value]))
 }
-function resetLearnedBricks() {
+function markBrickLearned(name) {
+  learnedBricks.value.add(name)
+  persistBricks()
+}
+function restoreBrick(name) {        // 单个恢复
+  learnedBricks.value.delete(name)
+  persistBricks()
+}
+function resetLearnedBricks() {      // 全部恢复
   learnedBricks.value = new Set()
   localStorage.removeItem('learned_bricks')
 }
@@ -210,7 +222,7 @@ async function start(patternId) {
     const data = await api.createSession(patternId)
     session.id = data.session_id
     session.patternId = patternId
-    showPrimer.value = true   // 新关卡默认展开练前小灶
+    showPrimer.value = false  // 新关卡练前小灶默认收起，需要的人再点开
     walkthrough.value = ''    // 清掉上一题的逐行讲解
     walkDeep.value = false
     runResult.value = null
@@ -271,7 +283,7 @@ async function send() {
 const OBSERVATION_MARK = '【观察记录】'
 const observationPending = ref(false)   // 是否显示观察卡
 const observationDone = ref(false)      // 本关是否已观察过（每关首次运行触发一次）
-const obsChecks = reactive({ 程序报错了: false, 输出和预期不同: false, 输出正确: false, 我还没看懂: false })
+const obsChecks = reactive({ 程序报错了: false, '程序卡住了/跑不完': false, 输出和预期不同: false, 输出正确: false, 我还没看懂: false })
 const obsGuess = ref('')
 
 function resetObservation() {
@@ -418,11 +430,11 @@ function quit() {
     <div v-if="primerConcepts.length" class="primer panel">
       <button class="primer-head" @click="showPrimer = !showPrimer">
         <span class="primer-caret" :class="{ open: showPrimer }">▸</span>
-        💡 <b>练前小灶</b> · 这道题会用到这些概念，看不懂代码先花一分钟补一补
+        💡 <b>看不懂代码？点开练前小灶</b> · 认符号 / 逐行讲解 / 概念
       </button>
       <div v-show="showPrimer" class="primer-body">
-        <!-- 代码符号扫盲：完全没见过代码的人先认认这些符号；标「懂了」的不再出现 -->
-        <div v-if="visibleBricks.length" class="syntax-box">
+        <!-- 代码符号扫盲：完全没见过代码的人先认认这些符号；标「懂了」的可单个/全部恢复 -->
+        <div v-if="visibleBricks.length || hiddenBricks.length" class="syntax-box">
           <button class="syntax-head" @click="showSyntax = !showSyntax">
             <span class="primer-caret" :class="{ open: showSyntax }">▸</span>
             🔤 完全没接触过代码？先认认这道题里的符号（{{ visibleBricks.length }} 个）
@@ -435,16 +447,22 @@ function quit() {
               </div>
               <span class="syntax-desc">{{ b.desc }}</span>
             </div>
-            <p v-if="hiddenBrickCount" class="brick-hidden">
-              已隐藏 {{ hiddenBrickCount }} 个你标记懂了的符号 ·
-              <button class="brick-reset" @click="resetLearnedBricks">全部恢复显示</button>
-            </p>
+            <div v-if="visibleBricks.length === 0" class="brick-allknown">这道题的符号你都标记懂了 👍</div>
+            <!-- 已隐藏符号管理：可展开逐个恢复，或一键全部恢复 -->
+            <div v-if="hiddenBricks.length" class="brick-hidden">
+              <button class="brick-toggle" @click="showHiddenBricks = !showHiddenBricks">
+                已隐藏 {{ hiddenBricks.length }} 个你标记懂了的符号 {{ showHiddenBricks ? '▾' : '▸' }}
+              </button>
+              <div v-show="showHiddenBricks" class="hidden-list">
+                <div v-for="b in hiddenBricks" :key="b.name" class="hidden-item">
+                  <span class="syntax-name">{{ b.name }}</span>
+                  <button class="brick-restore" @click="restoreBrick(b.name)">↩ 恢复</button>
+                </div>
+                <button class="brick-reset" @click="resetLearnedBricks">全部恢复</button>
+              </div>
+            </div>
           </div>
         </div>
-        <p v-else-if="hiddenBrickCount" class="brick-hidden">
-          这道题的符号你都标记懂了 👍 ·
-          <button class="brick-reset" @click="resetLearnedBricks">恢复显示</button>
-        </p>
         <!-- 逐行讲解：AI 把代码翻译成大白话，和代码一行一行对应（不剧透 bug） -->
         <div class="walk-box">
           <button v-if="!walkthrough && !walkLoading" class="walk-btn" @click="loadWalkthrough(false)">
@@ -734,8 +752,15 @@ function quit() {
   background: none; padding: 1px 8px; border-radius: 999px;
 }
 .brick-known:hover { border-color: var(--green); color: var(--green); }
-.brick-hidden { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
-.brick-reset { font-size: 12px; color: var(--primary); background: none; border: none; padding: 0; cursor: pointer; }
+.brick-hidden { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+.brick-allknown { font-size: 12px; color: var(--muted); margin: 4px 0; }
+.brick-toggle { font-size: 12px; color: var(--muted); background: none; border: none; padding: 0; cursor: pointer; }
+.brick-toggle:hover { color: var(--text); }
+.hidden-list { margin-top: 6px; display: flex; flex-direction: column; gap: 5px; }
+.hidden-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.brick-restore { font-size: 12px; color: var(--primary); background: none; border: 1px solid var(--border); border-radius: 6px; padding: 1px 8px; cursor: pointer; }
+.brick-restore:hover { border-color: var(--primary); }
+.brick-reset { font-size: 12px; color: var(--primary); background: none; border: none; padding: 2px 0 0; cursor: pointer; align-self: flex-start; }
 
 /* 逐行讲解 */
 .walk-btn {
