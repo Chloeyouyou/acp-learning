@@ -66,6 +66,10 @@ async function runCurrentCode() {
   runResult.value = null
   try {
     runResult.value = await api.runCode(session.id, session.code)
+    // B0.5：每关首次运行、且还在①发现阶段，弹观察卡（软桥，不锁聊天）
+    if (!observationDone.value && session.stage === '①发现') {
+      observationPending.value = true
+    }
   } catch (e) {
     runResult.value = { stdout: '', stderr: '运行失败：' + e.message, timed_out: false }
   } finally {
@@ -166,6 +170,7 @@ onMounted(async () => {
         session.done = d.done
         session.internalizeQuestions = d.internalize_questions || []
         session.variant = null
+        observationDone.value = true   // 续做：已在进行中，不再弹观察卡
         messages.value = d.messages
         messages.value.push({ role: 'system', text: '↩️ 已恢复你上次未完成的关卡，接着来吧。' })
       } else {
@@ -209,6 +214,7 @@ async function start(patternId) {
     walkthrough.value = ''    // 清掉上一题的逐行讲解
     walkDeep.value = false
     runResult.value = null
+    resetObservation()
     localStorage.setItem('active_session', data.session_id)  // 记下当前关卡，供刷新后续做
     session.code = data.code
     session.task = data.task
@@ -229,10 +235,9 @@ async function scrollChat() {
   if (chatBox.value) chatBox.value.scrollTop = chatBox.value.scrollHeight
 }
 
-async function send() {
-  const text = draft.value.trim()
+// 发送任意一条学生消息给导师（供输入框 send 与观察卡共用）
+async function sendText(text) {
   if (!text || sending.value) return
-  draft.value = ''
   messages.value.push({ role: 'student', text })
   sending.value = true
   scrollChat()
@@ -252,6 +257,44 @@ async function send() {
     sending.value = false
     scrollChat()
   }
+}
+
+async function send() {
+  const text = draft.value.trim()
+  if (!text || sending.value) return
+  draft.value = ''
+  await sendText(text)
+}
+
+// ── B0.5 观察卡：运行→观察→猜测→导师，软桥、可跳过、不硬锁 ──
+// 学生消息统一前缀 OBSERVATION_MARK，便于未来 B1 Timeline 抽取
+const OBSERVATION_MARK = '【观察记录】'
+const observationPending = ref(false)   // 是否显示观察卡
+const observationDone = ref(false)      // 本关是否已观察过（每关首次运行触发一次）
+const obsChecks = reactive({ 程序报错了: false, 输出和预期不同: false, 输出正确: false, 我还没看懂: false })
+const obsGuess = ref('')
+
+function resetObservation() {
+  observationPending.value = false
+  observationDone.value = false
+  obsGuess.value = ''
+  Object.keys(obsChecks).forEach((k) => { obsChecks[k] = false })
+}
+
+async function submitObservation() {
+  const picked = Object.keys(obsChecks).filter((k) => obsChecks[k])
+  const seen = picked.length ? picked.join('、') : '（没勾选，先凭感觉看看）'
+  const guess = obsGuess.value.trim() || '（暂时说不上来）'
+  const text = `${OBSERVATION_MARK}\n我观察到：${seen}\n我的猜测：${guess}`
+  observationPending.value = false
+  observationDone.value = true
+  await sendText(text)
+}
+
+async function skipObservation() {
+  observationPending.value = false
+  observationDone.value = true
+  await sendText(`${OBSERVATION_MARK}\n我运行了代码，但暂时描述不出观察，请帮我一起分析。`)
 }
 
 async function submit() {
@@ -464,6 +507,22 @@ function quit() {
           </div>
           <div v-if="!runResult.stdout && !runResult.stderr && !runResult.timed_out" class="run-empty">（程序没有任何输出）</div>
         </div>
+
+        <!-- B0.5 观察卡：运行后先观察再问导师（软桥，可跳过，不锁聊天） -->
+        <div v-if="observationPending" class="obs-card">
+          <div class="obs-title">🔍 先别急着问导师——你观察到了什么？</div>
+          <div class="obs-hint">对照上面的运行结果，勾一勾、写一写，再发给导师。说不出来也没关系。</div>
+          <label v-for="(_, k) in obsChecks" :key="k" class="obs-check">
+            <input type="checkbox" v-model="obsChecks[k]" /> {{ k }}
+          </label>
+          <textarea v-model="obsGuess" class="obs-guess" rows="2"
+                    placeholder="我的猜测：问题可能出在……（写不出来可以留空）" />
+          <div class="obs-actions">
+            <button class="primary" :disabled="sending" @click="submitObservation">把观察告诉导师 →</button>
+            <button class="obs-skip" :disabled="sending" @click="skipObservation">我看不懂，直接请导师帮助</button>
+          </div>
+        </div>
+
         <div v-if="session.done" class="banner banner-done">
           🎉 <b>本关完成！</b>该知识点已升级为「已内化」（成因 / 定位 / 迁移复述通过）。去能力画像看看，或挑战下一题。
           <div v-if="session.variant" class="variant-offer">
@@ -753,6 +812,23 @@ function quit() {
 .run-out { color: var(--text); }
 .run-err { color: var(--red); }
 .run-empty { padding: 10px 12px; font-size: 13px; color: var(--muted); }
+
+/* B0.5 观察卡 */
+.obs-card {
+  margin-top: 12px; padding: 14px 16px; border-radius: 10px;
+  background: var(--accent-soft); border: 1px solid #e0cdbb;
+}
+.obs-title { font-weight: 600; color: var(--primary-dark); margin-bottom: 4px; }
+.obs-hint { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; line-height: 1.6; }
+.obs-check { display: block; font-size: 13.5px; margin: 5px 0; cursor: pointer; }
+.obs-check input { margin-right: 6px; }
+.obs-guess { margin-top: 8px; resize: vertical; }
+.obs-actions { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.obs-skip {
+  font-size: 13px; color: var(--muted); background: none; border: none;
+  text-decoration: underline; padding: 0; cursor: pointer;
+}
+.obs-skip:hover { color: var(--primary); }
 .variant-offer { margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0cdbb; display: flex; flex-direction: column; gap: 8px; }
 .variant-label { font-size: 13px; }
 .variant-btn { align-self: flex-start; }
