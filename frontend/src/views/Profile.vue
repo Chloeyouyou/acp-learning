@@ -108,6 +108,9 @@ function toggleFlip(kp) {
   s.has(kp) ? s.delete(kp) : s.add(kp)
 }
 
+// 下半部分用标签页：一次只看一块，避免页面又长又吵
+const tab = ref('知识点')   // '知识点' | '能力'
+
 // 维度还没数据时，解释它测什么、怎么才会有分（避免空维度看起来像坏了）
 const DIM_HINT = {
   'AI协作能力': '衡量你「会不会用 AI」：审查 AI 给的代码、核对 AI 的说法对不对、把问题问清楚。在你和导师对话中主动质疑、验证它的说法时才会记录——目前还没有这类记录。',
@@ -144,31 +147,29 @@ const unevaluatedDims = computed(() =>
       </div>
     </div>
 
-    <div class="panel radar-panel">
-      <h3>能力雷达</h3>
-      <p class="note">每项能力都由你的真实表现累计而来，点下方能力条可看到具体证据。</p>
-      <RadarChart :dimensions="profile.dimensions" />
-      <div class="legend">
-        <span class="dot low" /> 灰色 = 数据还少（事件少于 5 个），多练几关会更准
-      </div>
-      <div v-for="d in unevaluatedDims" :key="d.name" class="dim-hint">
-        <b>「{{ d.name }}」还未评估</b>{{ DIM_HINT[d.name] ? '——' + DIM_HINT[d.name] : '，多练几关就会有数据。' }}
-      </div>
+    <!-- 标签页：一次只看一块，页面不再又长又吵 -->
+    <div class="tabbar">
+      <button :class="['tab', { on: tab === '知识点' }]" @click="tab = '知识点'">知识点</button>
+      <button :class="['tab', { on: tab === '能力' }]" @click="tab = '能力'">能力雷达</button>
     </div>
 
-    <div class="right-col">
+    <!-- 能力雷达 + 能力明细（同一标签，左右并排） -->
+    <div v-show="tab === '能力'" class="tab-pane cap-pane">
+      <div class="panel radar-panel">
+        <h3>能力雷达</h3>
+        <RadarChart :dimensions="profile.dimensions" />
+        <div class="legend"><span class="dot low" /> 灰色=数据还少（事件&lt;5），多练会更准</div>
+        <details v-for="d in unevaluatedDims" :key="d.name" class="dim-hint">
+          <summary><b>「{{ d.name }}」还未评估</b></summary>
+          {{ DIM_HINT[d.name] || '多练几关就会有数据。' }}
+        </details>
+      </div>
       <div class="panel">
-        <h3>能力明细</h3>
-        <div v-if="!Object.keys(profile.vector).length" class="empty-cap">
-          <p>还没有能力数据。</p>
-          <p class="note">能力分不是考出来的，而是你在闯关时一点点「攒」出来的——完成第一关后回来看看。</p>
-        </div>
+        <h3>能力明细 <small class="h3-sub">点条目看证据</small></h3>
+        <div v-if="!Object.keys(profile.vector).length" class="note">还没有能力数据——完成第一关后回来看看。</div>
         <div v-for="(v, cap) in profile.vector" :key="cap" class="cap-row">
-          <button class="cap-head" @click="drill(cap)">
-            <span class="cap-info">
-              <span class="cap-name">{{ ZH[cap] || cap }}</span>
-              <span class="cap-desc"><GlossaryText :text="CAP_DESC[cap] || ''" /></span>
-            </span>
+          <button class="cap-head" @click="drill(cap)" :title="CAP_DESC[cap] || ''">
+            <span class="cap-name">{{ ZH[cap] || cap }}</span>
             <span class="bar"><span class="fill" :style="{ width: v.score + '%' }" /></span>
             <span class="cap-score" :class="{ low: v.confidence === 'low' }">
               {{ v.score }}<small>（{{ v.events_count }}）</small>
@@ -177,31 +178,28 @@ const unevaluatedDims = computed(() =>
           <div v-if="expanded === cap" class="events">
             <div v-if="loadingEvents" class="note">加载中…</div>
             <div v-for="e in events" :key="e.event_id" class="event">
-              <span :class="['delta', e.delta > 0 ? 'pos' : 'neg']">
-                {{ e.delta > 0 ? '+' : '' }}{{ e.delta }}
-              </span>
+              <span :class="['delta', e.delta > 0 ? 'pos' : 'neg']">{{ e.delta > 0 ? '+' : '' }}{{ e.delta }}</span>
               <div class="event-body">
                 <div class="evidence">{{ e.evidence.summary }}</div>
-                <div class="meta">
-                  {{ e.producer === 'rule' ? '规则判定' : 'AI判定' }}
-                  · 置信度 {{ e.confidence }} · {{ fmtTime(e.timestamp) }}
-                </div>
+                <div class="meta">{{ e.producer === 'rule' ? '规则判定' : 'AI判定' }} · {{ fmtTime(e.timestamp) }}</div>
               </div>
             </div>
           </div>
         </div>
       </div>
+    </div>
 
+    <!-- 知识点翻转卡 -->
+    <div v-show="tab === '知识点'" class="tab-pane">
       <div class="panel" v-if="mastery.length">
         <div class="km-head">
-          <h3>知识点</h3>
+          <h3>知识点 <small class="h3-sub">点卡片翻面看详情</small></h3>
           <div v-if="nextPractice" class="km-next">
             <span class="km-next-label">下一题推荐</span>
             <span class="km-next-kp">{{ nextPractice.kp }}</span>
             <button class="km-next-btn" @click="practiceKp(nextPractice.kp)">去练 →</button>
           </div>
         </div>
-        <p class="note">点卡片翻到背面看详情。掌握度=学会没有，练习=证据多少。薄弱的排在前面。</p>
         <div class="kpc-grid">
           <div v-for="m in mastery" :key="m.kp"
                :class="['kpc', { flipped: flippedKps.has(m.kp) }]" @click="toggleFlip(m.kp)">
@@ -241,9 +239,21 @@ const unevaluatedDims = computed(() =>
 
 <style scoped>
 .error { border-color: var(--red); color: var(--red); }
-.layout { display: grid; grid-template-columns: 360px 1fr; gap: 18px; align-items: start; }
+.layout { display: flex; flex-direction: column; gap: 16px; }
 h3 { margin-top: 0; font-size: 17px; }
+.h3-sub { font-size: 12px; font-weight: 400; color: var(--muted); }
 .note { color: var(--muted); font-size: 13px; line-height: 1.6; }
+
+/* 标签栏 */
+.tabbar { display: inline-flex; gap: 4px; padding: 4px; background: #ece6da; border-radius: 11px; align-self: flex-start; }
+.tab { border: none; background: transparent; color: var(--muted); font-size: 14px;
+  padding: 7px 18px; border-radius: 8px; font-family: var(--serif); cursor: pointer; }
+.tab:hover:not(.on) { color: var(--text); }
+.tab.on { background: var(--panel); color: var(--primary); box-shadow: 0 1px 3px rgba(43,41,36,0.08); }
+.tab-pane { }
+.cap-pane { display: grid; grid-template-columns: 360px 1fr; gap: 16px; align-items: start; }
+@media (max-width: 760px) { .cap-pane { grid-template-columns: 1fr; } }
+.dim-hint summary { cursor: pointer; }
 
 /* 进度概览（横跨两列） */
 .overview {
