@@ -549,7 +549,7 @@ function quit() {
       <div class="code-column">
       <div class="panel code-panel">
         <div class="panel-title">
-          <span class="title-text">代码 <span class="title-sub">运行看结果，修改后会自动检查修复</span></span>
+          <span class="title-text">代码</span>
           <span class="code-actions">
             <button class="walk-trigger" @click="openWalk">📖 逐行讲解</button>
             <button class="primary" :disabled="running || submitting || session.fixed" @click="runAndCheck">
@@ -598,10 +598,10 @@ function quit() {
         <!-- 逐行讲解抽屉：从代码区底部上滑、覆盖代码下部，不撑高页面；两档高度 + 关闭 -->
         <div v-if="walkOpen" :class="['walk-drawer', { tall: walkTall }]">
           <div class="walk-drawer-bar">
-            <span class="walk-drawer-title">📖 逐行讲解</span>
+            <span class="walk-drawer-title">逐行讲解</span>
             <span class="walk-drawer-actions">
-              <button class="wd-btn" @click="walkTall = !walkTall">{{ walkTall ? '▼ 收矮' : '▲ 加高' }}</button>
-              <button class="wd-btn" @click="walkOpen = false">关闭 ✕</button>
+              <button class="wd-btn" @click="walkTall = !walkTall">{{ walkTall ? '收矮' : '加高' }}</button>
+              <button class="wd-btn" @click="walkOpen = false">✕</button>
             </span>
           </div>
           <div class="walk-drawer-body">
@@ -754,8 +754,20 @@ function quit() {
         </div>
 
         <div class="tutor-divider">
-          <span class="tutor-avatar">知</span>
-          <div><b>知返反馈</b><span>只引导，不给答案</span></div>
+          <span class="tutor-avatar tutor-logo">
+            <svg viewBox="0 0 48 48" aria-hidden="true">
+              <defs><path id="kr" d="M24 9 Q20.8 16 24 23 Q27.2 16 24 9 Z" /></defs>
+              <g fill="currentColor">
+                <use href="#kr" /><use href="#kr" transform="rotate(30 24 24)" />
+                <use href="#kr" transform="rotate(60 24 24)" /><use href="#kr" transform="rotate(90 24 24)" />
+                <use href="#kr" transform="rotate(120 24 24)" /><use href="#kr" transform="rotate(150 24 24)" />
+                <use href="#kr" transform="rotate(180 24 24)" /><use href="#kr" transform="rotate(210 24 24)" />
+                <use href="#kr" transform="rotate(240 24 24)" /><use href="#kr" transform="rotate(270 24 24)" />
+                <use href="#kr" transform="rotate(300 24 24)" /><use href="#kr" transform="rotate(330 24 24)" />
+              </g>
+            </svg>
+          </span>
+          <div><b class="tutor-poem">知迷途其未远，觉今是而昨非</b><span>只引导，不给答案</span></div>
         </div>
         <div ref="chatBox" class="chat">
           <div v-for="(m, i) in visibleMessages" :key="i" :class="['msg', m.role]">
@@ -1051,10 +1063,10 @@ function quit() {
   .send-btn { width: 100%; }
 }
 .panel-title {
-  display: flex; justify-content: space-between; align-items: center;
-  font-weight: 600; margin-bottom: 14px;
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  flex-wrap: wrap; font-weight: 600; margin-bottom: 14px;
 }
-.title-text { display: inline-flex; align-items: center; gap: 9px; font-family: var(--serif); font-size: 15.5px; }
+.title-text { display: inline-flex; align-items: center; gap: 9px; font-family: var(--serif); font-size: 15.5px; white-space: nowrap; }
 .title-sub { font-size: 12px; font-weight: 400; color: var(--muted); }
 
 /* ---------- 代码区 ---------- */
@@ -1076,7 +1088,8 @@ function quit() {
 .banner b { font-weight: 600; }
 .bf-title { font-weight: 600; color: var(--primary-dark); margin-bottom: 4px; }
 .bf-body { font-size: 13px; line-height: 1.7; }
-.code-actions { display: inline-flex; gap: 8px; }
+.code-actions { display: inline-flex; gap: 8px; flex-shrink: 0; }
+.code-actions button { white-space: nowrap; }
 /* 提交修复=克制次按钮（运行才是该先点的、温暖主按钮），降低"被评判"压力 */
 .submit-btn { color: var(--muted); }
 .submit-btn:hover:not(:disabled) { color: var(--primary); border-color: var(--primary); }
@@ -1118,8 +1131,8 @@ function quit() {
 }
 .walk-drawer-title { font-weight: 600; font-size: 14px; color: var(--primary-dark); }
 .walk-drawer-actions { display: inline-flex; gap: 6px; }
-.wd-btn { font-size: 12px; padding: 3px 10px; border-radius: 7px; color: var(--muted); }
-.wd-btn:hover { color: var(--primary); border-color: var(--primary); }
+.wd-btn { font-size: 12px; padding: 2px 8px; border: none; background: none; color: var(--muted); white-space: nowrap; }
+.wd-btn:hover { color: var(--primary); }
 .walk-drawer-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
 .walk-drawer .walk-rows { max-height: none; overflow: visible; }
 /* 思考过程折叠开关 */
@@ -1213,7 +1226,7 @@ function quit() {
   display: flex; align-items: center; gap: 10px; padding: 16px 0 12px;
   border-top: 1px solid var(--border);
 }
-.tutor-divider div { display: flex; align-items: baseline; gap: 9px; }
+.tutor-divider div { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; min-width: 0; }
 .tutor-divider b { font-family: var(--serif); font-size: 15px; }
 .tutor-divider span:not(.tutor-avatar) { color: var(--muted); font-size: 12px; }
 .tutor-avatar {
@@ -1221,6 +1234,9 @@ function quit() {
   width: 27px; height: 27px; border-radius: 8px; font-size: 14px; font-weight: 700;
   font-family: var(--serif); background: var(--accent-soft); color: var(--primary-dark); flex-shrink: 0;
 }
+.tutor-logo { color: var(--primary); }
+.tutor-logo svg { width: 17px; height: 17px; }
+.tutor-poem { font-family: var(--serif); font-size: 14.5px; color: var(--text); }
 .chat {
   min-height: 380px; flex: 1 1 380px; overflow-y: auto; display: flex; flex-direction: column;
   gap: 12px; padding: 4px 3px 8px;
