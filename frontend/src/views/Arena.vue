@@ -553,7 +553,7 @@ function quit() {
           <span class="code-actions">
             <button class="walk-trigger" @click="openWalk">📖 逐行讲解</button>
             <button class="primary" :disabled="running || submitting || session.fixed" @click="runAndCheck">
-              {{ running ? '运行中…' : (submitting ? '检查中…' : '▶ 运行并检查') }}
+              {{ running || submitting ? '运行中…' : '▶ 运行' }}
             </button>
           </span>
         </div>
