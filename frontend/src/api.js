@@ -15,11 +15,6 @@ async function request(method, path, body) {
 
 export function getStudentId() {
   let id = localStorage.getItem('student_id')
-  // 本地联调时曾误生成这个临时账号；迁回已有数据的真实测试账号。
-  if (id === 'stu_tnkxal') {
-    id = 'stu_n6ooz8'
-    localStorage.setItem('student_id', id)
-  }
   if (!id) {
     id = 'stu_' + Math.random().toString(36).slice(2, 8)
     localStorage.setItem('student_id', id)
