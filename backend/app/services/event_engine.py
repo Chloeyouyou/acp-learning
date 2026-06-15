@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ..config import CONFIDENCE_THRESHOLD
 from ..models import Event, ExecutionEvent, now
 from ..registry import CAPABILITY_REGISTRY, DELTA_MAX, DELTA_MIN, LLM_ALLOWED_CAPABILITIES
-from . import profile
+from . import bug_classifier, profile
 
 
 class EventRejected(ValueError):
@@ -83,6 +83,13 @@ def _error_family(kind: str, stderr: str) -> str | None:
 def log_execution(db: Session, *, student_id: str, session_id: str, pattern_id: str,
                   source: str, kind: str, stderr: str = "", knowledge_points: list | None = None):
     """记一条执行事实（run/submit 的真跑结果）。只 INSERT，不碰 capability_scores。"""
+    error_family = _error_family(kind, stderr)
+    classification = bug_classifier.classify_bug(
+        error_family=error_family,
+        stderr=stderr,
+        pattern_id=pattern_id,
+        knowledge_points=knowledge_points,
+    )
     ev = ExecutionEvent(
         id=f"ex_{uuid.uuid4().hex[:16]}",
         version="v1",
@@ -91,11 +98,17 @@ def log_execution(db: Session, *, student_id: str, session_id: str, pattern_id: 
         pattern_id=pattern_id,
         source=source,
         kind=kind,
-        error_family=_error_family(kind, stderr),
+        error_family=error_family,
         knowledge_points=knowledge_points or [],
-        # meta 预留默认形状，B0 不填充
-        meta={"ontology_tags": [], "trace_snapshot_id": None,
-              "stderr_summary": None, "stdout_summary": None},
+        meta={
+            "ontology_tags": classification["concept_tags"],
+            "bug_type": classification["bug_type"],
+            "concept_tags": classification["concept_tags"],
+            "classification_confidence": classification["confidence"],
+            "trace_snapshot_id": None,
+            "stderr_summary": None,
+            "stdout_summary": None,
+        },
         timestamp=now(),
     )
     db.add(ev)

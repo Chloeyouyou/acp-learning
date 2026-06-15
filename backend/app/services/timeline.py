@@ -12,14 +12,16 @@ from collections import defaultdict
 from sqlalchemy.orm import Session
 
 from ..models import Event, ExecutionEvent, TutorSession
-from . import mine_engine
+from . import bug_classifier, mine_engine
 
 OBSERVATION_MARK = "【观察记录】"
+SUMMARY_MARK = "【思考总结】"
 
 # 雷状态优劣排序，取一道题多次调试里的「最好结果」
 _STATE_RANK = {"planted": 0, "found": 1, "fixed": 2, "internalized": 3}
 _STATE_LABEL = {"planted": "进行中", "found": "进行中", "fixed": "已解决", "internalized": "已内化"}
 _CAT_LABEL = {"boundary": "边界条件", "loop": "循环逻辑", "null": "空值 / None 处理"}
+_BUG_STATUS_RANK = {"observed": 0, "fixing": 1, "solved": 2, "internalized": 3}
 
 # 跨题思维默认值的 taxonomy（镜子，非审判）。name=给用户看的"默认值"，advice=做题前自问短句。
 # 题→簇的归属在各 pattern YAML 的 thinking_pattern 字段；这里只存展示文案。
@@ -64,6 +66,33 @@ def _parse_observation(history):
                 guess = line[len("我的猜测："):].strip() or None
         return obs, guess
     return None, None
+
+
+def _parse_summary(history):
+    """从 session history 取学生主动留下的思考总结。无则返回 None。"""
+    for m in reversed(history or []):
+        if m.get("role") != "user":
+            continue
+        content = m.get("content", "")
+        if not content.startswith(SUMMARY_MARK):
+            continue
+        for line in content.splitlines():
+            line = line.strip()
+            if line.startswith("我想记住："):
+                return line[len("我想记住："):].strip() or None
+    return None
+
+
+def _last_student_reflection(history):
+    """已内化会话的自然对话兜底：最后一条有效学生回答就是他留下的总结。"""
+    ignored = (OBSERVATION_MARK, SUMMARY_MARK, "（系统", "(系统", "📤")
+    for m in reversed(history or []):
+        if m.get("role") != "user":
+            continue
+        content = (m.get("content") or "").strip()
+        if content and not content.startswith(ignored):
+            return content[:300]
+    return None
 
 
 def _day(ts: str) -> str:
@@ -115,18 +144,92 @@ def _recurring(episodes):
 
 
 def aggregate_thinking_patterns(episodes):
-    """跨题认知模式聚合「你最近常见的思维默认值」（Reflection）：降序取前 3。count 只作证据非分数。"""
+    """跨题认知模式聚合「你最近常见的思维默认值」（Reflection）。
+
+    题库 thinking_pattern 负责稳定归簇；学生的观察/猜测/总结作为这面镜子的个体证据。
+    count 只作证据非分数。
+    """
     rec = _recurring(episodes)
     items = []
     for tp_id, names in rec.items():
         meta = THINKING_PATTERNS.get(tp_id, {"name": tp_id, "advice": ""})
+        reflections = []
+        for ep in episodes:
+            if ep["pattern_name"] not in names:
+                continue
+            note = ep.get("summary") or ep.get("guess") or ep.get("observation")
+            if note and note not in reflections:
+                reflections.append(note)
         items.append({"id": tp_id, "name": meta["name"], "advice": meta.get("advice", ""),
-                      "count": len(names), "members": names})
+                      "count": len(names), "members": names,
+                      "reflections": reflections[:2]})
     items.sort(key=lambda x: x["count"], reverse=True)
     items = items[:3]
     if not items:
         return {"enough": False, "hint": "再多走几道题，这里会慢慢照出你常用的思维方式。"}
     return {"enough": True, "items": items}
+
+
+def aggregate_bug_patterns(executions, sessions):
+    """从执行事实聚合 Bug 类型概览。纯读，兼容尚未写入分类 meta 的旧事件。"""
+    pattern_state = {}
+    for session in sessions:
+        current = pattern_state.get(session.pattern_id, "planted")
+        if _STATE_RANK.get(session.mine_status, 0) > _STATE_RANK.get(current, 0):
+            pattern_state[session.pattern_id] = session.mine_status
+
+    groups = {}
+    for execution in executions:
+        if not execution.error_family:
+            continue
+        meta = execution.meta or {}
+        classified = {
+            "bug_type": meta.get("bug_type"),
+            "concept_tags": meta.get("concept_tags") or meta.get("ontology_tags") or [],
+            "confidence": meta.get("classification_confidence"),
+        }
+        if not classified["bug_type"]:
+            classified = bug_classifier.classify_bug(
+                error_family=execution.error_family,
+                pattern_id=execution.pattern_id,
+                knowledge_points=execution.knowledge_points,
+            )
+
+        bug_type = classified["bug_type"]
+        if not bug_type or bug_type == "未知错误":
+            continue
+
+        mine_status = pattern_state.get(execution.pattern_id, "planted")
+        if mine_status == "internalized":
+            status = "internalized"
+        elif mine_status == "fixed":
+            status = "solved"
+        elif execution.source == "submit":
+            status = "fixing"
+        else:
+            status = "observed"
+
+        item = groups.setdefault(bug_type, {
+            "bug_type": bug_type,
+            "concept_tags": [],
+            "count": 0,
+            "first_at": execution.timestamp,
+            "last_at": execution.timestamp,
+            "status": status,
+            "pattern_ids": [],
+        })
+        item["count"] += 1
+        item["first_at"] = min(item["first_at"], execution.timestamp)
+        item["last_at"] = max(item["last_at"], execution.timestamp)
+        if _BUG_STATUS_RANK[status] > _BUG_STATUS_RANK[item["status"]]:
+            item["status"] = status
+        for tag in classified["concept_tags"]:
+            if tag not in item["concept_tags"]:
+                item["concept_tags"].append(tag)
+        if execution.pattern_id not in item["pattern_ids"]:
+            item["pattern_ids"].append(execution.pattern_id)
+
+    return sorted(groups.values(), key=lambda item: item["last_at"], reverse=True)
 
 
 def intervention_for(db: Session, student_id: str, pattern_id: str):
@@ -154,14 +257,16 @@ def build_timeline(db: Session, student_id: str) -> dict:
                 .order_by(TutorSession.created_at.asc()).all())
     if not sessions:
         return {"episodes": [], "persona": _persona([]),
-                "thinking_patterns": aggregate_thinking_patterns([])}
+                "thinking_patterns": aggregate_thinking_patterns([]),
+                "bug_patterns": []}
 
     sess_ids = [s.id for s in sessions]
 
+    all_executions = (db.query(ExecutionEvent)
+                      .filter(ExecutionEvent.session_id.in_(sess_ids))
+                      .order_by(ExecutionEvent.timestamp.asc()).all())
     ex_by_sess = defaultdict(list)
-    for e in (db.query(ExecutionEvent)
-              .filter(ExecutionEvent.session_id.in_(sess_ids))
-              .order_by(ExecutionEvent.timestamp.asc()).all()):
+    for e in all_executions:
         ex_by_sess[e.session_id].append(e)
 
     ev_by_sess = defaultdict(list)
@@ -187,12 +292,22 @@ def build_timeline(db: Session, student_id: str) -> dict:
             all_ex.extend(ex_by_sess.get(s.id, []))
         all_ex.sort(key=lambda e: e.timestamp)
 
-        # 观察/猜测：取最早一次有观察卡的 session 作故事起点
-        observation = guess = None
+        # 观察/猜测取最早记录作故事起点；总结取最近一条，体现最后留下的经验。
+        observation = guess = summary = None
         for s in sorted(plist, key=lambda x: x.created_at):
             observation, guess = _parse_observation(s.history)
             if observation or guess:
                 break
+        for s in sorted(plist, key=lambda x: x.created_at, reverse=True):
+            summary = _parse_summary(s.history)
+            if summary:
+                break
+        if not summary:
+            for s in sorted(plist, key=lambda x: x.created_at, reverse=True):
+                if s.mine_status == "internalized":
+                    summary = _last_student_reflection(s.history)
+                    if summary:
+                        break
 
         # 过滤纯开没动的废会话
         if not all_ex and not observation:
@@ -232,6 +347,7 @@ def build_timeline(db: Session, student_id: str) -> dict:
             "cognitive_root": pat.get("cognitive_root", ""),
             "observation": observation,
             "guess": guess,
+            "summary": summary,
             "rounds": rounds,
             "gains": gains,
             "outcome": _STATE_LABEL.get(best.mine_status, "进行中"),
@@ -245,4 +361,5 @@ def build_timeline(db: Session, student_id: str) -> dict:
 
     episodes.sort(key=lambda ep: ep["last_at"], reverse=True)
     return {"episodes": episodes, "persona": _persona(persona_items),
-            "thinking_patterns": aggregate_thinking_patterns(episodes)}
+            "thinking_patterns": aggregate_thinking_patterns(episodes),
+            "bug_patterns": aggregate_bug_patterns(all_executions, sessions)}

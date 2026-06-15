@@ -50,22 +50,19 @@ const session = reactive({
   internalizeQuestions: [],
   variant: null,     // 内化通过后推荐的变式题（迁移检验）
 })
+const originalCode = ref('')
+const codeChanged = computed(() => session.code !== originalCode.value)
 const masteredKps = ref(new Set())   // 学生已内化的知识点（练前小灶用来标「已掌握」）
 const showPrimer = ref(false)        // 练前小灶默认收起（需要的人再点开），避免页面被撑长
 const intervention = ref(null)       // 开题前小检查（命中跨题高频思维默认值才有）；帮手语气、可忽略、本题只首次弹
 
-// 三模块自由开关（认知脚手架）：代码常驻；解释/知返按需开，记住偏好。布局随之自适应。
+// 卡住时的小工具：解释默认收起，记住用户偏好；知返始终在思考主线里。
 const _panels = JSON.parse(localStorage.getItem('arena_panels') || 'null')
 const showExplain = ref(_panels ? !!_panels.explain : false)   // 解释默认关（鼓励先自己读）
-const showTutor = ref(_panels ? !!_panels.tutor : true)        // 知返默认开（陪伴、不剧透）
-function togglePanel(which) {
-  if (which === 'explain') showExplain.value = !showExplain.value
-  else showTutor.value = !showTutor.value
-  localStorage.setItem('arena_panels', JSON.stringify({ explain: showExplain.value, tutor: showTutor.value }))
+function toggleExplain() {
+  showExplain.value = !showExplain.value
+  localStorage.setItem('arena_panels', JSON.stringify({ explain: showExplain.value, tutor: true }))
 }
-const codeFlex = computed(() =>
-  (showExplain.value && showTutor.value) ? 46 : ((showExplain.value || showTutor.value) ? 70 : 100))
-const explainFlex = computed(() => (showExplain.value && showTutor.value) ? 24 : 30)
 const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否展开（默认收起，需要的人点开）
 const walkthrough = ref('')          // 逐行讲解文本（点按钮自动生成）
 const walkLoading = ref(false)
@@ -161,6 +158,7 @@ const primerConcepts = computed(() => {
 function toggleCat(c) { openCats[c] = !openCats[c] }
 const messages = ref([]) // {role: 'student'|'tutor'|'system', text}
 const draft = ref('')
+const summaryDraft = ref('')
 const sending = ref(false)
 const submitting = ref(false)
 const error = ref('')
@@ -191,6 +189,7 @@ onMounted(async () => {
         session.id = d.session_id
         session.patternId = d.pattern_id
         session.code = d.code
+        originalCode.value = d.code
         session.stage = d.stage
         session.hintLevel = d.hint_level
         session.fixed = d.fixed
@@ -244,6 +243,7 @@ async function start(patternId) {
     resetObservation()
     localStorage.setItem('active_session', data.session_id)  // 记下当前关卡，供刷新后续做
     session.code = data.code
+    originalCode.value = data.code
     session.task = data.task
     session.stage = '①发现'
     session.hintLevel = 'L0'
@@ -310,10 +310,55 @@ async function send() {
 // ── B0.5 观察卡：运行→观察→猜测→导师，软桥、可跳过、不硬锁 ──
 // 学生消息统一前缀 OBSERVATION_MARK，便于未来 B1 Timeline 抽取
 const OBSERVATION_MARK = '【观察记录】'
+const SUMMARY_MARK = '【思考总结】'
 const observationPending = ref(false)   // 是否显示观察卡
 const observationDone = ref(false)      // 本关是否已观察过（每关首次运行触发一次）
 const obsChecks = reactive({ 程序报错了: false, '程序卡住了/跑不完': false, 输出和预期不同: false, 输出正确: false, 我还没看懂: false })
 const obsGuess = ref('')
+
+function parseMarkedMessage(mark, labels) {
+  const found = messages.value.find((m) => m.role === 'student' && m.text.startsWith(mark))
+  if (!found) return null
+  const out = {}
+  for (const line of found.text.split('\n')) {
+    for (const [key, label] of Object.entries(labels)) {
+      if (line.startsWith(label)) out[key] = line.slice(label.length).trim()
+    }
+  }
+  return Object.keys(out).length ? out : null
+}
+
+const observationRecord = computed(() => {
+  const parsed = parseMarkedMessage(OBSERVATION_MARK, { observation: '我观察到：', guess: '我的猜测：' })
+  if (parsed) return parsed
+  const skipped = messages.value.find((m) =>
+    m.role === 'student' && m.text.startsWith(OBSERVATION_MARK) && m.text.includes('暂时描述不出观察'))
+  return skipped ? { observation: '当时还没描述出来，请了知返一起看。', guess: null } : null
+})
+const summaryRecord = computed(() => {
+  const marked = parseMarkedMessage(SUMMARY_MARK, { summary: '我想记住：' })
+  if (marked) return marked
+  if (!session.done) return null
+  const lastReflection = [...messages.value].reverse().find((m) =>
+    m.role === 'student'
+    && !m.text.startsWith(OBSERVATION_MARK)
+    && !m.text.startsWith(SUMMARY_MARK)
+    && !m.text.startsWith('📤'))
+  return lastReflection ? { summary: lastReflection.text } : null
+})
+const visibleMessages = computed(() => messages.value.filter((m) =>
+  !(m.role === 'student' && (m.text.startsWith(OBSERVATION_MARK) || m.text.startsWith(SUMMARY_MARK)))))
+
+const verificationNote = computed(() => {
+  if (session.done) return '已经完成边界验证，也把这次经验讲清楚了。'
+  if (session.fixed || stageIndex(session.stage) >= stageIndex('⑤验证')) {
+    return '修复已通过。现在用一个边界输入，说明你预期它会发生什么。'
+  }
+  if (runResult.value?.timed_out) return '真实运行：程序超时。接下来可以检查循环是否一直在靠近终点。'
+  if (runResult.value?.stderr) return '真实运行：程序报错。先用报错信息检查你的猜测。'
+  if (runResult.value) return '已经真实运行过一次。结果是否支持你的猜测？'
+  return '运行代码、改动后再运行，看看结果是否支持你的猜测。'
+})
 
 function resetObservation() {
   observationPending.value = false
@@ -338,6 +383,13 @@ async function skipObservation() {
   await sendText(`${OBSERVATION_MARK}\n我运行了代码，但暂时描述不出观察，请帮我一起分析。`)
 }
 
+async function submitSummary() {
+  const text = summaryDraft.value.trim()
+  if (!text || sending.value) return
+  summaryDraft.value = ''
+  await sendText(`${SUMMARY_MARK}\n我想记住：${text}`)
+}
+
 async function submit() {
   if (submitting.value) return
   submitting.value = true
@@ -354,6 +406,16 @@ async function submit() {
       // 导师主动开场，引导进入⑤验证——学生不用自己猜该说什么
       if (d.tutor_opening) messages.value.push({ role: 'tutor', text: d.tutor_opening })
     } else {
+      const ex = d.execution
+      if (ex) {
+        let resultText = '提交测试未通过'
+        if (ex.kind === 'HANG') resultText = '提交测试超时：程序没有在限定时间内结束'
+        else if (ex.kind === 'WA') resultText = '提交测试输出不符：实际输出与期望结果不同'
+        else if (ex.error_family) {
+          resultText = `提交测试运行报错：${ex.error_family}${ex.bug_type ? ` · ${ex.bug_type}` : ''}`
+        }
+        messages.value.push({ role: 'system', text: resultText })
+      }
       // 失败反馈来自导师（针对提交代码的具体引导），按导师气泡展示
       messages.value.push({ role: 'tutor', text: d.message })
     }
@@ -363,6 +425,12 @@ async function submit() {
     submitting.value = false
     scrollChat()
   }
+}
+
+async function runAndCheck() {
+  if (running.value || submitting.value || session.fixed) return
+  if (codeChanged.value) await submit()
+  else await runCurrentCode()
 }
 
 function quit() {
@@ -449,38 +517,29 @@ function quit() {
     </div>
 
     <div class="stage-bar panel">
-      <ol class="stepper">
-        <li
-          v-for="s in STAGES" :key="s"
-          :class="['step', { active: s === session.stage, done: stageIndex(s) < stageIndex(session.stage) }]"
-        >
-          <span class="step-no">{{ stageIndex(s) < stageIndex(session.stage) ? '✓' : s.charAt(0) }}</span>
-          <span class="step-label">{{ s.slice(1) }}</span>
-        </li>
-      </ol>
+      <div class="current-stage">
+        <span class="current-stage-label">当前阶段</span>
+        <b>{{ session.stage }}</b>
+        <span>· {{ session.stage === '③归因' ? '正在弄清为什么出错' :
+          session.stage === '④修复' ? '把原因变成自己的修复' :
+          session.stage === '⑤验证' ? '检查修复在边界情况是否可靠' :
+          session.stage === '⑥内化' ? '把这次经验变成下次的方法' :
+          session.stage === '②定位' ? '顺着线索找到可疑位置' : '先看清代码实际发生了什么' }}</span>
+      </div>
       <div class="stage-meta">
         <span class="hint-level">提示级别 <b>{{ session.hintLevel }}</b></span>
         <button @click="quit">退出关卡</button>
       </div>
     </div>
 
-    <!-- 三模块开关（认知脚手架）：代码常驻，解释/知返按需开 -->
-    <div class="mod-bar">
-      <span class="mod-label">需要帮助？</span>
-      <button :class="['mod-chip', { on: showExplain }]" @click="togglePanel('explain')">解释代码</button>
-      <button :class="['mod-chip', { on: showTutor }]" @click="togglePanel('tutor')">问知返</button>
-    </div>
-
     <div class="cols">
-      <div class="panel code-panel" :style="{ flex: codeFlex + ' 1 0%' }">
+      <div class="code-column">
+      <div class="panel code-panel">
         <div class="panel-title">
-          <span class="title-text">代码 <span class="title-sub">看不懂没关系，先点运行看看</span></span>
+          <span class="title-text">代码 <span class="title-sub">运行看结果，修改后会自动检查修复</span></span>
           <span class="code-actions">
-            <button class="primary" :disabled="running" @click="runCurrentCode">
-              {{ running ? '运行中…' : '▶ 运行看看' }}
-            </button>
-            <button class="submit-btn" :disabled="submitting || session.fixed" @click="submit">
-              {{ submitting ? '判定中…' : '提交修复' }}
+            <button class="primary" :disabled="running || submitting || session.fixed" @click="runAndCheck">
+              {{ running ? '运行中…' : (submitting ? '检查中…' : '▶ 运行并检查') }}
             </button>
           </span>
         </div>
@@ -504,21 +563,6 @@ function quit() {
           </div>
         </div>
 
-        <!-- B0.5 观察卡：运行后先观察再问导师（软桥，可跳过，不锁聊天） -->
-        <div v-if="observationPending" class="obs-card">
-          <div class="obs-title">🔍 先别急着问导师——你观察到了什么？</div>
-          <div class="obs-hint">对照上面的运行结果，勾一勾、写一写，再发给导师。说不出来也没关系。</div>
-          <label v-for="(_, k) in obsChecks" :key="k" class="obs-check">
-            <input type="checkbox" v-model="obsChecks[k]" /> {{ k }}
-          </label>
-          <textarea v-model="obsGuess" class="obs-guess" rows="2"
-                    placeholder="我的猜测：问题可能出在……（写不出来可以留空）" />
-          <div class="obs-actions">
-            <button class="primary" :disabled="sending" @click="submitObservation">把观察告诉导师 →</button>
-            <button class="obs-skip" :disabled="sending" @click="skipObservation">我看不懂，直接请导师帮助</button>
-          </div>
-        </div>
-
         <div v-if="session.done" class="banner banner-done">
           🎉 <b>本关完成！</b>该知识点已升级为「已内化」（成因 / 定位 / 迁移复述通过）。去能力画像看看，或挑战下一题。
           <div v-if="session.variant" class="variant-offer">
@@ -537,12 +581,14 @@ function quit() {
         </div>
       </div>
 
-      <!-- 解释模块（可开关）：逐行讲解 + 认符号 + 概念，全在一栏 -->
-      <div v-if="showExplain" class="panel explain-panel" :style="{ flex: explainFlex + ' 1 0%' }">
-        <div class="panel-title">
-          <span class="title-text">解释 <span class="title-sub">帮你看懂这段代码</span></span>
-          <button class="mod-close" @click="togglePanel('explain')">收起 ✕</button>
-        </div>
+      <!-- 解释降为代码旁的按需工具，不与思考主线并列。 -->
+      <div class="tool-shelf">
+        <button :class="['tool-trigger', { open: showExplain }]" @click="toggleExplain">
+          <span><b>卡住时的小工具</b> · 逐行讲解、认符号、补概念</span>
+          <span>{{ showExplain ? '收起 ↑' : '打开 ↓' }}</span>
+        </button>
+      </div>
+      <div v-if="showExplain" class="panel explain-panel">
         <div class="explain-body">
           <!-- 逐行讲解 -->
           <div class="code-walk">
@@ -612,14 +658,90 @@ function quit() {
           <p class="primer-foot">对话里带虚线的词，悬停就能看解释。</p>
         </div>
       </div>
+      </div>
 
-      <div v-if="showTutor" class="panel chat-panel" :style="{ flex: '30 1 0%' }">
-        <div class="panel-title">
-          <span class="title-text"><span class="tutor-avatar">知</span>知返</span>
-          <span class="title-sub">只引导，不给答案 · 陪你迷途知返</span>
+      <div class="panel thinking-panel">
+        <div class="thinking-head">
+          <div>
+            <div class="thinking-kicker">这不是作业，写不出来也可以直接问知返</div>
+            <h3>我的思考过程</h3>
+          </div>
+          <span class="thinking-stage">现在 · {{ session.stage.slice(1) }}</span>
+        </div>
+
+        <div class="thought-line">
+          <section :class="['thought-step', { active: session.stage === '①发现', filled: observationRecord?.observation }]">
+            <span class="thought-dot">1</span>
+            <div class="thought-content">
+              <div class="thought-title">观察 <span>运行后，实际发生了什么？</span></div>
+              <div v-if="observationRecord?.observation" class="thought-note">
+                {{ observationRecord.observation }}
+              </div>
+              <div v-else-if="!observationPending" class="thought-empty">
+                点一次“运行并检查”，这里会帮你接住真实结果。
+              </div>
+              <div v-if="observationPending" class="obs-card">
+                <div class="obs-hint">对照左边的真实运行结果，随手勾一勾。可以留空，也可以直接请知返一起看。</div>
+                <div class="obs-options">
+                  <label v-for="(_, k) in obsChecks" :key="k" class="obs-check">
+                    <input type="checkbox" v-model="obsChecks[k]" /> {{ k }}
+                  </label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section :class="['thought-step', { active: ['②定位', '③归因', '④修复'].includes(session.stage), filled: observationRecord?.guess }]">
+            <span class="thought-dot">2</span>
+            <div class="thought-content">
+              <div class="thought-title">猜测 <span>问题可能在哪里，为什么？</span></div>
+              <div v-if="observationRecord?.guess" class="thought-note">
+                {{ observationRecord.guess }}
+              </div>
+              <template v-else-if="observationPending">
+                <textarea v-model="obsGuess" class="obs-guess" rows="2"
+                          placeholder="问题可能出在……（说不上来可以留空）" />
+                <div class="obs-actions">
+                  <button class="primary" :disabled="sending" @click="submitObservation">记下来，再听知返怎么想 →</button>
+                  <button class="obs-skip" :disabled="sending" @click="skipObservation">我看不懂，直接请知返帮助</button>
+                </div>
+              </template>
+              <div v-else class="thought-empty">先凭感觉也可以，知返会陪你把猜测一点点变清楚。</div>
+            </div>
+          </section>
+
+          <section :class="['thought-step', { active: session.stage === '⑤验证', filled: runResult || session.fixed }]">
+            <span class="thought-dot">3</span>
+            <div class="thought-content">
+              <div class="thought-title">验证 <span>什么结果能支持或推翻猜测？</span></div>
+              <div :class="['thought-note', { muted: !runResult && !session.fixed }]">{{ verificationNote }}</div>
+            </div>
+          </section>
+
+          <section :class="['thought-step', { active: session.stage === '⑥内化', filled: summaryRecord?.summary }]">
+            <span class="thought-dot">4</span>
+            <div class="thought-content">
+              <div class="thought-title">总结 <span>下次再遇到时，我想记住什么？</span></div>
+              <div v-if="summaryRecord?.summary" class="thought-note">{{ summaryRecord.summary }}</div>
+              <div v-else-if="session.stage === '⑥内化'" class="summary-compose">
+                <textarea v-model="summaryDraft" rows="2"
+                          placeholder="比如：这个 Bug 为什么发生、我是怎么定位的、下次先检查什么……" />
+                <div class="summary-actions">
+                  <button class="primary" :disabled="sending || !summaryDraft.trim()" @click="submitSummary">留下这句话</button>
+                  <span>也可以不写，直接在下面和知返聊。</span>
+                </div>
+              </div>
+              <div v-else class="thought-empty">走到最后，这里会自然长出一条属于你的经验。</div>
+            </div>
+          </section>
+        </div>
+
+        <div class="tutor-divider">
+          <span class="tutor-avatar">知</span>
+          <div><b>知返反馈</b><span>只引导，不给答案</span></div>
         </div>
         <div ref="chatBox" class="chat">
-          <div v-for="(m, i) in messages" :key="i" :class="['msg', m.role]">
+          <div v-for="(m, i) in visibleMessages" :key="i" :class="['msg', m.role]">
             <div v-if="m.role === 'tutor'" class="avatar tutor-avatar">知</div>
             <div class="bubble">
               <GlossaryText v-if="m.role !== 'student'" :text="m.text" />
@@ -764,6 +886,10 @@ function quit() {
   display: flex; align-items: center; justify-content: space-between;
   gap: 16px; padding: 14px 22px; flex-wrap: wrap;
 }
+.current-stage { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.current-stage-label { color: var(--muted); font-size: 12.5px; }
+.current-stage b { font-family: var(--serif); color: var(--primary-dark); font-size: 15px; }
+.current-stage > span:last-child { color: var(--muted); font-size: 13px; }
 .stepper { display: flex; align-items: center; gap: 0; margin: 0; padding: 0; list-style: none; flex-wrap: wrap; }
 .step { display: flex; align-items: center; gap: 6px; color: var(--muted); position: relative; padding-right: 5px; }
 .step:not(:last-child)::after {
@@ -870,25 +996,28 @@ function quit() {
 .walk-deep:hover { border-color: var(--primary); }
 .walk-deep-done { margin-top: 10px; font-size: 12px; color: var(--muted); }
 
-/* ---------- 三模块自由开关（认知脚手架） ---------- */
-.mod-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
-.mod-label { font-size: 13px; color: var(--muted); }
-.mod-chip {
-  font-size: 13px; color: var(--muted); background: var(--panel);
-  border: 1px solid var(--border); border-radius: 999px; padding: 4px 14px; cursor: pointer;
+/* ---------- 认知过程双栏 ---------- */
+.cols {
+  display: grid; grid-template-columns: minmax(0, 44fr) minmax(390px, 56fr);
+  gap: 20px; align-items: stretch;
 }
-.mod-chip:hover:not(.on) { border-color: var(--primary); color: var(--primary); }
-.mod-chip.on { background: var(--primary); border-color: var(--primary); color: #fff; }
-.mod-close { font-size: 12px; color: var(--muted); background: none; border: none; cursor: pointer; padding: 2px 4px; }
-.mod-close:hover { color: var(--primary); }
-
-/* 横向并排，宽度由 :style flex 控制；自适应不变长 */
-.cols { display: flex; gap: 16px; align-items: flex-start; }
-.explain-panel { max-height: 548px; overflow-y: auto; }
+.code-column { min-width: 0; display: flex; flex-direction: column; gap: 12px; height: 100%; }
+.code-panel { flex: 1 1 auto; display: flex; flex-direction: column; }
+.explain-panel { max-height: 560px; overflow-y: auto; }
 .explain-body { display: flex; flex-direction: column; gap: 14px; }
+.tool-shelf { padding: 0 4px; }
+.tool-trigger {
+  display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  width: 100%; padding: 9px 12px; border: 1px solid transparent; background: transparent;
+  color: var(--muted); text-align: left; font-size: 12.5px; border-radius: 9px;
+}
+.tool-trigger b { color: var(--text); font-weight: 600; }
+.tool-trigger:hover, .tool-trigger.open {
+  background: #f1ebe0; border-color: var(--border); color: var(--primary);
+}
 @media (max-width: 900px) {
-  .cols { flex-direction: column; }
-  .code-panel, .explain-panel, .chat-panel { flex: 1 1 auto !important; width: 100%; }
+  .cols { grid-template-columns: 1fr; }
+  .thinking-panel { min-height: auto; }
 }
 .panel-title {
   display: flex; justify-content: space-between; align-items: center;
@@ -899,7 +1028,7 @@ function quit() {
 
 /* ---------- 代码区 ---------- */
 .code {
-  width: 100%; height: 300px; resize: vertical;
+  width: 100%; min-height: 300px; height: auto; flex: 1 1 300px; resize: none; overflow: auto;
   background: #f5f0e6; color: var(--text);
   font-family: Consolas, 'Courier New', monospace; font-size: 14.5px;
   line-height: 1.75; border: 1px solid #d8d0bf; border-radius: 10px; padding: 16px 18px;
@@ -942,19 +1071,20 @@ function quit() {
 .console-err { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; color: #f0907f; }
 .console-muted { color: #7e7668; }
 
-/* B0.5 观察卡 */
+/* B0.5 观察卡：嵌在思考线上，不做弹窗式任务。 */
 .obs-card {
-  margin-top: 12px; padding: 14px 16px; border-radius: 10px;
-  background: var(--accent-soft); border: 1px solid #e0cdbb;
+  margin-top: 8px; padding: 10px 12px; border-radius: 9px;
+  background: #f7f1e8; border: 1px solid #e6d8c8;
 }
-.obs-title { font-weight: 600; color: var(--primary-dark); margin-bottom: 4px; }
-.obs-hint { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; line-height: 1.6; }
-.obs-check { display: block; font-size: 13.5px; margin: 5px 0; cursor: pointer; }
+.obs-hint { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; line-height: 1.6; }
+.obs-options { display: flex; gap: 6px 12px; flex-wrap: wrap; }
+.obs-check { display: inline-flex; align-items: center; font-size: 12.5px; cursor: pointer; }
 .obs-check input { margin-right: 6px; }
-.obs-guess { margin-top: 8px; resize: vertical; }
+.obs-guess { margin-top: 8px; resize: vertical; background: #fffdf9; }
 .obs-actions { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.obs-actions .primary { font-size: 12.5px; padding: 7px 12px; }
 .obs-skip {
-  font-size: 13px; color: var(--muted); background: none; border: none;
+  font-size: 12.5px; color: var(--muted); background: none; border: none;
   text-decoration: underline; padding: 0; cursor: pointer;
 }
 .obs-skip:hover { color: var(--primary); }
@@ -962,14 +1092,80 @@ function quit() {
 .variant-label { font-size: 13px; }
 .variant-btn { align-self: flex-start; }
 
-/* ---------- 对话区 ---------- */
+/* ---------- 思考主线 + 知返 ---------- */
+.thinking-panel {
+  min-height: 650px; height: 100%; padding: 22px 24px; display: flex; flex-direction: column;
+  box-shadow: 0 8px 28px -24px rgba(86, 55, 38, 0.45);
+}
+.thinking-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding-bottom: 18px; border-bottom: 1px solid var(--border);
+}
+.thinking-kicker { color: var(--muted); font-size: 12px; line-height: 1.5; margin-bottom: 4px; }
+.thinking-head h3 {
+  margin: 0; font-family: var(--serif); font-size: 21px; font-weight: 600;
+}
+.thinking-stage {
+  flex-shrink: 0; padding: 4px 10px; border-radius: 999px;
+  color: var(--primary-dark); background: var(--accent-soft); font-size: 12px;
+}
+.thought-line { padding: 18px 0 2px; }
+.thought-step {
+  display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px;
+  position: relative; padding-bottom: 18px;
+}
+.thought-step:not(:last-child)::before {
+  content: ''; position: absolute; left: 14px; top: 29px; bottom: -1px;
+  width: 1px; background: #ded2c2;
+}
+.thought-dot {
+  position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center;
+  width: 29px; height: 29px; border-radius: 50%; background: #eee8dd;
+  color: var(--muted); font-family: var(--serif); font-size: 12px;
+  border: 1px solid #e0d6c8;
+}
+.thought-step.active .thought-dot {
+  background: var(--primary); border-color: var(--primary); color: #fff;
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.thought-step.filled:not(.active) .thought-dot { background: #dfc7b8; color: #70422f; }
+.thought-content { min-width: 0; padding-top: 3px; }
+.thought-title {
+  font-family: var(--serif); font-size: 15px; font-weight: 600; color: var(--text);
+}
+.thought-title span {
+  margin-left: 7px; color: var(--muted); font-family: 'Segoe UI', sans-serif;
+  font-size: 12px; font-weight: 400;
+}
+.thought-note {
+  margin-top: 7px; padding: 9px 11px; background: #f7f2e9;
+  border-left: 2px solid #d6aa91; border-radius: 0 8px 8px 0;
+  color: var(--text); font-size: 13px; line-height: 1.65; white-space: pre-wrap;
+}
+.thought-note.muted, .thought-empty {
+  margin-top: 6px; color: var(--muted); font-size: 12.5px; line-height: 1.6;
+}
+.summary-compose { margin-top: 8px; }
+.summary-compose textarea { resize: vertical; background: #fffdf9; }
+.summary-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.summary-actions button { font-size: 12.5px; padding: 7px 12px; }
+.summary-actions span { color: var(--muted); font-size: 12px; }
+.tutor-divider {
+  display: flex; align-items: center; gap: 10px; padding: 16px 0 12px;
+  border-top: 1px solid var(--border);
+}
+.tutor-divider div { display: flex; align-items: baseline; gap: 9px; }
+.tutor-divider b { font-family: var(--serif); font-size: 15px; }
+.tutor-divider span:not(.tutor-avatar) { color: var(--muted); font-size: 12px; }
 .tutor-avatar {
   display: inline-flex; align-items: center; justify-content: center;
   width: 27px; height: 27px; border-radius: 8px; font-size: 14px; font-weight: 700;
   font-family: var(--serif); background: var(--accent-soft); color: var(--primary-dark); flex-shrink: 0;
 }
-.chat-panel { display: flex; flex-direction: column; height: 548px; }
-.chat { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 4px 2px; }
+.chat {
+  min-height: 380px; flex: 1 1 380px; overflow-y: auto; display: flex; flex-direction: column;
+  gap: 12px; padding: 4px 3px 8px;
+}
 .msg { display: flex; align-items: flex-end; gap: 9px; }
 .msg.student { justify-content: flex-end; }
 .msg .avatar { align-self: flex-start; }

@@ -115,6 +115,9 @@ def get_session(session_id: str, db: Session = Depends(get_db)):
         # 提交失败回流的整段代码，恢复时收成简短动作标记（与训练场内一致，避免大段代码刷屏）
         if m["role"] == "user" and m["content"].startswith(tutor.FIX_FAILED_PREFIX):
             messages.append({"role": "student", "text": "📤 我提交了一版修复"})
+            if "[真实运行结果]" in m["content"]:
+                real_result = m["content"].split("[真实运行结果]", 1)[1].strip()
+                messages.append({"role": "system", "text": f"提交测试结果：{real_result}"})
             continue
         messages.append({"role": role_map.get(m["role"], "system"), "text": m["content"]})
     return {
@@ -167,23 +170,31 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
     result = mine_engine.judge_fix(session.pattern_id, req.code)
     # 观测层：记一条提交执行事实（Debug Timeline + Execution_Outcome），通过/失败都记
     kind_map = {"ok": "OK", "RE": "RE", "WA": "WA", "HANG": "HANG"}
-    event_engine.log_execution(
+    execution = event_engine.log_execution(
         db, student_id=session.student_id, session_id=session.id,
         pattern_id=session.pattern_id, source="submit",
         kind=kind_map.get(result["kind"], result["kind"]), stderr=result.get("stderr", ""),
         knowledge_points=mine.get("knowledge_points", []))
+    execution_summary = {
+        "kind": execution.kind,
+        "error_family": execution.error_family,
+        "bug_type": (execution.meta or {}).get("bug_type"),
+        "concept_tags": (execution.meta or {}).get("concept_tags", []),
+    }
     if not result["passed"]:
         diagnosis = tutor.judge_feedback(result)  # 真实运行结果（报错/输出差异/超时），非正则猜测
         fail_msg = (f"{tutor.FIX_FAILED_PREFIX}\n我提交的代码：\n{req.code}\n\n[真实运行结果] {diagnosis}")
         try:
             feedback = tutor.run_turn(db, session, fail_msg)
-            return {"passed": False, "stage": feedback["stage"], "message": feedback["reply"]}
+            return {"passed": False, "stage": feedback["stage"], "message": feedback["reply"],
+                    "execution": execution_summary}
         except Exception:
             # LLM不可用时降级：失败记录仍进对话历史，下次对话导师能看到
             session.history = list(session.history) + [{"role": "user", "content": fail_msg}]
             db.commit()
             return {"passed": False, "stage": session.stage,
-                    "message": f"测试未通过。{diagnosis}\n回到对话里和导师继续分析。"}
+                    "message": f"测试未通过。{diagnosis}\n回到对话里和导师继续分析。",
+                    "execution": execution_summary}
 
     # 学生若在讲清原因之前（还停在①②③）就直接提交了正确代码——不拦截，尊重已会的学生，
     # 但记下「跳过了理解对话」，反馈里温和提醒：修对≠学会，请在⑤⑥把「为什么」补上。

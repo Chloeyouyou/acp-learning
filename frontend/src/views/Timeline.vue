@@ -74,6 +74,9 @@ function fmtDay(d) {
         <div v-for="tp in data.thinking_patterns.items" :key="tp.id" class="tp">
           <div class="tp-name">{{ tp.name }}</div>
           <div class="tp-evidence">出现在 {{ tp.count }} 道题：{{ tp.members.join('、') }}</div>
+          <div v-if="tp.reflections?.length" class="tp-reflection">
+            你的思考记录：{{ tp.reflections.join('；') }}
+          </div>
           <div class="tp-advice">下次先问自己：{{ tp.advice }}</div>
         </div>
         <p v-if="data.persona.enough" class="persona-foot">{{ data.persona.line }}</p>
@@ -113,6 +116,9 @@ function fmtDay(d) {
           </div>
           <div v-if="ep.guess" class="field">
             <span class="tag">猜测</span><span class="field-val">{{ ep.guess }}</span>
+          </div>
+          <div v-if="ep.summary" class="field">
+            <span class="tag summary-tag">总结</span><span class="field-val">{{ ep.summary }}</span>
           </div>
 
           <!-- 回合：按天分行的报错演变链 -->
@@ -154,6 +160,10 @@ function fmtDay(d) {
 .tp:first-of-type { border-top: none; padding-top: 0; }
 .tp-name { font-family: var(--serif); font-size: 15px; font-weight: 600; color: var(--text); }
 .tp-evidence { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+.tp-reflection {
+  font-size: 12.5px; color: var(--text); margin-top: 6px; line-height: 1.55;
+  padding-left: 10px; border-left: 2px solid #d6aa91;
+}
 .tp-advice { font-size: 13px; color: var(--primary-dark); margin-top: 5px; }
 .persona-foot { margin: 12px 0 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
 
@@ -191,6 +201,7 @@ function fmtDay(d) {
 .tag { font-size: 12px; color: var(--muted); letter-spacing: 0.5px; min-width: 40px; flex-shrink: 0; }
 .field-val { color: var(--text); flex: 1; min-width: 0; }
 .gain-tag { color: #6f8a64; }
+.summary-tag { color: var(--primary-dark); }
 
 .rounds { margin-top: 9px; display: flex; flex-direction: column; gap: 6px; }
 .round { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
