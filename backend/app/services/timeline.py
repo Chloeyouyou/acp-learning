@@ -25,16 +25,22 @@ _CAT_LABEL = {"boundary": "边界条件", "loop": "循环逻辑", "null": "空�
 # 题→簇的归属在各 pattern YAML 的 thinking_pattern 字段；这里只存展示文案。
 THINKING_PATTERNS = {
     "assume_valid": {"name": "默认输入和返回值总是正常、有效",
+                     "reminder": "默认输入和返回值一定是正常的",
                      "advice": "如果它是空的、找不到、是 None 呢？"},
     "index_confusion": {"name": "下标和「个数 / 行列」容易搞混",
+                        "reminder": "把个数 / 长度当成了下标",
                         "advice": "n 个元素，下标只到 n−1，对吗？"},
     "loop_progress": {"name": "默认循环一定会推进、会停下",
+                      "reminder": "默认循环一定会停下来",
                       "advice": "这个循环每一轮都在靠近终点吗？"},
     "crash_site": {"name": "盯着报错那一行，没往前追根",
+                   "reminder": "只盯着报错那一行找原因",
                    "advice": "这个坏值，是从哪一步传进来的？"},
     "control_semantics": {"name": "控制流 / 层级的语义容易混",
+                          "reminder": "把控制流或层级的语义弄混",
                           "advice": "这一步是要跳过、退出、还是继续？"},
     "shared_state": {"name": "改了正在用、或被共享的东西",
+                     "reminder": "改动了正在用或被共享的东西",
                      "advice": "我动的这个，还有谁也在用它？"},
 }
 
@@ -91,35 +97,54 @@ def _persona(items):
     return {"enough": True, "line": line}
 
 
-def aggregate_thinking_patterns(episodes):
-    """跨题认知模式聚合：从多段 Episode 提炼"反复出现的思维默认值"。纯派生、可整体替换。
-
-    规则：按 pattern 的 thinking_pattern 归簇，计**不同题数**（惯性=跨题）；只留 ≥2 题的簇、
-    按题数降序取前 3。count 只是证据数量，不是分数。未来要按"是否真挣扎/最近N次"加权、
-    或换 embedding 聚类，只动这个函数。
-    """
+def _recurring(episodes):
+    """按 thinking_pattern 归簇、计**不同题数**（惯性=跨题），返回 {tp_id: [题名…]} 中 ≥2 的簇（不封顶）。
+    聚合展示与开题干预的单一逻辑来源；未来换 embedding/加权聚类只动这里。"""
     groups = {}
     for ep in episodes:
         try:
             tp = mine_engine.get_pattern(ep["pattern_id"]).get("thinking_pattern")
         except KeyError:
             tp = None
-        if tp:
-            groups.setdefault(tp, [])
-            if ep["pattern_name"] not in groups[tp]:
-                groups[tp].append(ep["pattern_name"])
-    items = []
-    for tp_id, names in groups.items():
-        if len(names) < 2:
+        if not tp:
             continue
+        groups.setdefault(tp, [])
+        if ep["pattern_name"] not in groups[tp]:
+            groups[tp].append(ep["pattern_name"])
+    return {tp: names for tp, names in groups.items() if len(names) >= 2}
+
+
+def aggregate_thinking_patterns(episodes):
+    """跨题认知模式聚合「你最近常见的思维默认值」（Reflection）：降序取前 3。count 只作证据非分数。"""
+    rec = _recurring(episodes)
+    items = []
+    for tp_id, names in rec.items():
         meta = THINKING_PATTERNS.get(tp_id, {"name": tp_id, "advice": ""})
-        items.append({"id": tp_id, "name": meta["name"], "advice": meta["advice"],
+        items.append({"id": tp_id, "name": meta["name"], "advice": meta.get("advice", ""),
                       "count": len(names), "members": names})
     items.sort(key=lambda x: x["count"], reverse=True)
     items = items[:3]
     if not items:
         return {"enough": False, "hint": "再多走几道题，这里会慢慢照出你常用的思维方式。"}
     return {"enough": True, "items": items}
+
+
+def intervention_for(db: Session, student_id: str, pattern_id: str):
+    """开题前干预（Intervention）：该题 thinking_pattern 若是用户跨题高频(≥2题)惯性，
+    返回一句赋能提醒，否则 None。纯读、不写库。红线：赋能非评价、不打断。"""
+    try:
+        tp = mine_engine.get_pattern(pattern_id).get("thinking_pattern")
+    except KeyError:
+        tp = None
+    if not tp:
+        return None
+    rec = _recurring(build_timeline(db, student_id)["episodes"])
+    if tp not in rec:
+        return None
+    meta = THINKING_PATTERNS.get(tp, {})
+    return {"thinking_pattern": tp, "name": meta.get("name", ""),
+            "reminder": meta.get("reminder", meta.get("name", "")),
+            "advice": meta.get("advice", ""), "count": len(rec[tp])}
 
 
 def build_timeline(db: Session, student_id: str) -> dict:

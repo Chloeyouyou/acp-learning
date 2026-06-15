@@ -76,12 +76,15 @@ def create_session(req: CreateSessionReq, db: Session = Depends(get_db)):
         db, student_id=req.student_id, pattern_id=pattern["id"],
         knowledge_points=pattern["knowledge_points"], new_state="已接触")
     db.commit()
+    # 开题前干预（Intervention）：该题命中用户跨题高频思维默认值时，带回一句赋能提醒（否则 None）
+    intervention = timeline.intervention_for(db, req.student_id, pattern["id"])
     # 学生视角：只有代码，没有雷的信息
     return {
         "session_id": session.id,
         "language": pattern["language"],
         "code": pattern["buggy_code"],
         "task": "运行这段代码，看看它的行为是否符合预期。有问题就和导师讨论。",
+        "intervention": intervention,
     }
 
 

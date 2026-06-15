@@ -52,6 +52,7 @@ const session = reactive({
 })
 const masteredKps = ref(new Set())   // 学生已内化的知识点（练前小灶用来标「已掌握」）
 const showPrimer = ref(false)        // 练前小灶默认收起（需要的人再点开），避免页面被撑长
+const intervention = ref(null)       // 开题前小检查（命中跨题高频思维默认值才有）；帮手语气、可忽略、本题只首次弹
 const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否展开（默认收起，需要的人点开）
 const walkthrough = ref('')          // 逐行讲解文本（点按钮自动生成）
 const walkLoading = ref(false)
@@ -238,9 +239,23 @@ async function start(patternId) {
     session.internalizeQuestions = []
     session.variant = null
     messages.value = [{ role: 'system', text: data.task }]
+    setIntervention(patternId, data.intervention)
   } catch (e) {
     error.value = e.message
   }
+}
+
+// 开题小检查：只在「首次进入该题」时弹一次（localStorage 记住），收起后本题不再弹
+function setIntervention(patternId, iv) {
+  intervention.value = null
+  if (!iv) return
+  const seen = JSON.parse(localStorage.getItem('intervention_seen') || '[]')
+  if (seen.includes(patternId)) return
+  intervention.value = iv
+  localStorage.setItem('intervention_seen', JSON.stringify([...seen, patternId]))
+}
+function dismissIntervention() {
+  intervention.value = null
 }
 
 async function scrollChat() {
@@ -411,6 +426,15 @@ function quit() {
 
   <!-- 做题 -->
   <div v-else class="workspace">
+    <!-- 开题前的小检查：帮手语气、非评价、可忽略、本题只首次弹 -->
+    <div v-if="intervention" class="precheck">
+      <div class="precheck-main">
+        <div class="precheck-title">💡 开题前的小检查</div>
+        <div class="precheck-body">这类题里，先多看一眼：{{ intervention.advice }}</div>
+      </div>
+      <button class="precheck-close" @click="dismissIntervention" aria-label="收起">×</button>
+    </div>
+
     <div class="stage-bar panel">
       <ol class="stepper">
         <li
@@ -691,6 +715,22 @@ function quit() {
 
 /* ---------- 阶段步进条 ---------- */
 .workspace { display: flex; flex-direction: column; gap: 20px; }
+
+/* 开题前的小检查：克制的帮手横幅，不告警、不阻断 */
+.precheck {
+  display: flex; align-items: flex-start; gap: 12px;
+  background: var(--accent-soft); border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 14px;
+}
+.precheck-main { flex: 1; min-width: 0; }
+.precheck-title { font-size: 13.5px; font-weight: 600; color: var(--primary-dark); }
+.precheck-body { font-size: 13.5px; color: var(--text); line-height: 1.6; margin-top: 3px; }
+.precheck-close {
+  border: none; background: none; color: var(--muted); font-size: 18px; line-height: 1;
+  cursor: pointer; padding: 2px 4px; flex-shrink: 0;
+}
+.precheck-close:hover { color: var(--text); }
+
 .stage-bar {
   display: flex; align-items: center; justify-content: space-between;
   gap: 16px; padding: 14px 22px; flex-wrap: wrap;
