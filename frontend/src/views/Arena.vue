@@ -53,6 +53,19 @@ const session = reactive({
 const masteredKps = ref(new Set())   // 学生已内化的知识点（练前小灶用来标「已掌握」）
 const showPrimer = ref(false)        // 练前小灶默认收起（需要的人再点开），避免页面被撑长
 const intervention = ref(null)       // 开题前小检查（命中跨题高频思维默认值才有）；帮手语气、可忽略、本题只首次弹
+
+// 三模块自由开关（认知脚手架）：代码常驻；解释/知返按需开，记住偏好。布局随之自适应。
+const _panels = JSON.parse(localStorage.getItem('arena_panels') || 'null')
+const showExplain = ref(_panels ? !!_panels.explain : false)   // 解释默认关（鼓励先自己读）
+const showTutor = ref(_panels ? !!_panels.tutor : true)        // 知返默认开（陪伴、不剧透）
+function togglePanel(which) {
+  if (which === 'explain') showExplain.value = !showExplain.value
+  else showTutor.value = !showTutor.value
+  localStorage.setItem('arena_panels', JSON.stringify({ explain: showExplain.value, tutor: showTutor.value }))
+}
+const codeFlex = computed(() =>
+  (showExplain.value && showTutor.value) ? 46 : ((showExplain.value || showTutor.value) ? 70 : 100))
+const explainFlex = computed(() => (showExplain.value && showTutor.value) ? 24 : 30)
 const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否展开（默认收起，需要的人点开）
 const walkthrough = ref('')          // 逐行讲解文本（点按钮自动生成）
 const walkLoading = ref(false)
@@ -451,58 +464,15 @@ function quit() {
       </div>
     </div>
 
-    <!-- 练前小灶：这道题用到的概念，看不懂代码先补一补（个性化：已掌握的标出来） -->
-    <div v-if="primerConcepts.length" class="primer panel">
-      <button class="primer-head" @click="showPrimer = !showPrimer">
-        <span class="primer-caret" :class="{ open: showPrimer }">▸</span>
-        <b>看不懂代码？</b><span class="primer-head-sub">认符号 · 概念解释</span>
-      </button>
-      <div v-show="showPrimer" class="primer-body">
-        <!-- 代码符号扫盲：完全没见过代码的人先认认这些符号；标「懂了」的可单个/全部恢复 -->
-        <div v-if="visibleBricks.length" class="syntax-box">
-          <button class="syntax-head" @click="showSyntax = !showSyntax">
-            <span class="primer-caret" :class="{ open: showSyntax }">▸</span>
-            先认认这道题里的符号（{{ visibleBricks.length }} 个）
-          </button>
-          <div v-show="showSyntax" class="syntax-list">
-            <div v-for="b in visibleBricks" :key="b.name" class="syntax-item">
-              <div class="syntax-row">
-                <span class="syntax-name">{{ b.name }}</span>
-                <button class="brick-known" title="标记懂了，以后不再显示" @click="markBrickLearned(b.name)">✓ 懂了</button>
-              </div>
-              <span class="syntax-desc">{{ b.desc }}</span>
-            </div>
-            <div v-if="visibleBricks.length === 0" class="brick-allknown">这道题的符号你都标记懂了 👍</div>
-            <!-- 已隐藏符号管理：可展开逐个恢复，或一键全部恢复 -->
-            <div v-if="hiddenBricks.length" class="brick-hidden">
-              <button class="brick-toggle" @click="showHiddenBricks = !showHiddenBricks">
-                已隐藏 {{ hiddenBricks.length }} 个你标记懂了的符号 {{ showHiddenBricks ? '▾' : '▸' }}
-              </button>
-              <div v-show="showHiddenBricks" class="hidden-list">
-                <div v-for="b in hiddenBricks" :key="b.name" class="hidden-item">
-                  <span class="syntax-name">{{ b.name }}</span>
-                  <button class="brick-restore" @click="restoreBrick(b.name)">↩ 恢复</button>
-                </div>
-                <button class="brick-reset" @click="resetLearnedBricks">全部恢复</button>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="primer-sub">这道题涉及的概念</div>
-        <div v-for="c in primerConcepts" :key="c.kp" class="primer-item">
-          <div class="primer-term">
-            {{ c.kp }}
-            <span v-if="c.mastered" class="primer-tag done">已掌握</span>
-            <span v-else class="primer-tag new">新</span>
-          </div>
-          <div class="primer-desc">{{ c.desc || '遇到不懂的随时问知返。' }}</div>
-        </div>
-        <p class="primer-foot">对话里带虚线的词，悬停就能看解释。</p>
-      </div>
+    <!-- 三模块开关（认知脚手架）：代码常驻，解释/知返按需开 -->
+    <div class="mod-bar">
+      <span class="mod-label">需要帮助？</span>
+      <button :class="['mod-chip', { on: showExplain }]" @click="togglePanel('explain')">解释代码</button>
+      <button :class="['mod-chip', { on: showTutor }]" @click="togglePanel('tutor')">问知返</button>
     </div>
 
     <div class="cols">
-      <div class="panel code-panel">
+      <div class="panel code-panel" :style="{ flex: codeFlex + ' 1 0%' }">
         <div class="panel-title">
           <span class="title-text">代码 <span class="title-sub">看不懂没关系，先点运行看看</span></span>
           <span class="code-actions">
@@ -515,30 +485,6 @@ function quit() {
           </span>
         </div>
         <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
-
-        <!-- 逐行讲解：紧贴代码，读"这一行什么意思"时完整代码就在上面（不剧透 bug） -->
-        <div class="code-walk">
-          <button v-if="!walkthrough && !walkLoading" class="walk-btn" @click="loadWalkthrough(false)">
-            看不懂这段代码？让知返逐行讲给我听
-          </button>
-          <div v-else-if="walkLoading" class="walk-loading">知返正在逐行讲解…</div>
-          <template v-else>
-            <div class="walk-head">
-              <span class="walk-head-title">逐行讲解</span>
-              <button class="walk-collapse" @click="walkthrough = ''; walkDeep = false">收起 ✕</button>
-            </div>
-            <div class="walk-rows">
-              <div v-for="(r, i) in walkRows" :key="i" class="walk-row">
-                <code v-if="r.code" class="walk-code">{{ r.code }}</code>
-                <div class="walk-exp">{{ r.explain }}</div>
-              </div>
-            </div>
-            <button v-if="!walkDeep" class="walk-deep" @click="loadWalkthrough(true)">
-              还不够懂？再讲细一点 →
-            </button>
-            <div v-else class="walk-deep-done">已是最详细的讲法 · 还不懂就把那一行发给知返问</div>
-          </template>
-        </div>
 
         <!-- 运行结果：真实运行（路线A，真跑非AI猜），按正式终端样式呈现 -->
         <div v-if="runResult" class="console">
@@ -591,7 +537,83 @@ function quit() {
         </div>
       </div>
 
-      <div class="panel chat-panel">
+      <!-- 解释模块（可开关）：逐行讲解 + 认符号 + 概念，全在一栏 -->
+      <div v-if="showExplain" class="panel explain-panel" :style="{ flex: explainFlex + ' 1 0%' }">
+        <div class="panel-title">
+          <span class="title-text">解释 <span class="title-sub">帮你看懂这段代码</span></span>
+          <button class="mod-close" @click="togglePanel('explain')">收起 ✕</button>
+        </div>
+        <div class="explain-body">
+          <!-- 逐行讲解 -->
+          <div class="code-walk">
+            <button v-if="!walkthrough && !walkLoading" class="walk-btn" @click="loadWalkthrough(false)">
+              让知返把这段代码逐行讲给我听
+            </button>
+            <div v-else-if="walkLoading" class="walk-loading">知返正在逐行讲解…</div>
+            <template v-else>
+              <div class="walk-head">
+                <span class="walk-head-title">逐行讲解</span>
+                <button class="walk-collapse" @click="walkthrough = ''; walkDeep = false">重新生成 ↻</button>
+              </div>
+              <div class="walk-rows">
+                <div v-for="(r, i) in walkRows" :key="i" class="walk-row">
+                  <code v-if="r.code" class="walk-code">{{ r.code }}</code>
+                  <div class="walk-exp">{{ r.explain }}</div>
+                </div>
+              </div>
+              <button v-if="!walkDeep" class="walk-deep" @click="loadWalkthrough(true)">
+                还不够懂？再讲细一点 →
+              </button>
+              <div v-else class="walk-deep-done">已是最详细的讲法 · 还不懂就把那一行发给知返问</div>
+            </template>
+          </div>
+
+          <!-- 认符号 -->
+          <div v-if="visibleBricks.length" class="syntax-box">
+            <button class="syntax-head" @click="showSyntax = !showSyntax">
+              <span class="primer-caret" :class="{ open: showSyntax }">▸</span>
+              先认认这道题里的符号（{{ visibleBricks.length }} 个）
+            </button>
+            <div v-show="showSyntax" class="syntax-list">
+              <div v-for="b in visibleBricks" :key="b.name" class="syntax-item">
+                <div class="syntax-row">
+                  <span class="syntax-name">{{ b.name }}</span>
+                  <button class="brick-known" title="标记懂了，以后不再显示" @click="markBrickLearned(b.name)">✓ 懂了</button>
+                </div>
+                <span class="syntax-desc">{{ b.desc }}</span>
+              </div>
+              <div v-if="hiddenBricks.length" class="brick-hidden">
+                <button class="brick-toggle" @click="showHiddenBricks = !showHiddenBricks">
+                  已隐藏 {{ hiddenBricks.length }} 个你标记懂了的符号 {{ showHiddenBricks ? '▾' : '▸' }}
+                </button>
+                <div v-show="showHiddenBricks" class="hidden-list">
+                  <div v-for="b in hiddenBricks" :key="b.name" class="hidden-item">
+                    <span class="syntax-name">{{ b.name }}</span>
+                    <button class="brick-restore" @click="restoreBrick(b.name)">↩ 恢复</button>
+                  </div>
+                  <button class="brick-reset" @click="resetLearnedBricks">全部恢复</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 概念 -->
+          <template v-if="primerConcepts.length">
+            <div class="primer-sub">这道题涉及的概念</div>
+            <div v-for="c in primerConcepts" :key="c.kp" class="primer-item">
+              <div class="primer-term">
+                {{ c.kp }}
+                <span v-if="c.mastered" class="primer-tag done">已掌握</span>
+                <span v-else class="primer-tag new">新</span>
+              </div>
+              <div class="primer-desc">{{ c.desc || '遇到不懂的随时问知返。' }}</div>
+            </div>
+          </template>
+          <p class="primer-foot">对话里带虚线的词，悬停就能看解释。</p>
+        </div>
+      </div>
+
+      <div v-if="showTutor" class="panel chat-panel" :style="{ flex: '30 1 0%' }">
         <div class="panel-title">
           <span class="title-text"><span class="tutor-avatar">知</span>知返</span>
           <span class="title-sub">只引导，不给答案 · 陪你迷途知返</span>
@@ -848,10 +870,26 @@ function quit() {
 .walk-deep:hover { border-color: var(--primary); }
 .walk-deep-done { margin-top: 10px; font-size: 12px; color: var(--muted); }
 
-/* ---------- 双栏 ---------- */
-/* 主线：代码让位、知返变宽（核心体验） */
-.cols { display: grid; grid-template-columns: minmax(0, 42fr) minmax(0, 58fr); gap: 20px; align-items: start; }
-@media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+/* ---------- 三模块自由开关（认知脚手架） ---------- */
+.mod-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.mod-label { font-size: 13px; color: var(--muted); }
+.mod-chip {
+  font-size: 13px; color: var(--muted); background: var(--panel);
+  border: 1px solid var(--border); border-radius: 999px; padding: 4px 14px; cursor: pointer;
+}
+.mod-chip:hover:not(.on) { border-color: var(--primary); color: var(--primary); }
+.mod-chip.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+.mod-close { font-size: 12px; color: var(--muted); background: none; border: none; cursor: pointer; padding: 2px 4px; }
+.mod-close:hover { color: var(--primary); }
+
+/* 横向并排，宽度由 :style flex 控制；自适应不变长 */
+.cols { display: flex; gap: 16px; align-items: flex-start; }
+.explain-panel { max-height: 548px; overflow-y: auto; }
+.explain-body { display: flex; flex-direction: column; gap: 14px; }
+@media (max-width: 900px) {
+  .cols { flex-direction: column; }
+  .code-panel, .explain-panel, .chat-panel { flex: 1 1 auto !important; width: 100%; }
+}
 .panel-title {
   display: flex; justify-content: space-between; align-items: center;
   font-weight: 600; margin-bottom: 14px;
