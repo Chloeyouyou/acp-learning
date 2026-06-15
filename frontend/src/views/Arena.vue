@@ -557,7 +557,29 @@ function quit() {
             </button>
           </span>
         </div>
-        <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
+        <textarea v-show="!walkOpen" v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
+
+        <!-- 逐行讲解：打开时就地替换代码框（每行讲解都带代码=带注解的题目），不盖代码、不撑高页面 -->
+        <div v-if="walkOpen" class="walk-drawer">
+          <div class="walk-drawer-bar">
+            <span class="walk-drawer-title">逐行讲解</span>
+            <button class="wd-btn" @click="walkOpen = false">关闭 ✕</button>
+          </div>
+          <div class="walk-drawer-body">
+            <div v-if="walkLoading" class="walk-loading">知返正在逐行讲解…</div>
+            <template v-else-if="walkthrough">
+              <div class="walk-rows">
+                <div v-for="(r, i) in walkRows" :key="i" class="walk-row">
+                  <code v-if="r.code" class="walk-code">{{ r.code }}</code>
+                  <div class="walk-exp">{{ r.explain }}</div>
+                </div>
+              </div>
+              <button v-if="!walkDeep" class="walk-deep" @click="loadWalkthrough(true)">还不够懂？再讲细一点 →</button>
+              <div v-else class="walk-deep-done">已是最详细的讲法 · 还不懂就把那一行发给知返问</div>
+            </template>
+            <div v-else class="walk-loading">加载中…</div>
+          </div>
+        </div>
 
         <!-- 运行结果：真实运行（路线A，真跑非AI猜），终端样式 + 可折叠（点头部收起，腾纵向空间） -->
         <div v-if="runResult" class="console">
@@ -595,30 +617,6 @@ function quit() {
           </div>
         </div>
 
-        <!-- 逐行讲解抽屉：从代码区底部上滑、覆盖代码下部，不撑高页面；两档高度 + 关闭 -->
-        <div v-if="walkOpen" :class="['walk-drawer', { tall: walkTall }]">
-          <div class="walk-drawer-bar">
-            <span class="walk-drawer-title">逐行讲解</span>
-            <span class="walk-drawer-actions">
-              <button class="wd-btn" @click="walkTall = !walkTall">{{ walkTall ? '收矮' : '加高' }}</button>
-              <button class="wd-btn" @click="walkOpen = false">✕</button>
-            </span>
-          </div>
-          <div class="walk-drawer-body">
-            <div v-if="walkLoading" class="walk-loading">知返正在逐行讲解…</div>
-            <template v-else-if="walkthrough">
-              <div class="walk-rows">
-                <div v-for="(r, i) in walkRows" :key="i" class="walk-row">
-                  <code v-if="r.code" class="walk-code">{{ r.code }}</code>
-                  <div class="walk-exp">{{ r.explain }}</div>
-                </div>
-              </div>
-              <button v-if="!walkDeep" class="walk-deep" @click="loadWalkthrough(true)">还不够懂？再讲细一点 →</button>
-              <div v-else class="walk-deep-done">已是最详细的讲法 · 还不懂就把那一行发给知返问</div>
-            </template>
-            <div v-else class="walk-loading">加载中…</div>
-          </div>
-        </div>
       </div>
 
       <!-- 解释降为代码旁的按需工具，不与思考主线并列。 -->
@@ -754,20 +752,8 @@ function quit() {
         </div>
 
         <div class="tutor-divider">
-          <span class="tutor-avatar tutor-logo">
-            <svg viewBox="0 0 48 48" aria-hidden="true">
-              <defs><path id="kr" d="M24 9 Q20.8 16 24 23 Q27.2 16 24 9 Z" /></defs>
-              <g fill="currentColor">
-                <use href="#kr" /><use href="#kr" transform="rotate(30 24 24)" />
-                <use href="#kr" transform="rotate(60 24 24)" /><use href="#kr" transform="rotate(90 24 24)" />
-                <use href="#kr" transform="rotate(120 24 24)" /><use href="#kr" transform="rotate(150 24 24)" />
-                <use href="#kr" transform="rotate(180 24 24)" /><use href="#kr" transform="rotate(210 24 24)" />
-                <use href="#kr" transform="rotate(240 24 24)" /><use href="#kr" transform="rotate(270 24 24)" />
-                <use href="#kr" transform="rotate(300 24 24)" /><use href="#kr" transform="rotate(330 24 24)" />
-              </g>
-            </svg>
-          </span>
-          <div><b class="tutor-poem">知迷途其未远，觉今是而昨非</b><span>只引导，不给答案</span></div>
+          <span class="tutor-avatar">返</span>
+          <div><b class="tutor-poem">知迷途其未远，觉今是而昨非</b></div>
         </div>
         <div ref="chatBox" class="chat">
           <div v-for="(m, i) in visibleMessages" :key="i" :class="['msg', m.role]">
@@ -1031,7 +1017,7 @@ function quit() {
   gap: 20px; align-items: stretch;
 }
 .code-column { min-width: 0; display: flex; flex-direction: column; gap: 12px; height: 100%; }
-.code-panel { flex: 1 1 auto; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+.code-panel { flex: 1 1 auto; display: flex; flex-direction: column; }
 .explain-panel { max-height: 560px; overflow-y: auto; }
 .explain-body { display: flex; flex-direction: column; gap: 14px; }
 .tool-shelf { padding: 0 4px; }
@@ -1117,14 +1103,12 @@ function quit() {
 /* 逐行讲解触发按钮（代码区右上） */
 .walk-trigger { font-size: 13px; padding: 6px 12px; }
 /* 逐行讲解抽屉：从代码区底部上滑、覆盖代码下部，不撑高页面 */
+/* 逐行讲解：就地替换代码框，不浮层、不盖代码 */
 .walk-drawer {
-  position: absolute; left: 0; right: 0; bottom: 0; height: 60%;
-  display: flex; flex-direction: column; z-index: 5;
-  background: var(--panel); border-top: 2px solid var(--primary);
-  box-shadow: 0 -8px 24px rgba(43,41,36,0.18); animation: walkUp 0.22s ease;
+  display: flex; flex-direction: column; flex: 1 1 auto;
+  min-height: 300px; max-height: 60vh; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
 }
-.walk-drawer.tall { height: 90%; }
-@keyframes walkUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
 .walk-drawer-bar {
   display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
   padding: 8px 14px; background: var(--accent-soft); border-bottom: 1px solid var(--border);
