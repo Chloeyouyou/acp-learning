@@ -24,6 +24,7 @@ mine_location:
   line: 4
 trigger_input: "n=7（奇数）"
 root_cause: "n为奇数时每次减2永远不会恰好等于0（7→5→3→1→-1→……），条件 n != 0 永真。用 != 做循环条件要求步长恰好命中终点，应改用 n > 0"
+cognitive_root: "用“等于某个值”当停止条件，默认步子一定会正好踩到终点——其实可能一步跨过去"  # 认知漏洞（Timeline 🧠根因用）
 expected_fix: "while n > 0"
 fix_check: 'while\s+n\s*>\s*0'
 expected_output: |

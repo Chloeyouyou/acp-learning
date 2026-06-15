@@ -24,6 +24,7 @@ mine_location:
   line: 6
 trigger_input: "[90, 85, -1, 70, 60]"
 root_cause: "break终止整个循环，continue才是跳过本次迭代——注释里的意图是'跳过这一个继续算'，用break导致-1后面的70和60全被丢弃"
+cognitive_root: "把“跳过这一个”和“整个不干了”搞混——break 是退出整个循环，continue 才是跳过这一次"  # 认知漏洞（Timeline 🧠根因用）
 expected_fix: "continue"
 fix_check: 'continue'
 expected_output: |

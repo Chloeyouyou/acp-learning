@@ -26,6 +26,7 @@ mine_location:
   line: 4
 trigger_input: "任意 add_score 调用"
 root_cause: "scores 字段在构造时被赋为 None 而不是空列表，第7行首次调用 append 时报错——报错行只是案发现场，根因在第4行的初始化"
+cognitive_root: "以为报错那一行就是问题所在——其实根在更早的初始化没给对值"  # 认知漏洞（Timeline 🧠根因用）
 expected_fix: "self.scores = []"
 fix_check: 'self\.scores\s*=\s*\[\]'
 expected_output: |

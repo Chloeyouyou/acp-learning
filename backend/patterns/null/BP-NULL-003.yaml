@@ -25,6 +25,7 @@ mine_location:
   line: 7
 trigger_input: '"小红"（city字段缺失）'
 root_cause: "dict.get() 在键不存在时返回None，链式调用 .get('city').upper() 没有中间检查，None直接调用upper()崩溃"
+cognitive_root: "默认每一步都能取到值，一路点下去，没想过中间会冒出个 None"  # 认知漏洞（Timeline 🧠根因用）
 expected_fix: "拆开检查或给默认值，如 .get('city', '')"
 fix_check: 'get\(\s*["'']city["'']\s*,|is\s+not\s+None'
 internalize_questions:

@@ -21,6 +21,7 @@ mine_location:
   line: 3
 trigger_input: "[]"
 root_cause: "没有对空列表做防护，len(arr)为0时除法直接崩溃——正常输入永远测不出这个问题"
+cognitive_root: "默认输入总是“正常的非空”，没想过空列表这种极端情况会让代码崩"  # 认知漏洞（Timeline 🧠根因用）
 expected_fix: "函数开头加空集合判断，如 if not arr: return 0"
 fix_check: 'if\s+not\s+arr|len\(arr\)\s*==\s*0'
 internalize_questions:

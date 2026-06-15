@@ -31,6 +31,7 @@ trigger_input: "n=3"
 expected_fix: "range(1, i + 1)"
 fix_check: 'range\(1,\s*i\s*\+\s*1\)'
 root_cause: "内层循环边界应该依赖外层变量i（第i行只有i列），误写成n后每行都输出n列"
+cognitive_root: "没意识到内层该走几步是跟着外层变的，把内外两层的次数搞混了"  # 认知漏洞（Timeline 🧠根因用）
 expected_output: |
   1x1=1
   1x2=2 2x2=4

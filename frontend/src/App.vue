@@ -9,6 +9,7 @@ const studentId = getStudentId()
     <div class="brand">ACP Learning</div>
     <nav>
       <RouterLink to="/arena">Bug闯关训练场</RouterLink>
+      <RouterLink to="/timeline">成长轨迹</RouterLink>
       <RouterLink to="/profile">能力画像</RouterLink>
     </nav>
     <div class="student">学号 {{ studentId }}</div>

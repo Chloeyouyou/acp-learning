@@ -36,6 +36,7 @@ export const api = {
   getWalkthrough: (patternId, deep = false) =>
     request('GET', `/patterns/${patternId}/walkthrough${deep ? '?deep=true' : ''}`),
   getProfile: () => request('GET', `/students/${getStudentId()}/profile`),
+  getTimeline: () => request('GET', `/students/${getStudentId()}/timeline`),
   getRecommendations: () => request('GET', `/students/${getStudentId()}/recommendations`),
   getCapabilityEvents: (capability) =>
     request('GET', `/students/${getStudentId()}/capabilities/${capability}/events`),

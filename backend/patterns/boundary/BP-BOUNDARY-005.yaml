@@ -26,6 +26,7 @@ mine_location:
   line: 6
 trigger_input: "target=9（目标在区间右端时）"
 root_cause: "left = mid 没有排除已检查过的mid。当区间缩到两个元素且目标在右边时，mid恒等于left，区间不再收缩，死循环——应为 left = mid + 1"
+cognitive_root: "以为每一轮都会缩小范围，没意识到“不排除已查过的中点”会让区间卡住不动"  # 认知漏洞（Timeline 🧠根因用）
 expected_fix: "left = mid + 1"
 fix_check: 'left\s*=\s*mid\s*\+\s*1'
 expected_output: |

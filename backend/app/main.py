@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .config import STAGES
 from .db import get_db, init_db
 from .models import TutorSession
-from .services import event_engine, mine_engine, profile, sandbox, tutor
+from .services import event_engine, mine_engine, profile, sandbox, timeline, tutor
 
 app = FastAPI(title="ACP Learning API", version="0.1.0")
 
@@ -242,6 +242,12 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
 @app.get("/api/students/{student_id}/profile")
 def get_profile(student_id: str, db: Session = Depends(get_db)):
     return profile.get_profile(db, student_id)
+
+
+@app.get("/api/students/{student_id}/timeline")
+def get_timeline(student_id: str, db: Session = Depends(get_db)):
+    """B1 调试成长轨迹（纯派生只读）：一道题=一个 Episode，串观察/尝试链/认知根因/收获。"""
+    return timeline.build_timeline(db, student_id)
 
 
 @app.get("/api/students/{student_id}/capabilities/{capability}/events")

@@ -20,6 +20,7 @@ mine_location:
   line: 3
 trigger_input: '"hello"'
 root_cause: "长度为n的字符串合法下标是0到n-1，s[len(s)]访问的是第n个位置，越过了末尾"
+cognitive_root: "把字符串长度当成了最后一个字符的位置——其实最后一个在 长度−1"  # 认知漏洞（Timeline 🧠根因用）
 expected_fix: "s[len(s) - 1] 或 s[-1]"
 fix_check: 's\[-1\]|len\(s\)\s*-\s*1'
 expected_output: |

@@ -21,6 +21,7 @@ mine_location:
   line: 4
 trigger_input: "任意 n > 0"
 root_cause: "循环体内没有更新循环变量 n，while 条件 n > 0 永远为真，循环永不退出"
+cognitive_root: "以为循环会自己停，忘了得亲手改变量、让退出条件有一天能成立"  # 认知漏洞（Timeline 🧠根因用）
 expected_fix: "循环体内加入 n -= 1"
 fix_check: 'n\s*-=\s*1|n\s*=\s*n\s*-\s*1'
 expected_output: |

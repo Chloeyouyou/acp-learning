@@ -23,6 +23,7 @@ mine_location:
   line: 4
 trigger_input: "[1, 2, 3]"
 root_cause: "range(len(arr) + 1) 使循环多走一步，最后一次迭代访问 arr[len(arr)]，越过数组末尾"
+cognitive_root: "把数组长度当成了最后一个下标——长度是 n，但最后一个下标是 n−1"  # 认知漏洞（Timeline 🧠根因用）
 expected_fix: "range(len(arr))"
 fix_check: 'range\(len\(arr\)\)\s*\)?:'
 expected_output: |

@@ -23,6 +23,7 @@ mine_location:
   line: 1
 trigger_input: "连续两次不传scores的调用"
 root_cause: "Python的默认参数只在函数定义时求值一次，scores=[] 这个列表被所有调用共享——第二次调用拿到的是第一次已经append过的同一个列表。惯用修复：默认值用None，函数内再新建"
+cognitive_root: "以为每次调用的默认参数都是全新的，其实是同一个列表被反复共用、越攒越多"  # 认知漏洞（Timeline 🧠根因用）
 expected_fix: "scores=None，函数内 if scores is None: scores = []"
 fix_check: 'scores\s*=\s*None'
 expected_output: |
