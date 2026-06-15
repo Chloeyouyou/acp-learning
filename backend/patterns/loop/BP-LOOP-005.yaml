@@ -23,6 +23,7 @@ mine_location:
 trigger_input: "[45, 50, 80, 90]（连续两个不及格）"
 root_cause: "一边遍历一边remove：删掉45后所有元素前移，迭代器的游标却继续后移，50被跳过没有检查。遍历中修改正在遍历的列表会让迭代器错位——应遍历副本或用列表推导式重建"
 cognitive_root: "以为能边遍历边删不出事，没想到删元素会让后面的位置全错位、漏检"  # 认知漏洞（Timeline 🧠根因用）
+thinking_pattern: shared_state  # 跨题思维默认值归簇（聚合用）
 expected_fix: "遍历副本 for s in scores[:] 或列表推导 [s for s in scores if s >= 60]"
 fix_check: 'scores\[:\]|list\(scores\)|for\s+s\s+in\s+scores\s+if|if\s+s\s*>=\s*60'
 expected_output: |

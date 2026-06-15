@@ -25,6 +25,7 @@ mine_location:
 trigger_input: "[[1, 2, 3], [4, 5, 6]]"
 root_cause: "第6行下标用反了：外层循环i走的是列（0..2），却被用作matrix的行下标，i=2时访问matrix[2]越界——转置时应该是matrix[j][i]"
 cognitive_root: "没分清谁数“行”、谁数“列”，把两个方向的下标用混了"  # 认知漏洞（Timeline 🧠根因用）
+thinking_pattern: index_confusion  # 跨题思维默认值归簇（聚合用）
 expected_fix: "matrix[j][i]"
 fix_check: 'matrix\[j\]\[i\]'
 expected_output: |

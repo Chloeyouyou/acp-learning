@@ -67,13 +67,18 @@ function fmtDay(d) {
   <div v-if="error" class="panel error">{{ error }}</div>
   <div v-else-if="!data" class="panel">加载中…</div>
   <template v-else>
-    <!-- 调试人格：你是怎么调试的（非评分、非排行） -->
+    <!-- 跨题思维默认值：镜子，非审判、非榜单 -->
     <div class="persona">
-      <h3>你的调试习惯</h3>
-      <template v-if="data.persona.enough">
-        <p v-for="(line, i) in data.persona.lines" :key="i" class="persona-line">{{ line }}</p>
+      <h3>你最近常见的思维默认值</h3>
+      <template v-if="data.thinking_patterns.enough">
+        <div v-for="tp in data.thinking_patterns.items" :key="tp.id" class="tp">
+          <div class="tp-name">{{ tp.name }}</div>
+          <div class="tp-evidence">出现在 {{ tp.count }} 道题：{{ tp.members.join('、') }}</div>
+          <div class="tp-advice">下次先问自己：{{ tp.advice }}</div>
+        </div>
+        <p v-if="data.persona.enough" class="persona-foot">{{ data.persona.line }}</p>
       </template>
-      <p v-else class="note">{{ data.persona.hint }}</p>
+      <p v-else class="note">{{ data.thinking_patterns.hint }}</p>
     </div>
 
     <!-- 空态 -->
@@ -141,9 +146,16 @@ function fmtDay(d) {
   background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
   padding: 18px 22px; box-shadow: 0 1px 2px rgba(43,41,36,0.03); margin-bottom: 22px;
 }
-.persona h3 { margin: 0 0 8px; font-size: 17px; }
-.persona-line { margin: 4px 0; font-size: 14.5px; line-height: 1.6; color: var(--text); }
+.persona h3 { margin: 0 0 12px; font-size: 17px; }
 .note { color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+
+/* 思维默认值：一条条镜子，不排名不评分 */
+.tp { padding: 10px 0; border-top: 1px solid var(--border); }
+.tp:first-of-type { border-top: none; padding-top: 0; }
+.tp-name { font-family: var(--serif); font-size: 15px; font-weight: 600; color: var(--text); }
+.tp-evidence { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+.tp-advice { font-size: 13px; color: var(--primary-dark); margin-top: 5px; }
+.persona-foot { margin: 12px 0 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
 
 .empty { color: var(--muted); text-align: center; padding: 40px 20px; }
 

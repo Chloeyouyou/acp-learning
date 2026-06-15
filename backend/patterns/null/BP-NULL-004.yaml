@@ -30,6 +30,7 @@ mine_location:
 trigger_input: "任意login调用"
 root_cause: "第13行构造UserService时忘了传repo，self.repo一直是None，直到第6行首次使用才崩溃——报错行只是案发现场，根因在构造处。修复应在构造时传入repo（或在__init__中校验拒绝None）"
 cognitive_root: "盯着报错那一行找原因——其实根因在更早的构造处没把东西传进来"  # 认知漏洞（Timeline 🧠根因用）
+thinking_pattern: crash_site  # 跨题思维默认值归簇（聚合用）
 expected_fix: "UserService(repo={...}) 构造时传入repo，或 __init__ 中对 repo 为 None 时 raise"
 fix_check: 'UserService\(\s*repo\s*=|UserService\(\s*\{|raise'
 internalize_questions:

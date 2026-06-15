@@ -7,7 +7,7 @@
 只动这里，事件流 schema 不变（07 文档）。
 """
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,23 @@ OBSERVATION_MARK = "【观察记录】"
 _STATE_RANK = {"planted": 0, "found": 1, "fixed": 2, "internalized": 3}
 _STATE_LABEL = {"planted": "进行中", "found": "进行中", "fixed": "已解决", "internalized": "已内化"}
 _CAT_LABEL = {"boundary": "边界条件", "loop": "循环逻辑", "null": "空值 / None 处理"}
+
+# 跨题思维默认值的 taxonomy（镜子，非审判）。name=给用户看的"默认值"，advice=做题前自问短句。
+# 题→簇的归属在各 pattern YAML 的 thinking_pattern 字段；这里只存展示文案。
+THINKING_PATTERNS = {
+    "assume_valid": {"name": "默认输入和返回值总是正常、有效",
+                     "advice": "如果它是空的、找不到、是 None 呢？"},
+    "index_confusion": {"name": "下标和「个数 / 行列」容易搞混",
+                        "advice": "n 个元素，下标只到 n−1，对吗？"},
+    "loop_progress": {"name": "默认循环一定会推进、会停下",
+                      "advice": "这个循环每一轮都在靠近终点吗？"},
+    "crash_site": {"name": "盯着报错那一行，没往前追根",
+                   "advice": "这个坏值，是从哪一步传进来的？"},
+    "control_semantics": {"name": "控制流 / 层级的语义容易混",
+                          "advice": "这一步是要跳过、退出、还是继续？"},
+    "shared_state": {"name": "改了正在用、或被共享的东西",
+                     "advice": "我动的这个，还有谁也在用它？"},
+}
 
 
 def _parse_observation(history):
@@ -62,23 +79,47 @@ def _observed_first(all_ex, observation) -> bool:
 
 
 def _persona(items):
-    """调试人格：纯统计、无评分无排行。items=[{category, observe_first}]（每题一项）。"""
-    if len(items) < 3:
-        return {"enough": False, "hint": "再多练几关，这里会长出你的「调试习惯画像」。"}
+    """行为小脚注（观察习惯这一条轴）。镜子语气、不评分。items=[{observe_first}]（每题一项）。"""
     total = len(items)
-    cats = Counter(i["category"] for i in items if i["category"])
-    lines = []
-    if cats:
-        top_cat, _ = cats.most_common(1)[0]
-        lines.append(f"你在「{_CAT_LABEL.get(top_cat, top_cat)}」这类问题上练得最多——"
-                     f"这是你正在重点打磨的地方，慢慢就摸透了。")
+    if total < 3:
+        return {"enough": False}
     obs_n = sum(1 for i in items if i["observe_first"])
     if obs_n / total >= 0.6:
-        lines.append(f"你越来越习惯先观察、再动手了（{obs_n}/{total} 次）👍 这正是好调试者的样子。")
+        line = f"另外，你越来越习惯先观察、再动手了（{obs_n}/{total} 次），这很好。"
     else:
-        lines.append("可以试着每次先看清运行结果、再下手改——先观察往往更快找到问题，"
-                     "这个习惯会让你进步更快。")
-    return {"enough": True, "lines": lines}
+        line = "另外，下次可以试试：先看清运行结果，再动手改——先观察往往更快。"
+    return {"enough": True, "line": line}
+
+
+def aggregate_thinking_patterns(episodes):
+    """跨题认知模式聚合：从多段 Episode 提炼"反复出现的思维默认值"。纯派生、可整体替换。
+
+    规则：按 pattern 的 thinking_pattern 归簇，计**不同题数**（惯性=跨题）；只留 ≥2 题的簇、
+    按题数降序取前 3。count 只是证据数量，不是分数。未来要按"是否真挣扎/最近N次"加权、
+    或换 embedding 聚类，只动这个函数。
+    """
+    groups = {}
+    for ep in episodes:
+        try:
+            tp = mine_engine.get_pattern(ep["pattern_id"]).get("thinking_pattern")
+        except KeyError:
+            tp = None
+        if tp:
+            groups.setdefault(tp, [])
+            if ep["pattern_name"] not in groups[tp]:
+                groups[tp].append(ep["pattern_name"])
+    items = []
+    for tp_id, names in groups.items():
+        if len(names) < 2:
+            continue
+        meta = THINKING_PATTERNS.get(tp_id, {"name": tp_id, "advice": ""})
+        items.append({"id": tp_id, "name": meta["name"], "advice": meta["advice"],
+                      "count": len(names), "members": names})
+    items.sort(key=lambda x: x["count"], reverse=True)
+    items = items[:3]
+    if not items:
+        return {"enough": False, "hint": "再多走几道题，这里会慢慢照出你常用的思维方式。"}
+    return {"enough": True, "items": items}
 
 
 def build_timeline(db: Session, student_id: str) -> dict:
@@ -87,7 +128,8 @@ def build_timeline(db: Session, student_id: str) -> dict:
                 .filter_by(student_id=student_id)
                 .order_by(TutorSession.created_at.asc()).all())
     if not sessions:
-        return {"episodes": [], "persona": _persona([])}
+        return {"episodes": [], "persona": _persona([]),
+                "thinking_patterns": aggregate_thinking_patterns([])}
 
     sess_ids = [s.id for s in sessions]
 
@@ -177,4 +219,5 @@ def build_timeline(db: Session, student_id: str) -> dict:
                               "observe_first": _observed_first(all_ex, observation)})
 
     episodes.sort(key=lambda ep: ep["last_at"], reverse=True)
-    return {"episodes": episodes, "persona": _persona(persona_items)}
+    return {"episodes": episodes, "persona": _persona(persona_items),
+            "thinking_patterns": aggregate_thinking_patterns(episodes)}

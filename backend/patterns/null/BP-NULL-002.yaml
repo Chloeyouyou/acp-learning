@@ -26,6 +26,7 @@ mine_location:
 trigger_input: "uid=99（不存在的用户）"
 root_cause: "find_user 找不到用户时隐式返回None，调用方没有检查就直接取下标——契约是'可能返回None'，调用方必须处理这种情况"
 cognitive_root: "默认函数总会返回有效结果，没料到“找不到”时它会还你一个 None"  # 认知漏洞（Timeline 🧠根因用）
+thinking_pattern: assume_valid  # 跨题思维默认值归簇（聚合用）
 expected_fix: "调用后先判断，如 if user is not None: 再使用"
 fix_check: 'is\s+not\s+None|if\s+user\s*:'
 internalize_questions:
