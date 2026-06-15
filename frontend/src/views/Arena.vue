@@ -64,8 +64,17 @@ function toggleExplain() {
   localStorage.setItem('arena_panels', JSON.stringify({ explain: showExplain.value, tutor: true }))
 }
 const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否展开（默认收起，需要的人点开）
+// A+B 空间管理：终端可折叠、思考过程可折叠、逐行讲解做成代码区上滑抽屉
+const consoleOpen = ref(true)        // 终端展开/折叠（折叠后只剩状态条）
+const thoughtOpen = ref(true)        // 「我的思考过程」四步区展开/折叠
+const walkOpen = ref(false)          // 逐行讲解抽屉是否打开（覆盖在代码上）
+const walkTall = ref(false)          // 抽屉高度档：false=60% / true=90%
 const walkthrough = ref('')          // 逐行讲解文本（点按钮自动生成）
 const walkLoading = ref(false)
+async function openWalk() {           // 打开抽屉并按需加载讲解
+  walkOpen.value = true
+  if (!walkthrough.value && !walkLoading.value) await loadWalkthrough(false)
+}
 const running = ref(false)           // 运行按钮状态
 const runResult = ref(null)          // {stdout, stderr, timed_out}
 // 代码一改，旧的运行结果就作废——否则会出现"删了代码却还显示上次成功输出"的错觉
@@ -84,6 +93,7 @@ async function runCurrentCode() {
       if (runResult.value.timed_out) obsChecks['程序卡住了/跑不完'] = true
       else if (runResult.value.stderr) obsChecks['程序报错了'] = true
       observationPending.value = true
+      thoughtOpen.value = true   // 弹观察卡时确保思考过程是展开的
     }
   } catch (e) {
     runResult.value = { stdout: '', stderr: '运行失败：' + e.message, timed_out: false }
@@ -239,6 +249,9 @@ async function start(patternId) {
     showPrimer.value = false  // 新关卡练前小灶默认收起，需要的人再点开
     walkthrough.value = ''    // 清掉上一题的逐行讲解
     walkDeep.value = false
+    walkOpen.value = false    // 关掉逐行讲解抽屉
+    consoleOpen.value = true
+    thoughtOpen.value = true
     runResult.value = null
     resetObservation()
     localStorage.setItem('active_session', data.session_id)  // 记下当前关卡，供刷新后续做
@@ -538,6 +551,7 @@ function quit() {
         <div class="panel-title">
           <span class="title-text">代码 <span class="title-sub">运行看结果，修改后会自动检查修复</span></span>
           <span class="code-actions">
+            <button class="walk-trigger" @click="openWalk">📖 逐行讲解</button>
             <button class="primary" :disabled="running || submitting || session.fixed" @click="runAndCheck">
               {{ running ? '运行中…' : (submitting ? '检查中…' : '▶ 运行并检查') }}
             </button>
@@ -545,17 +559,18 @@ function quit() {
         </div>
         <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
 
-        <!-- 运行结果：真实运行（路线A，真跑非AI猜），按正式终端样式呈现 -->
+        <!-- 运行结果：真实运行（路线A，真跑非AI猜），终端样式 + 可折叠（点头部收起，腾纵向空间） -->
         <div v-if="runResult" class="console">
-          <div class="console-bar">
+          <button class="console-bar" @click="consoleOpen = !consoleOpen">
             <span class="console-dots"><i></i><i></i><i></i></span>
             <span class="console-title">终端 · 真实运行结果</span>
             <span class="console-status"
                   :class="{ ok: !runResult.stderr && !runResult.timed_out, bad: runResult.stderr || runResult.timed_out }">
               {{ runResult.timed_out ? '⏱ 超时（很可能死循环）' : (runResult.stderr ? '✗ 报错' : '✓ 运行成功') }}
             </span>
-          </div>
-          <div class="console-body">
+            <span class="console-caret">{{ consoleOpen ? '收起 ▲' : '展开 ▼' }}</span>
+          </button>
+          <div v-show="consoleOpen" class="console-body">
             <div class="console-cmd">$ python main.py</div>
             <pre v-if="runResult.stdout" class="console-out">{{ runResult.stdout }}</pre>
             <pre v-if="runResult.stderr" class="console-err">{{ runResult.stderr }}</pre>
@@ -579,41 +594,42 @@ function quit() {
             接着和导师走完 ⑤验证（边界测试）与 ⑥内化（讲清成因/定位/迁移），知识点才升级为「已内化」，这一关才算真正学会。
           </div>
         </div>
-      </div>
 
-      <!-- 解释降为代码旁的按需工具，不与思考主线并列。 -->
-      <div class="tool-shelf">
-        <button :class="['tool-trigger', { open: showExplain }]" @click="toggleExplain">
-          <span><b>卡住时的小工具</b> · 逐行讲解、认符号、补概念</span>
-          <span>{{ showExplain ? '收起 ↑' : '打开 ↓' }}</span>
-        </button>
-      </div>
-      <div v-if="showExplain" class="panel explain-panel">
-        <div class="explain-body">
-          <!-- 逐行讲解 -->
-          <div class="code-walk">
-            <button v-if="!walkthrough && !walkLoading" class="walk-btn" @click="loadWalkthrough(false)">
-              让知返把这段代码逐行讲给我听
-            </button>
-            <div v-else-if="walkLoading" class="walk-loading">知返正在逐行讲解…</div>
-            <template v-else>
-              <div class="walk-head">
-                <span class="walk-head-title">逐行讲解</span>
-                <button class="walk-collapse" @click="walkthrough = ''; walkDeep = false">重新生成 ↻</button>
-              </div>
+        <!-- 逐行讲解抽屉：从代码区底部上滑、覆盖代码下部，不撑高页面；两档高度 + 关闭 -->
+        <div v-if="walkOpen" :class="['walk-drawer', { tall: walkTall }]">
+          <div class="walk-drawer-bar">
+            <span class="walk-drawer-title">📖 逐行讲解</span>
+            <span class="walk-drawer-actions">
+              <button class="wd-btn" @click="walkTall = !walkTall">{{ walkTall ? '▼ 收矮' : '▲ 加高' }}</button>
+              <button class="wd-btn" @click="walkOpen = false">关闭 ✕</button>
+            </span>
+          </div>
+          <div class="walk-drawer-body">
+            <div v-if="walkLoading" class="walk-loading">知返正在逐行讲解…</div>
+            <template v-else-if="walkthrough">
               <div class="walk-rows">
                 <div v-for="(r, i) in walkRows" :key="i" class="walk-row">
                   <code v-if="r.code" class="walk-code">{{ r.code }}</code>
                   <div class="walk-exp">{{ r.explain }}</div>
                 </div>
               </div>
-              <button v-if="!walkDeep" class="walk-deep" @click="loadWalkthrough(true)">
-                还不够懂？再讲细一点 →
-              </button>
+              <button v-if="!walkDeep" class="walk-deep" @click="loadWalkthrough(true)">还不够懂？再讲细一点 →</button>
               <div v-else class="walk-deep-done">已是最详细的讲法 · 还不懂就把那一行发给知返问</div>
             </template>
+            <div v-else class="walk-loading">加载中…</div>
           </div>
+        </div>
+      </div>
 
+      <!-- 解释降为代码旁的按需工具，不与思考主线并列。 -->
+      <div class="tool-shelf">
+        <button :class="['tool-trigger', { open: showExplain }]" @click="toggleExplain">
+          <span><b>卡住时的小工具</b> · 认符号、补概念（逐行讲解在代码区右上「📖」）</span>
+          <span>{{ showExplain ? '收起 ↑' : '打开 ↓' }}</span>
+        </button>
+      </div>
+      <div v-if="showExplain" class="panel explain-panel">
+        <div class="explain-body">
           <!-- 认符号 -->
           <div v-if="visibleBricks.length" class="syntax-box">
             <button class="syntax-head" @click="showSyntax = !showSyntax">
@@ -667,9 +683,10 @@ function quit() {
             <h3>我的思考过程</h3>
           </div>
           <span class="thinking-stage">现在 · {{ session.stage.slice(1) }}</span>
+          <button class="thought-toggle" @click="thoughtOpen = !thoughtOpen">{{ thoughtOpen ? '收起 ▲' : '展开 ▼' }}</button>
         </div>
 
-        <div class="thought-line">
+        <div v-show="thoughtOpen" class="thought-line">
           <section :class="['thought-step', { active: session.stage === '①发现', filled: observationRecord?.observation }]">
             <span class="thought-dot">1</span>
             <div class="thought-content">
@@ -1002,7 +1019,7 @@ function quit() {
   gap: 20px; align-items: stretch;
 }
 .code-column { min-width: 0; display: flex; flex-direction: column; gap: 12px; height: 100%; }
-.code-panel { flex: 1 1 auto; display: flex; flex-direction: column; }
+.code-panel { flex: 1 1 auto; display: flex; flex-direction: column; position: relative; overflow: hidden; }
 .explain-panel { max-height: 560px; overflow-y: auto; }
 .explain-body { display: flex; flex-direction: column; gap: 14px; }
 .tool-shelf { padding: 0 4px; }
@@ -1069,7 +1086,10 @@ function quit() {
   border: 1px solid #14120f; box-shadow: 0 3px 12px rgba(20,18,15,0.18);
   font-family: Consolas, 'Courier New', monospace;
 }
-.console-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #2b2924; }
+.console-bar { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 12px;
+  background: #2b2924; border: none; border-radius: 0; cursor: pointer; text-align: left; }
+.console-bar:hover { background: #332f2a; }
+.console-caret { font-size: 11px; color: #b9b0a0; margin-left: 10px; flex-shrink: 0; }
 .console-dots { display: inline-flex; gap: 6px; }
 .console-dots i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .console-dots i:nth-child(1) { background: #e06c5a; }
@@ -1080,6 +1100,31 @@ function quit() {
 .console-status.ok { color: #8fc97e; }
 .console-status.bad { color: #f0907f; }
 .console-body { padding: 12px 14px; font-size: 13px; line-height: 1.6; max-height: 300px; overflow: auto; }
+
+/* 逐行讲解触发按钮（代码区右上） */
+.walk-trigger { font-size: 13px; padding: 6px 12px; }
+/* 逐行讲解抽屉：从代码区底部上滑、覆盖代码下部，不撑高页面 */
+.walk-drawer {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 60%;
+  display: flex; flex-direction: column; z-index: 5;
+  background: var(--panel); border-top: 2px solid var(--primary);
+  box-shadow: 0 -8px 24px rgba(43,41,36,0.18); animation: walkUp 0.22s ease;
+}
+.walk-drawer.tall { height: 90%; }
+@keyframes walkUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.walk-drawer-bar {
+  display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+  padding: 8px 14px; background: var(--accent-soft); border-bottom: 1px solid var(--border);
+}
+.walk-drawer-title { font-weight: 600; font-size: 14px; color: var(--primary-dark); }
+.walk-drawer-actions { display: inline-flex; gap: 6px; }
+.wd-btn { font-size: 12px; padding: 3px 10px; border-radius: 7px; color: var(--muted); }
+.wd-btn:hover { color: var(--primary); border-color: var(--primary); }
+.walk-drawer-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+.walk-drawer .walk-rows { max-height: none; overflow: visible; }
+/* 思考过程折叠开关 */
+.thought-toggle { font-size: 12px; padding: 3px 10px; border-radius: 7px; color: var(--muted); margin-left: 8px; flex-shrink: 0; }
+.thought-toggle:hover { color: var(--primary); border-color: var(--primary); }
 .console-cmd { color: #7e7668; margin-bottom: 6px; }
 .console-out { margin: 0; white-space: pre-wrap; word-break: break-word; color: #e6e0d4; }
 .console-err { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; color: #f0907f; }
@@ -1120,7 +1165,7 @@ function quit() {
   margin: 0; font-family: var(--serif); font-size: 21px; font-weight: 600;
 }
 .thinking-stage {
-  flex-shrink: 0; padding: 4px 10px; border-radius: 999px;
+  flex-shrink: 0; margin-left: auto; padding: 4px 10px; border-radius: 999px;
   color: var(--primary-dark); background: var(--accent-soft); font-size: 12px;
 }
 .thought-line { padding: 18px 0 2px; }
