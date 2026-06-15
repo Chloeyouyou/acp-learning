@@ -368,7 +368,7 @@ function quit() {
     <div class="lobby-hero">
       <h2>Bug 闯关训练场</h2>
       <p class="hint">
-        每一关的代码里都藏着一个真实 Bug。你的任务是<b>发现它</b>、和 AI 导师一起<b>定位它</b>、
+        每一关的代码里都藏着一个真实 Bug。你的任务是<b>发现它</b>、和「知返」一起<b>定位它</b>、
         亲手<b>修好它</b>，再讲清楚它为什么会发生——走完六步，知识点才真正属于你。
       </p>
     </div>
@@ -455,14 +455,14 @@ function quit() {
     <div v-if="primerConcepts.length" class="primer panel">
       <button class="primer-head" @click="showPrimer = !showPrimer">
         <span class="primer-caret" :class="{ open: showPrimer }">▸</span>
-        💡 <b>看不懂代码？点开练前小灶</b> · 认符号 / 逐行讲解 / 概念
+        <b>看不懂代码？</b><span class="primer-head-sub">认符号 · 概念解释</span>
       </button>
       <div v-show="showPrimer" class="primer-body">
         <!-- 代码符号扫盲：完全没见过代码的人先认认这些符号；标「懂了」的可单个/全部恢复 -->
-        <div v-if="visibleBricks.length || hiddenBricks.length" class="syntax-box">
+        <div v-if="visibleBricks.length" class="syntax-box">
           <button class="syntax-head" @click="showSyntax = !showSyntax">
             <span class="primer-caret" :class="{ open: showSyntax }">▸</span>
-            🔤 完全没接触过代码？先认认这道题里的符号（{{ visibleBricks.length }} 个）
+            先认认这道题里的符号（{{ visibleBricks.length }} 个）
           </button>
           <div v-show="showSyntax" class="syntax-list">
             <div v-for="b in visibleBricks" :key="b.name" class="syntax-item">
@@ -488,13 +488,45 @@ function quit() {
             </div>
           </div>
         </div>
-        <!-- 逐行讲解：AI 把代码翻译成大白话，和代码一行一行对应（不剧透 bug） -->
-        <div class="walk-box">
+        <div class="primer-sub">这道题涉及的概念</div>
+        <div v-for="c in primerConcepts" :key="c.kp" class="primer-item">
+          <div class="primer-term">
+            {{ c.kp }}
+            <span v-if="c.mastered" class="primer-tag done">已掌握</span>
+            <span v-else class="primer-tag new">新</span>
+          </div>
+          <div class="primer-desc">{{ c.desc || '遇到不懂的随时问知返。' }}</div>
+        </div>
+        <p class="primer-foot">对话里带虚线的词，悬停就能看解释。</p>
+      </div>
+    </div>
+
+    <div class="cols">
+      <div class="panel code-panel">
+        <div class="panel-title">
+          <span class="title-text">代码 <span class="title-sub">看不懂没关系，先点运行看看</span></span>
+          <span class="code-actions">
+            <button class="primary" :disabled="running" @click="runCurrentCode">
+              {{ running ? '运行中…' : '▶ 运行看看' }}
+            </button>
+            <button class="submit-btn" :disabled="submitting || session.fixed" @click="submit">
+              {{ submitting ? '判定中…' : '提交修复' }}
+            </button>
+          </span>
+        </div>
+        <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
+
+        <!-- 逐行讲解：紧贴代码，读"这一行什么意思"时完整代码就在上面（不剧透 bug） -->
+        <div class="code-walk">
           <button v-if="!walkthrough && !walkLoading" class="walk-btn" @click="loadWalkthrough(false)">
-            📖 还是看不懂这段代码？让导师逐行讲给我听
+            看不懂这段代码？让知返逐行讲给我听
           </button>
-          <div v-else-if="walkLoading" class="walk-loading">导师正在逐行讲解…</div>
+          <div v-else-if="walkLoading" class="walk-loading">知返正在逐行讲解…</div>
           <template v-else>
+            <div class="walk-head">
+              <span class="walk-head-title">逐行讲解</span>
+              <button class="walk-collapse" @click="walkthrough = ''; walkDeep = false">收起 ✕</button>
+            </div>
             <div class="walk-rows">
               <div v-for="(r, i) in walkRows" :key="i" class="walk-row">
                 <code v-if="r.code" class="walk-code">{{ r.code }}</code>
@@ -504,51 +536,26 @@ function quit() {
             <button v-if="!walkDeep" class="walk-deep" @click="loadWalkthrough(true)">
               还不够懂？再讲细一点 →
             </button>
-            <div v-else class="walk-deep-done">已是最详细的讲法 · 还不懂就把那一行发给导师问</div>
+            <div v-else class="walk-deep-done">已是最详细的讲法 · 还不懂就把那一行发给知返问</div>
           </template>
         </div>
-        <div class="primer-sub">这道题涉及的概念：</div>
-        <div v-for="c in primerConcepts" :key="c.kp" class="primer-item">
-          <div class="primer-term">
-            {{ c.kp }}
-            <span v-if="c.mastered" class="primer-tag done">✓ 你已掌握</span>
-            <span v-else class="primer-tag new">新概念</span>
-          </div>
-          <div class="primer-desc">{{ c.desc || '（这个概念暂时没有简介，遇到不懂的随时问导师）' }}</div>
-        </div>
-        <p class="primer-foot">做题时，对话里带虚线的词也能悬停看解释。准备好了就直接和导师开始吧 👇</p>
-      </div>
-    </div>
 
-    <div class="cols">
-      <div class="panel code-panel">
-        <div class="panel-title">
-          <span class="title-text">代码 · 直接在这里修改</span>
-          <span class="code-actions">
-            <button :disabled="running" @click="runCurrentCode">
-              {{ running ? '运行中…' : '▶ 运行' }}
-            </button>
-            <button class="primary" :disabled="submitting || session.fixed" @click="submit">
-              {{ submitting ? '判定中…' : '提交修复' }}
-            </button>
-          </span>
-        </div>
-        <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
-        <!-- 运行结果：学生自己跑、自己看真实输出/报错（路线A，真运行非AI猜） -->
-        <div v-if="runResult" class="run-result">
-          <div class="run-result-head" :class="{ ok: !runResult.stderr && !runResult.timed_out, bad: runResult.stderr || runResult.timed_out }">
-            {{ runResult.timed_out ? '⏱ 运行超时（很可能死循环）' : (runResult.stderr ? '✗ 程序报错了' : '✓ 程序运行成功') }}
-            <span class="run-real">真实运行结果</span>
+        <!-- 运行结果：真实运行（路线A，真跑非AI猜），按正式终端样式呈现 -->
+        <div v-if="runResult" class="console">
+          <div class="console-bar">
+            <span class="console-dots"><i></i><i></i><i></i></span>
+            <span class="console-title">终端 · 真实运行结果</span>
+            <span class="console-status"
+                  :class="{ ok: !runResult.stderr && !runResult.timed_out, bad: runResult.stderr || runResult.timed_out }">
+              {{ runResult.timed_out ? '⏱ 超时（很可能死循环）' : (runResult.stderr ? '✗ 报错' : '✓ 运行成功') }}
+            </span>
           </div>
-          <div v-if="runResult.stdout" class="run-block">
-            <div class="run-label">标准输出 stdout</div>
-            <pre class="run-out">{{ runResult.stdout }}</pre>
+          <div class="console-body">
+            <div class="console-cmd">$ python main.py</div>
+            <pre v-if="runResult.stdout" class="console-out">{{ runResult.stdout }}</pre>
+            <pre v-if="runResult.stderr" class="console-err">{{ runResult.stderr }}</pre>
+            <div v-if="!runResult.stdout && !runResult.stderr && !runResult.timed_out" class="console-muted">（程序没有任何输出）</div>
           </div>
-          <div v-if="runResult.stderr" class="run-block">
-            <div class="run-label">报错 stderr</div>
-            <pre class="run-err">{{ runResult.stderr }}</pre>
-          </div>
-          <div v-if="!runResult.stdout && !runResult.stderr && !runResult.timed_out" class="run-empty">（程序没有任何输出）</div>
         </div>
 
         <!-- B0.5 观察卡：运行后先观察再问导师（软桥，可跳过，不锁聊天） -->
@@ -586,19 +593,19 @@ function quit() {
 
       <div class="panel chat-panel">
         <div class="panel-title">
-          <span class="title-text"><span class="tutor-avatar">AI</span>AI 导师</span>
-          <span class="title-sub">只引导，不给答案</span>
+          <span class="title-text"><span class="tutor-avatar">知</span>知返</span>
+          <span class="title-sub">只引导，不给答案 · 陪你迷途知返</span>
         </div>
         <div ref="chatBox" class="chat">
           <div v-for="(m, i) in messages" :key="i" :class="['msg', m.role]">
-            <div v-if="m.role === 'tutor'" class="avatar tutor-avatar">AI</div>
+            <div v-if="m.role === 'tutor'" class="avatar tutor-avatar">知</div>
             <div class="bubble">
               <GlossaryText v-if="m.role !== 'student'" :text="m.text" />
               <template v-else>{{ m.text }}</template>
             </div>
           </div>
           <div v-if="sending" class="msg tutor">
-            <div class="avatar tutor-avatar">AI</div>
+            <div class="avatar tutor-avatar">知</div>
             <div class="bubble typing"><span /><span /><span /></div>
           </div>
         </div>
@@ -736,17 +743,17 @@ function quit() {
   gap: 16px; padding: 14px 22px; flex-wrap: wrap;
 }
 .stepper { display: flex; align-items: center; gap: 0; margin: 0; padding: 0; list-style: none; flex-wrap: wrap; }
-.step { display: flex; align-items: center; gap: 8px; color: var(--muted); position: relative; padding-right: 6px; }
+.step { display: flex; align-items: center; gap: 6px; color: var(--muted); position: relative; padding-right: 5px; }
 .step:not(:last-child)::after {
-  content: ''; width: 26px; height: 1px; background: var(--border); margin: 0 10px 0 8px;
+  content: ''; width: 16px; height: 1px; background: var(--border); margin: 0 7px 0 6px;
 }
 .step-no {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; border-radius: 50%; font-size: 12px; font-weight: 600;
+  width: 21px; height: 21px; border-radius: 50%; font-size: 11px; font-weight: 600;
   background: #ece6da; color: var(--muted); transition: all 0.2s;
 }
-.step-label { font-size: 13.5px; }
-.step.active .step-no { background: var(--primary); color: #fff; box-shadow: 0 0 0 4px var(--accent-soft); }
+.step-label { font-size: 12.5px; }
+.step.active .step-no { background: var(--primary); color: #fff; box-shadow: 0 0 0 3px var(--accent-soft); }
 .step.active .step-label { color: var(--text); font-weight: 600; }
 .step.done .step-no { background: #cbb9a6; color: #fff; }
 .step.done .step-label { color: var(--muted); }
@@ -755,16 +762,21 @@ function quit() {
 .hint-level b { color: var(--text); }
 
 /* ---------- 练前小灶 ---------- */
-.primer { padding: 0; overflow: hidden; }
+/* 辅助层：移到主线下方（CSS order，不动 DOM），折叠条做成安静小条 */
+.primer { padding: 0; overflow: hidden; order: 1; }
 .primer-head {
   display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-  background: var(--accent-soft); border: none; padding: 14px 20px; cursor: pointer;
-  font-size: 14.5px; color: var(--text); border-radius: 14px 14px 0 0;
+  background: transparent; border: none; padding: 11px 18px; cursor: pointer;
+  font-size: 13.5px; color: var(--muted); border-radius: 14px 14px 0 0;
 }
-.primer-head b { font-weight: 600; }
+.primer-head b { font-weight: 600; color: var(--text); }
+.primer-head-sub { color: var(--muted); font-size: 13px; margin-left: 6px; }
 .primer-caret { color: var(--primary); font-size: 12px; transition: transform 0.18s; }
 .primer-caret.open { transform: rotate(90deg); }
-.primer-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+.primer-body {
+  padding: 16px 20px; display: flex; flex-direction: column; gap: 14px;
+  max-height: 52vh; overflow-y: auto;   /* 逐行讲解再长也只在本块内滚，不把下面代码/知返顶出屏幕 */
+}
 .primer-item { display: flex; flex-direction: column; gap: 3px; }
 .primer-term { font-family: var(--serif); font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 9px; }
 .primer-tag { font-size: 11.5px; font-weight: 500; padding: 1px 8px; border-radius: 999px; font-family: 'Segoe UI', sans-serif; }
@@ -805,13 +817,19 @@ function quit() {
 
 /* 逐行讲解 */
 .walk-btn {
-  width: 100%; text-align: left; font-size: 13.5px; color: var(--primary-dark);
-  background: var(--accent-soft); border: 1px dashed var(--primary); border-radius: 10px;
-  padding: 11px 14px; cursor: pointer;
+  width: 100%; text-align: left; font-size: 13.5px; color: var(--muted);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 14px; cursor: pointer;
 }
-.walk-btn:hover { color: var(--primary); }
+.walk-btn:hover { color: var(--primary); border-color: var(--primary); }
 .walk-loading { font-size: 13px; color: var(--muted); padding: 8px 2px; }
-.walk-rows { display: flex; flex-direction: column; gap: 2px; }
+/* 逐行讲解：搬到代码区那一栏，紧贴代码 */
+.code-walk { margin-top: 14px; }
+.walk-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.walk-head-title { font-size: 13px; font-weight: 600; color: var(--primary-dark); }
+.walk-collapse { font-size: 12px; color: var(--muted); background: none; border: none; cursor: pointer; padding: 2px 4px; }
+.walk-collapse:hover { color: var(--primary); }
+.walk-rows { display: flex; flex-direction: column; gap: 2px; max-height: 340px; overflow-y: auto; }
 .walk-row {
   display: grid; grid-template-columns: 1fr; gap: 2px;
   padding: 9px 0; border-bottom: 1px dashed var(--border);
@@ -831,7 +849,8 @@ function quit() {
 .walk-deep-done { margin-top: 10px; font-size: 12px; color: var(--muted); }
 
 /* ---------- 双栏 ---------- */
-.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+/* 主线：代码让位、知返变宽（核心体验） */
+.cols { display: grid; grid-template-columns: minmax(0, 42fr) minmax(0, 58fr); gap: 20px; align-items: start; }
 @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
 .panel-title {
   display: flex; justify-content: space-between; align-items: center;
@@ -842,13 +861,15 @@ function quit() {
 
 /* ---------- 代码区 ---------- */
 .code {
-  width: 100%; height: 420px; resize: vertical;
-  background: var(--code-bg); color: var(--code-text);
-  font-family: Consolas, 'Courier New', monospace; font-size: 14px;
-  line-height: 1.6; border: none; border-radius: 10px; padding: 16px;
-  white-space: pre; tab-size: 4;
+  width: 100%; height: 300px; resize: vertical;
+  background: #f5f0e6; color: var(--text);
+  font-family: Consolas, 'Courier New', monospace; font-size: 14.5px;
+  line-height: 1.75; border: 1px solid #d8d0bf; border-radius: 10px; padding: 16px 18px;
+  box-shadow: inset 0 1px 0 #fffdf8, 0 2px 8px rgba(43,41,36,0.06);
+  white-space: pre-wrap; word-break: break-word; tab-size: 4;
 }
-.code:disabled { opacity: 0.78; }
+.code:focus { outline: 2px solid var(--accent-soft); border-color: var(--primary); }
+.code:disabled { opacity: 0.85; background: #efe9dc; }
 .banner {
   margin-top: 14px; padding: 13px 16px; border-radius: 10px; font-size: 13.5px; line-height: 1.75;
   background: var(--accent-soft); color: #7a3f28;
@@ -858,26 +879,30 @@ function quit() {
 .bf-title { font-weight: 600; color: var(--primary-dark); margin-bottom: 4px; }
 .bf-body { font-size: 13px; line-height: 1.7; }
 .code-actions { display: inline-flex; gap: 8px; }
-.run-result {
-  margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+/* 提交修复=克制次按钮（运行才是该先点的、温暖主按钮），降低"被评判"压力 */
+.submit-btn { color: var(--muted); }
+.submit-btn:hover:not(:disabled) { color: var(--primary); border-color: var(--primary); }
+/* 运行结果 = 正式终端：深色控制台，和浅色代码编辑区分工清楚 */
+.console {
+  margin-top: 14px; border-radius: 10px; overflow: hidden; background: #1e1c1a;
+  border: 1px solid #14120f; box-shadow: 0 3px 12px rgba(20,18,15,0.18);
+  font-family: Consolas, 'Courier New', monospace;
 }
-.run-result-head {
-  font-size: 13px; font-weight: 600; padding: 8px 12px; background: var(--bg);
-  border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;
-}
-.run-result-head.ok { color: var(--green); }
-.run-result-head.bad { color: var(--red); }
-.run-real { font-size: 11px; font-weight: 400; color: var(--muted); }
-.run-block { border-bottom: 1px solid var(--border); }
-.run-block:last-child { border-bottom: none; }
-.run-label { font-size: 11px; color: var(--muted); padding: 6px 12px 0; font-family: Consolas, monospace; }
-.run-out, .run-err {
-  margin: 0; padding: 4px 12px 10px; font-family: Consolas, monospace; font-size: 13px;
-  line-height: 1.55; white-space: pre-wrap; word-break: break-word;
-}
-.run-out { color: var(--text); }
-.run-err { color: var(--red); }
-.run-empty { padding: 10px 12px; font-size: 13px; color: var(--muted); }
+.console-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #2b2924; }
+.console-dots { display: inline-flex; gap: 6px; }
+.console-dots i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.console-dots i:nth-child(1) { background: #e06c5a; }
+.console-dots i:nth-child(2) { background: #e3b341; }
+.console-dots i:nth-child(3) { background: #6fae5f; }
+.console-title { color: #b9b0a0; font-size: 12px; letter-spacing: 0.3px; }
+.console-status { margin-left: auto; font-size: 12px; font-weight: 600; }
+.console-status.ok { color: #8fc97e; }
+.console-status.bad { color: #f0907f; }
+.console-body { padding: 12px 14px; font-size: 13px; line-height: 1.6; max-height: 300px; overflow: auto; }
+.console-cmd { color: #7e7668; margin-bottom: 6px; }
+.console-out { margin: 0; white-space: pre-wrap; word-break: break-word; color: #e6e0d4; }
+.console-err { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; color: #f0907f; }
+.console-muted { color: #7e7668; }
 
 /* B0.5 观察卡 */
 .obs-card {
@@ -902,8 +927,8 @@ function quit() {
 /* ---------- 对话区 ---------- */
 .tutor-avatar {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 27px; height: 27px; border-radius: 8px; font-size: 11px; font-weight: 700;
-  background: var(--accent-soft); color: var(--primary-dark); flex-shrink: 0;
+  width: 27px; height: 27px; border-radius: 8px; font-size: 14px; font-weight: 700;
+  font-family: var(--serif); background: var(--accent-soft); color: var(--primary-dark); flex-shrink: 0;
 }
 .chat-panel { display: flex; flex-direction: column; height: 548px; }
 .chat { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 4px 2px; }
@@ -911,7 +936,7 @@ function quit() {
 .msg.student { justify-content: flex-end; }
 .msg .avatar { align-self: flex-start; }
 .bubble {
-  max-width: 78%; padding: 11px 14px; border-radius: 14px;
+  max-width: 88%; padding: 11px 14px; border-radius: 14px;
   font-size: 14px; line-height: 1.7; white-space: pre-wrap;
 }
 .msg.tutor .bubble {
