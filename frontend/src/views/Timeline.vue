@@ -58,7 +58,7 @@ function roundsView(ep) {
 
 function fmtDay(d) {
   if (!d) return ''
-  const [, m, day] = d.split('-')
+  const [, m, day] = d.slice(0, 10).split('-')  // 兼容 "YYYY-MM-DD" 和完整 ISO 时间戳
   return `${+m}月${+day}日`
 }
 </script>
@@ -86,18 +86,20 @@ function fmtDay(d) {
       <div v-for="ep in data.episodes" :key="ep.pattern_id" class="node">
         <span class="dot" />
         <div class="card">
+          <!-- 标题=认知根因（记忆点），Bug 名缩成下面一行出处 -->
           <div class="card-head">
-            <div class="title">{{ ep.pattern_name }}</div>
+            <div class="head-main">
+              <div class="title"><GlossaryText :text="ep.cognitive_root || ep.pattern_name" /></div>
+              <div v-if="ep.cognitive_root" class="subtitle">{{ ep.pattern_name }}</div>
+            </div>
             <span :class="['badge', ep.outcome]">{{ ep.outcome }}</span>
           </div>
           <div class="sub">
-            调试 {{ ep.session_count }} 次<template v-if="ep.day_count > 1"> · 跨 {{ ep.day_count }} 天</template>
-          </div>
-
-          <!-- 认知根因：焦点，靠竖线 + 衬线句突出（无 emoji） -->
-          <div v-if="ep.cognitive_root" class="root">
-            <div class="root-tag">认知根因</div>
-            <div class="root-text"><GlossaryText :text="ep.cognitive_root" /></div>
+            调试 {{ ep.session_count }} 次 ·
+            <template v-if="fmtDay(ep.first_at) !== fmtDay(ep.last_at)">
+              第一次 {{ fmtDay(ep.first_at) }} · 最近 {{ fmtDay(ep.last_at) }}
+            </template>
+            <template v-else>{{ fmtDay(ep.last_at) }}</template>
           </div>
 
           <!-- 观察 / 猜测：统一文字小标 -->
@@ -160,19 +162,17 @@ function fmtDay(d) {
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
   padding: 16px 18px; box-shadow: 0 1px 2px rgba(43,41,36,0.04);
 }
-.card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.title { font-family: var(--serif); font-size: 16px; font-weight: 600; }
-.sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.head-main { min-width: 0; }
+.title { font-family: var(--serif); font-size: 16px; font-weight: 600; line-height: 1.45; }
+.subtitle { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.sub { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+.badge { margin-top: 2px; }
 
 .badge { font-size: 12px; padding: 3px 11px; border-radius: 999px; white-space: nowrap; }
 .badge.进行中 { background: #f3ecd6; color: #87651f; }
 .badge.已解决 { background: var(--accent-soft); color: var(--primary-dark); }
 .badge.已内化 { background: #e4ede0; color: #3f5837; }
-
-/* 认知根因：全卡焦点，靠细竖线 + 衬线句突出，不靠图标 */
-.root { margin-top: 14px; border-left: 2px solid var(--primary); padding: 1px 0 1px 13px; }
-.root-tag { font-size: 12px; color: var(--primary-dark); letter-spacing: 0.5px; margin-bottom: 3px; }
-.root-text { font-family: var(--serif); font-size: 15px; line-height: 1.55; color: var(--text); }
 
 /* 统一文字小标体系：观察 / 猜测 / 收获 / 日期 同款克制标签 */
 .field { display: flex; gap: 12px; margin-top: 9px; font-size: 13.5px; line-height: 1.55; align-items: baseline; }

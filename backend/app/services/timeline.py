@@ -155,6 +155,7 @@ def build_timeline(db: Session, student_id: str) -> dict:
 
         best = max(plist, key=lambda s: _STATE_RANK.get(s.mine_status, 0))
         days = sorted({_day(e.timestamp) for e in all_ex})
+        first_ts = all_ex[0].timestamp if all_ex else best.created_at
         last_ts = all_ex[-1].timestamp if all_ex else best.created_at
 
         episodes.append({
@@ -169,6 +170,7 @@ def build_timeline(db: Session, student_id: str) -> dict:
             "outcome": _STATE_LABEL.get(best.mine_status, "进行中"),
             "session_count": len(plist),
             "day_count": len(days),
+            "first_at": first_ts,
             "last_at": last_ts,
         })
         persona_items.append({"category": pat.get("category", ""),
