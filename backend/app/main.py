@@ -291,3 +291,24 @@ def list_patterns():
          "difficulty": p["difficulty"], "knowledge_points": p.get("knowledge_points", [])}
         for p in mine_engine.load_patterns().values()
     ]
+
+
+# ---- 部署：单服务同时托管前端（构建后的 frontend/dist）。本地开发无 dist 时自动跳过 ----
+# 注意：必须放在所有 /api 路由之后注册，SPA 兜底不会吃掉 API。
+from pathlib import Path as _Path  # noqa: E402
+
+from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+_DIST = _Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+if (_DIST / "index.html").is_file():
+    if (_DIST / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    def _spa(full_path: str):
+        """非 /api 的请求：有对应静态文件就返回，否则回 index.html（history 路由兜底）。"""
+        candidate = _DIST / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(_DIST / "index.html")

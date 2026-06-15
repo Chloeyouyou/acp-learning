@@ -1019,6 +1019,20 @@ function quit() {
   .cols { grid-template-columns: 1fr; }
   .thinking-panel { min-height: auto; }
 }
+/* 手机端细节 */
+@media (max-width: 640px) {
+  .cols { gap: 14px; }
+  .lobby-hero h2 { font-size: 23px; }
+  .hint { font-size: 14px; }
+  .rec-card { flex-direction: column; align-items: flex-start; gap: 10px; padding: 14px 16px; }
+  .rec-cta { align-self: flex-end; }
+  .stage-bar { padding: 12px 14px; }
+  .code { min-height: 220px; flex: 1 1 220px; font-size: 14px; padding: 14px; }
+  .console-body { max-height: 220px; }
+  .explain-panel { max-height: none; }   /* 单列时不要再套一层内滚 */
+  .composer { flex-direction: column; align-items: stretch; }
+  .send-btn { width: 100%; }
+}
 .panel-title {
   display: flex; justify-content: space-between; align-items: center;
   font-weight: 600; margin-bottom: 14px;

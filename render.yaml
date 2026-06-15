@@ -1,0 +1,14 @@
+# Render Blueprint —— 一键部署（单 Docker 服务，前端+后端同源）
+# 用法：Render → New → Blueprint → 连本仓库 → 它读这个文件建服务 →
+#       在 Environment 填 DEEPSEEK_API_KEY → Deploy。
+services:
+  - type: web
+    name: acp-learning
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free            # 免费档；空闲会休眠，首次访问唤醒数秒
+    envVars:
+      - key: DEEPSEEK_API_KEY   # 必填：知返用的大模型 key（在 Render 后台填，别提交进仓库）
+        sync: false
+      - key: PYTHONUTF8
+        value: "1"

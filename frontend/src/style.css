@@ -78,3 +78,8 @@ textarea, input {
   color: var(--text);
 }
 textarea:focus, input:focus { outline: 2px solid var(--accent-soft); border-color: var(--primary); }
+
+/* 手机端：收紧通用留白 */
+@media (max-width: 640px) {
+  .panel { padding: 14px; border-radius: 12px; }
+}

@@ -87,4 +87,15 @@ nav a.router-link-active { color: var(--primary); border-color: var(--primary); 
   border-radius: 999px;
 }
 .content { flex: 1; padding: 40px 32px; max-width: 1120px; margin: 0 auto; width: 100%; }
+
+/* 手机端：顶栏收紧、隐藏学号、内容留白变小 */
+@media (max-width: 640px) {
+  .topbar { gap: 12px; padding: 0 14px; height: 54px; }
+  .brand { font-size: 16px; gap: 7px; }
+  .brand-mark { width: 22px; height: 22px; }
+  nav { gap: 14px; }
+  nav a { font-size: 13px; padding: 6px 0; }
+  .student { display: none; }
+  .content { padding: 18px 12px; }
+}
 </style>
