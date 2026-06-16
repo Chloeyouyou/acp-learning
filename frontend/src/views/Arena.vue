@@ -762,7 +762,7 @@ function quit() {
 
         <div class="tutor-divider">
           <span class="tutor-avatar">返</span>
-          <div><b class="tutor-poem">知迷途其未远，觉今是而昨非</b></div>
+          <div><b class="tutor-poem">实迷途其未远，觉今是而昨非</b></div>
         </div>
         <div ref="chatBox" class="chat">
           <div v-for="(m, i) in visibleMessages" :key="i" :class="['msg', m.role]">
