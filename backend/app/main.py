@@ -81,6 +81,7 @@ def create_session(req: CreateSessionReq, db: Session = Depends(get_db)):
     # 学生视角：只有代码，没有雷的信息
     return {
         "session_id": session.id,
+        "pattern_id": pattern["id"],   # 智能开题（不指定题）时，前端据此知道选中了哪道
         "language": pattern["language"],
         "code": pattern["buggy_code"],
         "task": "运行这段代码，看看它的行为是否符合预期。有问题就和导师讨论。",
@@ -284,6 +285,12 @@ def code_walkthrough(pattern_id: str, deep: bool = False):
             "walkthrough": tutor.explain_code(pattern_id, deep=deep)}
 
 
+@app.get("/api/health")
+def health():
+    """探活端点（Render 健康检查 / 自检用）。"""
+    return {"status": "ok", "version": "0.1.0"}
+
+
 @app.get("/api/patterns")
 def list_patterns():
     return [
@@ -308,6 +315,9 @@ if (_DIST / "index.html").is_file():
     @app.get("/{full_path:path}")
     def _spa(full_path: str):
         """非 /api 的请求：有对应静态文件就返回，否则回 index.html（history 路由兜底）。"""
+        if full_path.startswith("api/") or full_path == "api":
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
         candidate = _DIST / full_path
         if full_path and candidate.is_file():
             return FileResponse(candidate)

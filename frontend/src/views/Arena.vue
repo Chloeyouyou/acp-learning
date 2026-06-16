@@ -245,7 +245,7 @@ async function start(patternId) {
   try {
     const data = await api.createSession(patternId)
     session.id = data.session_id
-    session.patternId = patternId
+    session.patternId = data.pattern_id || patternId   // 智能开题不传 id，用后端选中的
     showPrimer.value = false  // 新关卡练前小灶默认收起，需要的人再点开
     walkthrough.value = ''    // 清掉上一题的逐行讲解
     walkDeep.value = false
@@ -467,6 +467,12 @@ function quit() {
         亲手<b>修好它</b>，再讲清楚它为什么会发生——走完六步，知识点才真正属于你。
       </p>
     </div>
+
+    <!-- 智能开一题：不指定题，后端按画像挑你最该补的弱点（系统帮你挑） -->
+    <button class="smart-open" @click="start()">
+      <span class="smart-open-main">🎲 智能开一题</span>
+      <span class="smart-open-sub">让知返按你的画像，挑一道最该补的</span>
+    </button>
 
     <!-- 模式切换 -->
     <div class="mode-tabs">
@@ -799,6 +805,20 @@ function quit() {
 .hint b { color: var(--text); font-weight: 600; }
 
 /* 模式切换 */
+/* 智能开一题：系统按画像帮你挑最该补的 */
+.smart-open {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  width: 100%; text-align: left; margin-bottom: 22px; padding: 16px 20px; border-radius: 14px;
+  background: var(--accent-soft); border: 1px solid #e0cdbb; cursor: pointer;
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+}
+.smart-open:hover {
+  transform: translateY(-2px); border-color: var(--primary); color: inherit;
+  box-shadow: 0 14px 30px -16px rgba(193, 95, 60, 0.4);
+}
+.smart-open-main { font-family: var(--serif); font-size: 17px; font-weight: 600; color: var(--primary-dark); }
+.smart-open-sub { font-size: 13px; color: var(--muted); }
+
 .mode-tabs { display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 26px;
   background: #ece6da; border-radius: 11px; }
 .mode-tab {
