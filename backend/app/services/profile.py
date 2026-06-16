@@ -295,6 +295,63 @@ def recommend_practice(db: Session, student_id: str, mastery_list: list[dict]) -
     return {"next": nxt, "by_kp": by_kp}
 
 
+
+def get_weakest_pattern_id(db: Session, student_id: str, patterns: list[dict]) -> str | None:
+    """从所有 pattern 中，挑出学生最薄弱知识点的最佳练习题目。
+
+    策略（01文档 §4 规则1+规则3）：
+    1. 从未训练过的能力最优先（补弱）
+    2. 已接触但未解决的次优先（推一把）
+    3. 已解决但未内化的复习优先（间隔复现）
+    4. 难度不超过最近发展区（L1-L2优先起步）
+    """
+    mastery = knowledge_mastery(db, student_id)
+
+    # 构建 kp -> mastery 的快速查找
+    kp_mastery = {m["kp"]: m for m in mastery}
+
+    # 构建 pattern -> 评分
+    scored = []
+    for p in patterns:
+        kps = p.get("knowledge_points", []) or []
+        if not kps:
+            continue
+
+        # 该 pattern 下各 kp 的最差状态决定它的优先级
+        worst = 4  # 4=熟练(好), 0=生疏(差)
+        for kp in kps:
+            m = kp_mastery.get(kp)
+            if m is None:
+                worst = 0  # 完全未接触 -> 最优先
+            else:
+                rank = {"熟练": 3, "掌握": 2, "在学": 1, "生疏": 0}
+                r = rank.get(m["mastery"], 0)
+                if r < worst:
+                    worst = r
+
+        # weak=True 意味着 kp 标记为薄弱
+        has_weak = any(
+            kp_mastery.get(kp, {}).get("weak", False)
+            for kp in kps
+        )
+
+        # 难度加分：L1-L2 优先（最近发展区规则3）
+        diff = p.get("difficulty", "L3")
+        diff_rank = {"L1": 0, "L2": 1, "L3": 2, "L4": 3, "L5": 4}
+        dr = diff_rank.get(diff, 2)
+
+        # 总分：越薄弱越高分；有弱标记加分；难度越低加分
+        score = worst * 10 + (5 if has_weak else 0) - dr
+        scored.append({"p": p, "score": score, "difficulty": dr})
+
+    if not scored:
+        return None
+
+    # 按分数降序，同分按难度升序
+    scored.sort(key=lambda x: (-x["score"], x["difficulty"]))
+    return scored[0]["p"]["id"]
+
+
 def get_capability_events(db: Session, student_id: str, capability: str) -> list[dict]:
     """下钻链路：能力 → 事件流 → evidence（05文档 §5.2）。"""
     rows = (db.query(Event)

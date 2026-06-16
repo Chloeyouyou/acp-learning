@@ -25,11 +25,37 @@ def get_pattern(pattern_id: str) -> dict:
     return load_patterns()[pattern_id]
 
 
-def pick_pattern(pattern_id: str | None = None) -> dict:
+
+def pick_pattern_for_student(
+    student_id: str | None = None,
+    pattern_id: str | None = None,
+    db: "Session | None" = None,
+) -> dict:
+    """画像驱动选雷（替代 random.choice）。支持三种模式：
+
+    1. 指定 pattern_id -> 直接返回（向后兼容）
+    2. 有 db + student_id -> 画像驱动选最薄弱知识点对应题目
+    3. 无 db/student_id -> 回退到 random.choice
+    """
     patterns = load_patterns()
+
+    # 模式1：指定题目
     if pattern_id:
         return patterns[pattern_id]
+
+    # 模式2：画像驱动选雷
+    if db is not None and student_id is not None:
+        from . import profile  # 延迟导入避免循环依赖
+
+        best_id = profile.get_weakest_pattern_id(db, student_id, list(patterns.values()))
+        if best_id and best_id in patterns:
+            return patterns[best_id]
+
+    # 模式3：回退随机
     return random.choice(list(patterns.values()))
+
+
+
 
 
 def build_manifest(student_id: str, pattern: dict) -> dict:

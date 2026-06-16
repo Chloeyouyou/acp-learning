@@ -62,7 +62,7 @@ def _cleanup_abandoned(db: Session, student_id: str):
 @app.post("/api/sessions")
 def create_session(req: CreateSessionReq, db: Session = Depends(get_db)):
     _cleanup_abandoned(db, req.student_id)
-    pattern = mine_engine.pick_pattern(req.pattern_id)
+    pattern = mine_engine.pick_pattern_for_student(req.student_id, req.pattern_id, db)
     manifest = mine_engine.build_manifest(req.student_id, pattern)
     session = TutorSession(
         id=f"sess_{uuid.uuid4().hex[:12]}",
