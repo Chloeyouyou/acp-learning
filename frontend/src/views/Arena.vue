@@ -1086,7 +1086,9 @@ function quit() {
   line-height: 1.75; border: 1px solid #d8d0bf; border-radius: 10px; padding: 16px 18px;
   box-shadow: inset 0 1px 0 #fffdf8, 0 2px 8px rgba(43,41,36,0.06);
   white-space: pre-wrap; word-break: break-word; tab-size: 4;
+  scrollbar-width: none; -ms-overflow-style: none;   /* 可滚动但隐藏滚动条（仍可滚轮/拖动/键盘） */
 }
+.code::-webkit-scrollbar { display: none; }
 .code:focus { outline: 2px solid var(--accent-soft); border-color: var(--primary); }
 .code:disabled { opacity: 0.85; background: #efe9dc; }
 .banner {
