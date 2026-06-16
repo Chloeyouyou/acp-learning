@@ -564,29 +564,7 @@ function quit() {
             </button>
           </span>
         </div>
-        <textarea v-show="!walkOpen" v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
-
-        <!-- 逐行讲解：点开就在代码框原位替换显示（每行自带代码=带注解的题目），可下拉、不盖代码 -->
-        <div v-if="walkOpen" class="walk-drawer">
-          <div class="walk-drawer-bar">
-            <span class="walk-drawer-title">逐行讲解</span>
-            <button class="wd-btn" @click="walkOpen = false">关闭 ✕</button>
-          </div>
-          <div class="walk-drawer-body">
-            <div v-if="walkLoading" class="walk-loading">知返正在逐行讲解…</div>
-            <template v-else-if="walkthrough">
-              <div class="walk-rows">
-                <div v-for="(r, i) in walkRows" :key="i" class="walk-row">
-                  <code v-if="r.code" class="walk-code">{{ r.code }}</code>
-                  <div class="walk-exp">{{ r.explain }}</div>
-                </div>
-              </div>
-              <button v-if="!walkDeep" class="walk-deep" @click="loadWalkthrough(true)">还不够懂？再讲细一点 →</button>
-              <div v-else class="walk-deep-done">已是最详细的讲法 · 还不懂就把那一行发给知返问</div>
-            </template>
-            <div v-else class="walk-loading">加载中…</div>
-          </div>
-        </div>
+        <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
 
         <!-- 运行结果：真实运行（路线A，真跑非AI猜），终端样式 + 可折叠（点头部收起，腾纵向空间） -->
         <div v-if="runResult" class="console">
@@ -624,6 +602,30 @@ function quit() {
           </div>
         </div>
 
+        <!-- 逐行讲解抽屉：从代码区底部上滑、覆盖代码下部，不撑高页面；两档高度 + 关闭 -->
+        <div v-if="walkOpen" :class="['walk-drawer', { tall: walkTall }]">
+          <div class="walk-drawer-bar">
+            <span class="walk-drawer-title">逐行讲解</span>
+            <span class="walk-drawer-actions">
+              <button class="wd-btn" @click="walkTall = !walkTall">{{ walkTall ? '收矮' : '加高' }}</button>
+              <button class="wd-btn" @click="walkOpen = false">✕</button>
+            </span>
+          </div>
+          <div class="walk-drawer-body">
+            <div v-if="walkLoading" class="walk-loading">知返正在逐行讲解…</div>
+            <template v-else-if="walkthrough">
+              <div class="walk-rows">
+                <div v-for="(r, i) in walkRows" :key="i" class="walk-row">
+                  <code v-if="r.code" class="walk-code">{{ r.code }}</code>
+                  <div class="walk-exp">{{ r.explain }}</div>
+                </div>
+              </div>
+              <button v-if="!walkDeep" class="walk-deep" @click="loadWalkthrough(true)">还不够懂？再讲细一点 →</button>
+              <div v-else class="walk-deep-done">已是最详细的讲法 · 还不懂就把那一行发给知返问</div>
+            </template>
+            <div v-else class="walk-loading">加载中…</div>
+          </div>
+        </div>
       </div>
 
       <!-- 解释降为代码旁的按需工具，不与思考主线并列。 -->
@@ -1035,10 +1037,10 @@ function quit() {
 /* ---------- 认知过程双栏 ---------- */
 .cols {
   display: grid; grid-template-columns: minmax(0, 44fr) minmax(390px, 56fr);
-  gap: 20px; align-items: start;   /* 代码栏不再被拉伸去对齐右边，终端紧跟代码、无大空隙 */
+  gap: 20px; align-items: stretch;
 }
-.code-column { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
-.code-panel { display: flex; flex-direction: column; }
+.code-column { min-width: 0; display: flex; flex-direction: column; gap: 12px; height: 100%; }
+.code-panel { flex: 1 1 auto; display: flex; flex-direction: column; position: relative; overflow: hidden; }
 .explain-panel { max-height: 560px; overflow-y: auto; }
 .explain-body { display: flex; flex-direction: column; gap: 14px; }
 .tool-shelf { padding: 0 4px; }
@@ -1078,7 +1080,7 @@ function quit() {
 
 /* ---------- 代码区 ---------- */
 .code {
-  width: 100%; height: 360px; resize: none; overflow: auto;
+  width: 100%; min-height: 300px; height: auto; flex: 1 1 300px; resize: none; overflow: auto;
   background: #f5f0e6; color: var(--text);
   font-family: Consolas, 'Courier New', monospace; font-size: 14.5px;
   line-height: 1.75; border: 1px solid #d8d0bf; border-radius: 10px; padding: 16px 18px;
@@ -1126,11 +1128,15 @@ function quit() {
 /* 逐行讲解触发按钮（代码区右上） */
 .walk-trigger { font-size: 13px; padding: 6px 12px; }
 /* 逐行讲解抽屉：从代码区底部上滑、覆盖代码下部，不撑高页面 */
-/* 逐行讲解：就地替换代码框（不浮层、不盖代码、可滚动） */
+/* 逐行讲解抽屉：从代码区底部上滑、覆盖代码下部，不撑高页面 */
 .walk-drawer {
-  display: flex; flex-direction: column; height: 360px;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  position: absolute; left: 0; right: 0; bottom: 0; height: 60%;
+  display: flex; flex-direction: column; z-index: 5;
+  background: var(--panel); border-top: 2px solid var(--primary);
+  box-shadow: 0 -8px 24px rgba(43,41,36,0.18); animation: walkUp 0.22s ease;
 }
+.walk-drawer.tall { height: 90%; }
+@keyframes walkUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
 .walk-drawer-bar {
   display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
   padding: 8px 14px; background: var(--accent-soft); border-bottom: 1px solid var(--border);
