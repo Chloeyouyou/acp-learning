@@ -341,7 +341,8 @@ def get_weakest_pattern_id(db: Session, student_id: str, patterns: list[dict]) -
         dr = diff_rank.get(diff, 2)
 
         # 总分：越薄弱越高分；有弱标记加分；难度越低加分
-        score = worst * 10 + (5 if has_weak else 0) - dr
+        # worst 越小=越薄弱，用 (4-worst) 反转让薄弱题得高分（修复原 score=worst*10 符号反了的 bug）
+        score = (4 - worst) * 10 + (5 if has_weak else 0) - dr
         scored.append({"p": p, "score": score, "difficulty": dr})
 
     if not scored:
