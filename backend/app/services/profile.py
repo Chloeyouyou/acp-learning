@@ -3,7 +3,7 @@
 from sqlalchemy.orm import Session
 
 from ..config import BASE_STEP, COLD_START_EVENTS, COLD_START_FACTOR, INITIAL_SCORE
-from ..models import CapabilityScore, Event, ExecutionEvent, KnowledgeState
+from ..models import CapabilityScore, Event, ExecutionEvent, KnowledgeState, TutorSession
 from ..registry import CAPABILITY_REGISTRY
 
 
@@ -350,6 +350,12 @@ def get_weakest_pattern_id(db: Session, student_id: str, patterns: list[dict]) -
 
     # 按分数降序，同分按难度升序
     scored.sort(key=lambda x: (-x["score"], x["difficulty"]))
+    # 规则4 防套路：不连续出同一道——若最高分正是上次刚做的题且有别的候选，换次优的
+    last = (db.query(TutorSession.pattern_id).filter_by(student_id=student_id)
+            .order_by(TutorSession.created_at.desc()).first())
+    last_pid = last[0] if last else None
+    if last_pid and scored[0]["p"]["id"] == last_pid and len(scored) > 1:
+        return scored[1]["p"]["id"]
     return scored[0]["p"]["id"]
 
 

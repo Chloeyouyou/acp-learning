@@ -3,8 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="ACP Learning — 在 AI 导师「知返」引导下，通过 Bug 闯关真正学会编程调试：不只是修好，还能讲清成因、举一反三。" />
+    <meta property="og:title" content="ACP Learning — AI 协同编程学习" />
+    <meta property="og:description" content="知返只引导、不给答案，陪你迷途知返。" />
+    <meta property="og:type" content="website" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>ACP Learning — AI协同编程学习</title>
+    <!-- 骨架屏：JS 加载/服务唤醒期间不再纯白屏 -->
+    <style>
+      #app:empty::after {
+        content: "加载中…";
+        display: flex; align-items: center; justify-content: center; height: 100vh;
+        font-family: 'Iowan Old Style', 'Palatino Linotype', Georgia, 'Songti SC', serif;
+        font-size: 18px; color: #6f695d;
+        background: #f4f1ea;
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>
