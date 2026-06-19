@@ -233,6 +233,40 @@ def review_未解决题不进队列():
     db.close()
 
 
+# ---- 知返反幻觉：运行结果注入（截断 + 只留最新一条）----
+from app.services import tutor
+
+@test
+def run_note_截断长输出():
+    note = tutor.run_result_note("OK", stdout="x" * 5000)
+    assert note.startswith(tutor.RUN_RESULT_PREFIX), note
+    assert "截断" in note and len(note) < 800, f"长输出必须截断：{len(note)}"
+
+@test
+def run_note_报错只留尾部():
+    long_tb = "Traceback...\n" + "f\n" * 2000 + "ZeroDivisionError: division by zero"
+    note = tutor.run_result_note("RE", stderr=long_tb)
+    assert tutor.RUN_RESULT_PREFIX in note and "ZeroDivisionError" in note
+    assert len(note) < 800, "报错应只留尾部"
+
+@test
+def run_note_超时():
+    note = tutor.run_result_note("HANG")
+    assert "超时" in note or "死循环" in note
+
+@test
+def inject_只保留最新一条运行结果():
+    h = [{"role": "user", "content": "我观察到了"},
+         {"role": "assistant", "content": "嗯"}]
+    h = tutor.inject_run_note(h, tutor.run_result_note("OK", stdout="第一次"))
+    h = tutor.inject_run_note(h, tutor.run_result_note("RE", stderr="第二次错误"))
+    notes = [m for m in h if (m.get("content") or "").startswith(tutor.RUN_RESULT_PREFIX)]
+    assert len(notes) == 1, f"只该留最新一条运行结果，实际 {len(notes)}"
+    assert "第二次错误" in notes[0]["content"], "留下的应是最新那条"
+    # 非运行结果的历史不能被误删
+    assert any(m["content"] == "我观察到了" for m in h), "普通历史不该被剔除"
+
+
 # ---- sandbox ----
 @test
 def sandbox_基本():

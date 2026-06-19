@@ -150,6 +150,12 @@ def run_code_endpoint(session_id: str, req: SubmitReq, db: Session = Depends(get
         pattern_id=session.pattern_id, source="run", kind=kind, stderr=r.stderr,
         knowledge_points=mine_engine.get_pattern(session.pattern_id).get("knowledge_points", []),
         mode=(session.manifest or {}).get("mode", "debug"))
+    # 把真实运行结果接进对话：知返下一轮据此引导，杜绝臆断输出（信任底线）。
+    # 只保留最新一条，旧结果剔除——防上下文污染、防拿旧结果答新问。仅 active 会话。
+    if session.status == "active":
+        note = tutor.run_result_note(kind, r.stdout, r.stderr)
+        session.history = tutor.inject_run_note(session.history, note)
+        db.commit()
     return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out}
 
 
