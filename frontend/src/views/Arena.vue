@@ -42,6 +42,9 @@ const patterns = ref([])
 const lobbyMode = ref('smart')   // 'smart' 智能推荐 | 'browse' 自己挑选
 const recs = ref([])             // 个性化推荐（后端按能力画像生成）
 const recsLoading = ref(false)
+const activeSessions = ref([])   // 未完成关卡（接着做）；后端 active-sessions 是唯一真相，按活跃度倒序，第一条置顶高亮
+const abandoning = ref(null)     // 正在二次确认「放弃」的 session_id（null=没有确认框）
+const resumeExpanded = ref(false) // 「接着做」是否展开其余未完成关卡（默认只露最近一局，页面态不持久化）
 const openCats = reactive({})    // 自己挑选模式：哪些分组已展开（默认只开第一组）
 const session = reactive({
   id: null, patternId: null, code: '', task: '', stage: '①发现', hintLevel: 'L0',
@@ -52,6 +55,8 @@ const session = reactive({
 })
 const originalCode = ref('')
 const codeChanged = computed(() => session.code !== originalCode.value)
+// 接着做：默认只显示最近一局，展开后显示全部（页面态，不持久化）
+const visibleResume = computed(() => resumeExpanded.value ? activeSessions.value : activeSessions.value.slice(0, 1))
 const masteredKps = ref(new Set())   // 学生已内化的知识点（练前小灶用来标「已掌握」）
 const showPrimer = ref(false)        // 练前小灶默认收起（需要的人再点开），避免页面被撑长
 const intervention = ref(null)       // 开题前小检查（命中跨题高频思维默认值才有）；帮手语气、可忽略、本题只首次弹
@@ -191,33 +196,71 @@ onMounted(async () => {
     start(pid, mode)
     return
   }
-  // 断点续做：上次有未完成的关卡（非主动退出）→ 自动恢复对话与阶段
-  const saved = localStorage.getItem('active_session')
-  if (saved) {
-    try {
-      const d = await api.getSession(saved)
-      if (d.status === 'active') {
-        session.id = d.session_id
-        session.patternId = d.pattern_id
-        session.code = d.code
-        originalCode.value = d.code
-        session.stage = d.stage
-        session.hintLevel = d.hint_level
-        session.fixed = d.fixed
-        session.done = d.done
-        session.internalizeQuestions = d.internalize_questions || []
-        session.variant = null
-        observationDone.value = true   // 续做：已在进行中，不再弹观察卡
-        messages.value = d.messages
-        messages.value.push({ role: 'system', text: '↩️ 已恢复你上次未完成的关卡，接着来吧。' })
-      } else {
-        localStorage.removeItem('active_session')
-      }
-    } catch (e) {
-      localStorage.removeItem('active_session')
-    }
-  }
+  // 接着做：列出所有未完成关卡让用户自选，不再静默自动跳（设计 08）。
+  // 后端 active-sessions 是唯一真相；localStorage 单会话恢复机制已退役。
+  loadActiveSessions()
 })
+
+async function loadActiveSessions() {
+  try {
+    const d = await api.getActiveSessions()
+    activeSessions.value = d.sessions || []
+  } catch (e) {
+    activeSessions.value = []   // 拿不到就不显示「接着做」，不阻塞大厅
+  }
+}
+
+// 「接着做」卡上的活跃时间：刚刚 / N 分钟前 / N 小时前 / N 天前
+function relTime(ts) {
+  if (!ts) return ''
+  const then = new Date(ts).getTime()
+  if (Number.isNaN(then)) return ''
+  const mins = Math.floor((Date.now() - then) / 60000)
+  if (mins < 1) return '刚刚'
+  if (mins < 60) return `${mins} 分钟前`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs} 小时前`
+  return `${Math.floor(hrs / 24)} 天前`
+}
+
+// 显式点击续做某关：拉会话、灌入状态，从静默自动恢复改为用户主动触发
+async function resume(sessionId) {
+  error.value = ''
+  try {
+    const d = await api.getSession(sessionId)
+    if (d.status !== 'active') {   // 已被别处结束/放弃 → 刷新列表
+      await loadActiveSessions()
+      return
+    }
+    session.id = d.session_id
+    session.patternId = d.pattern_id
+    session.code = d.code
+    originalCode.value = d.code
+    session.stage = d.stage
+    session.hintLevel = d.hint_level
+    session.fixed = d.fixed
+    session.done = d.done
+    session.internalizeQuestions = d.internalize_questions || []
+    session.variant = null
+    observationDone.value = true   // 续做：已在进行中，不再弹观察卡
+    messages.value = d.messages
+    messages.value.push({ role: 'system', text: '已回到这道题，接着来吧。' })
+  } catch (e) {
+    error.value = '无法恢复这道题：' + e.message
+  }
+}
+
+// 放弃一道未完成关卡：二次确认后置 abandoned（不删历史/事件流），从列表移除
+async function abandon(sessionId) {
+  try {
+    await api.abandonSession(sessionId)
+    activeSessions.value = activeSessions.value.filter((s) => s.session_id !== sessionId)
+  } catch (e) {
+    error.value = '放弃失败：' + e.message
+  } finally {
+    abandoning.value = null
+  }
+}
 
 async function loadRecs() {
   recsLoading.value = true
@@ -255,7 +298,6 @@ async function start(patternId, mode = 'debug') {
     thoughtOpen.value = true
     runResult.value = null
     resetObservation()
-    localStorage.setItem('active_session', data.session_id)  // 记下当前关卡，供刷新后续做
     session.code = data.code
     originalCode.value = data.code
     session.task = data.task
@@ -455,10 +497,11 @@ async function runAndCheck() {
 }
 
 function quit() {
-  localStorage.removeItem('active_session')  // 主动退出 = 放弃续做
+  // 退出回大厅：会话在后端仍是 active（未放弃），会重新出现在「接着做」里。
   session.id = null
   messages.value = []
-  loadRecs()  // 闯关后能力可能变化，回大厅刷新个性化推荐
+  loadRecs()           // 闯关后能力可能变化，回大厅刷新个性化推荐
+  loadActiveSessions() // 刚退出的这道题会回到「接着做」列表
 }
 </script>
 
@@ -474,6 +517,43 @@ function quit() {
         亲手<b>修好它</b>，再讲清楚它为什么会发生——走完六步，知识点才真正属于你。
       </p>
     </div>
+
+    <!-- 接着做：未完成的关卡，最近一局置顶高亮（设计 08）。系统记得你停在哪里，但不替你做决定。 -->
+    <section v-if="activeSessions.length" class="resume">
+      <h3 class="resume-title">接着做</h3>
+      <!-- 默认只露最近一局，其余收进「展开查看」——别把新题入口挤出屏幕 -->
+      <div
+        v-for="(s, i) in visibleResume"
+        :key="s.session_id"
+        :class="['resume-card', { featured: i === 0 }]"
+      >
+        <div class="resume-info">
+          <span class="resume-name">{{ s.name }}</span>
+          <span class="resume-stage">上次停在：{{ s.stage }}</span>
+          <span class="resume-time">{{ relTime(s.last_active_at) }}</span>
+        </div>
+        <div v-if="abandoning !== s.session_id" class="resume-actions">
+          <button class="resume-go" @click="resume(s.session_id)">
+            {{ i === 0 ? '继续上次 →' : '继续 →' }}
+          </button>
+          <button class="resume-drop" @click="abandoning = s.session_id">放弃</button>
+        </div>
+        <div v-else class="resume-confirm">
+          <span>放弃后不会删除你的学习记录，只是不再出现在「接着做」里。确认放弃吗？</span>
+          <div class="resume-confirm-btns">
+            <button class="resume-drop-yes" @click="abandon(s.session_id)">放弃</button>
+            <button class="resume-keep" @click="abandoning = null">算了，继续做</button>
+          </div>
+        </div>
+      </div>
+      <button
+        v-if="activeSessions.length > 1"
+        class="resume-more"
+        @click="resumeExpanded = !resumeExpanded"
+      >
+        {{ resumeExpanded ? '收起' : `还有 ${activeSessions.length - 1} 个未完成 · 展开查看` }}
+      </button>
+    </section>
 
     <!-- 智能开一题：不指定题，后端按画像挑你最该补的弱点（系统帮你挑） -->
     <button class="smart-open" @click="start()">
@@ -825,6 +905,39 @@ function quit() {
 }
 .smart-open-main { font-family: var(--serif); font-size: 17px; font-weight: 600; color: var(--primary-dark); }
 .smart-open-sub { font-size: 13px; color: var(--muted); }
+
+/* 接着做：未完成关卡，最近一局置顶高亮 */
+.resume { margin-bottom: 26px; }
+.resume-title { font-family: var(--serif); font-size: 16px; font-weight: 600; color: var(--text); margin: 0 0 12px; }
+.resume-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  padding: 16px 20px; margin-bottom: 12px;
+}
+.resume-card.featured { background: var(--accent-soft); border-color: #e0cdbb; }
+.resume-card:last-child { margin-bottom: 0; }
+.resume-info { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.resume-name { font-family: var(--serif); font-size: 16px; font-weight: 600; color: var(--text); }
+.resume-stage { font-size: 13px; color: var(--primary); }
+.resume-time { font-size: 12px; color: var(--muted); }
+.resume-actions { display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+.resume-go {
+  border: none; background: none; font-family: var(--serif); font-size: 14.5px; font-weight: 600;
+  color: var(--primary); cursor: pointer; transition: transform 0.18s;
+}
+.resume-go:hover { transform: translateX(4px); }
+.resume-drop { border: none; background: none; font-size: 13px; color: var(--muted); cursor: pointer; }
+.resume-drop:hover { color: var(--text); }
+.resume-confirm { display: flex; flex-direction: column; gap: 10px; align-items: flex-end; flex-shrink: 0; max-width: 60%; }
+.resume-confirm > span { font-size: 12.5px; color: var(--muted); text-align: right; line-height: 1.6; }
+.resume-confirm-btns { display: flex; gap: 12px; }
+.resume-drop-yes { border: none; background: none; font-size: 13.5px; color: var(--primary); cursor: pointer; }
+.resume-keep { border: none; background: none; font-size: 13.5px; font-weight: 600; color: var(--text); cursor: pointer; }
+.resume-more {
+  border: none; background: none; cursor: pointer; padding: 8px 2px; margin-top: 4px;
+  font-size: 13px; color: var(--muted);
+}
+.resume-more:hover { color: var(--text); }
 
 .mode-tabs { display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 26px;
   background: #ece6da; border-radius: 11px; }

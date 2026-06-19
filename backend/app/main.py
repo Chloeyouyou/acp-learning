@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .config import STAGES
 from .db import get_db, init_db
-from .models import TutorSession
+from .models import ExecutionEvent, TutorSession
 from .services import event_engine, mine_engine, profile, review, sandbox, timeline, tutor
 
 app = FastAPI(title="ACP Learning API", version="0.1.0")
@@ -51,14 +51,19 @@ class SubmitReq(BaseModel):
 # ---- 会话（埋雷 + 共脑调试）----
 
 def _cleanup_abandoned(db: Session, student_id: str):
-    """清掉该学生"开了题但几乎没动"的废弃会话（停在①发现、planted、学生发言≤1）。
-    每次开新题时顺手清，既清存量又防堆积；不碰真正进行中/已完成的会话。"""
+    """清掉该学生「开了题但完全没动」的纯空壳会话——四条全满足才删：
+    ① status=active ② mine_status=planted（连雷都没定位）③ 零 ExecutionEvent（没 run/submit）
+    ④ 零真实学生消息（history 只有系统消息）。
+    宁可漏清不可误删：有任何真实对话/运行/提交的会话一律保留（哪怕一句真实发言也是学习痕迹）。"""
     for s in db.query(TutorSession).filter_by(student_id=student_id, status="active",
-                                              stage="①发现", mine_status="planted").all():
+                                              mine_status="planted").all():
         stu_msgs = [m for m in (s.history or [])
                     if m["role"] == "user" and not m["content"].startswith(("（系统", "(系统"))]
-        if len(stu_msgs) <= 1:
-            db.delete(s)
+        if stu_msgs:
+            continue  # 有真实学生发言 → 保留
+        if db.query(ExecutionEvent.id).filter_by(session_id=s.id).first() is not None:
+            continue  # 有运行/提交记录 → 保留
+        db.delete(s)
 
 
 @app.post("/api/sessions")
@@ -284,6 +289,42 @@ def get_timeline(student_id: str, db: Session = Depends(get_db)):
 def get_review_queue(student_id: str, db: Session = Depends(get_db)):
     """今日复习队列（间隔重复，纯派生只读）：哪些已解决/已内化的题到期该回看。"""
     return {"due": review.due_queue(db, student_id)}
+
+
+@app.get("/api/students/{student_id}/active-sessions")
+def get_active_sessions(student_id: str, db: Session = Depends(get_db)):
+    """未完成关卡列表（最近 5 个 active 会话摘要），供大厅续做。纯只读、不写库。
+    last_active_at = 该会话最新 ExecutionEvent 时间（无则 created_at），按之倒序——真按活跃度。"""
+    sessions = db.query(TutorSession).filter_by(student_id=student_id, status="active").all()
+    out = []
+    for s in sessions:
+        last_ev = (db.query(ExecutionEvent.timestamp).filter_by(session_id=s.id)
+                   .order_by(ExecutionEvent.timestamp.desc()).first())
+        try:
+            name = mine_engine.get_pattern(s.pattern_id).get("name", s.pattern_id)
+        except KeyError:
+            name = s.pattern_id
+        out.append({
+            "session_id": s.id,
+            "pattern_id": s.pattern_id,
+            "name": name,
+            "stage": s.stage,
+            "mine_status": s.mine_status,
+            "last_active_at": last_ev[0] if last_ev else s.created_at,
+        })
+    out.sort(key=lambda x: x["last_active_at"], reverse=True)
+    return {"sessions": out[:5]}
+
+
+@app.post("/api/sessions/{session_id}/abandon")
+def abandon_session(session_id: str, db: Session = Depends(get_db)):
+    """显式放弃一道未完成关卡：只把 status 置 abandoned，**不删 history / 事件**。
+    放弃后不再出现在 active-sessions 列表里，但历史与事件流完整保留。"""
+    session = _get_session(db, session_id)
+    if session.status == "active":
+        session.status = "abandoned"
+        db.commit()
+    return {"session_id": session.id, "status": session.status}
 
 
 @app.get("/api/admin/students/{student_id}/sessions")

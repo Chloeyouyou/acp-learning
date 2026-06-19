@@ -267,6 +267,88 @@ def inject_只保留最新一条运行结果():
     assert any(m["content"] == "我观察到了" for m in h), "普通历史不该被剔除"
 
 
+# ---- 接着做（未完成关卡续做）：cleanup / active-sessions / abandon（设计 08）----
+from app.main import _cleanup_abandoned, abandon_session, get_active_sessions
+
+_AS_PID = "BP-BOUNDARY-001"  # 用真实题，name 能填上
+
+def _mk_active(db, sid, ssid, *, history=None, mine_status="planted", events_at=None):
+    """造一个 active 会话 + 可选的若干 ExecutionEvent（timestamp 为 ISO 串）。"""
+    db.add(TutorSession(id=ssid, student_id=sid, pattern_id=_AS_PID, manifest={},
+                        mine_status=mine_status, history=history or [], status="active"))
+    for ts in (events_at or []):
+        db.add(ExecutionEvent(
+            id=f"ex_{_uuid.uuid4().hex[:12]}", version="v1", student_id=sid,
+            session_id=ssid, pattern_id=_AS_PID, source="run", kind="OK",
+            knowledge_points=[], meta={}, timestamp=ts))
+    db.commit()
+
+@test
+def cleanup_只清纯空壳():
+    db = TestSession()
+    sid = "cl_1"
+    # 系统注入的 user 消息（（系统·…）开头）不算真实发言
+    sys_only = [{"role": "system", "content": "运行这段代码，看看它的行为"},
+                {"role": "user", "content": "（系统·运行结果）2"}]
+    _mk_active(db, sid, "empty", history=sys_only)                                   # 纯空壳 → 删
+    _mk_active(db, sid, "has_msg", history=[{"role": "user", "content": "我觉得循环错了"}])  # 有真实发言 → 留
+    _mk_active(db, sid, "has_run", history=sys_only, events_at=[_dt.now().isoformat()])     # 有运行记录 → 留
+    _cleanup_abandoned(db, sid)
+    db.commit()  # _cleanup_abandoned 只 delete 不 commit（真实调用方 create_session 负责提交）
+    left = {s.id for s in db.query(TutorSession).filter_by(student_id=sid).all()}
+    assert left == {"has_msg", "has_run"}, f"只该清纯空壳，实际剩：{left}"
+    db.close()
+
+@test
+def cleanup_已定位不误删():
+    db = TestSession()
+    sid = "cl_2"
+    _mk_active(db, sid, "located", history=[], mine_status="found")  # 非 planted → 不在清理范围
+    _cleanup_abandoned(db, sid)
+    assert db.query(TutorSession).filter_by(id="located").first() is not None, "已定位会话不该被清"
+    db.close()
+
+@test
+def active_sessions_按活跃倒序且上限5():
+    db = TestSession()
+    sid = "as_1"
+    base = _dt.now()
+    for i in range(6):  # 6 个；event 时间各异，i 越大越老
+        _mk_active(db, sid, f"s{i}", history=[{"role": "user", "content": "x"}],
+                   events_at=[(base - _td(days=i)).isoformat()])
+    sessions = get_active_sessions(sid, db=db)["sessions"]
+    assert len(sessions) == 5, f"上限 5，实际 {len(sessions)}"
+    assert sessions[0]["session_id"] == "s0", f"最近活跃应置顶，实际 {sessions[0]['session_id']}"
+    times = [s["last_active_at"] for s in sessions]
+    assert times == sorted(times, reverse=True), f"应按活跃度倒序：{times}"
+    assert "s5" not in [s["session_id"] for s in sessions], "最老的应被挤出前 5"
+    assert sessions[0]["name"] and sessions[0]["stage"], "应带 name/stage 供大厅展示"
+    db.close()
+
+@test
+def active_sessions_无事件回退created_at():
+    db = TestSession()
+    sid = "as_2"
+    _mk_active(db, sid, "no_ev", history=[{"role": "user", "content": "x"}])  # 无 ExecutionEvent
+    sessions = get_active_sessions(sid, db=db)["sessions"]
+    assert len(sessions) == 1 and sessions[0]["last_active_at"], "无事件应回退 created_at"
+    db.close()
+
+@test
+def abandon_置abandoned且不删历史与事件():
+    db = TestSession()
+    sid = "ab_1"
+    hist = [{"role": "user", "content": "我修了第 2 行"}]
+    _mk_active(db, sid, "drop_me", history=hist, events_at=[_dt.now().isoformat()])
+    abandon_session("drop_me", db=db)
+    s = db.query(TutorSession).filter_by(id="drop_me").first()
+    assert s.status == "abandoned", f"应置 abandoned，实际 {s.status}"
+    assert s.history == hist, "history 不该被删"
+    assert db.query(ExecutionEvent).filter_by(session_id="drop_me").count() == 1, "事件流不该被删"
+    assert not get_active_sessions(sid, db=db)["sessions"], "放弃后不该再在 active-sessions"
+    db.close()
+
+
 # ---- sandbox ----
 @test
 def sandbox_基本():
