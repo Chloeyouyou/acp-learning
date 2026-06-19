@@ -1,0 +1,37 @@
+id: BP-GEN-151F19
+name: 列表切片边界错误
+category: boundary
+language: python
+knowledge_points:
+- 列表切片
+- 边界
+capability_dims:
+- Boundary_Awareness
+- Independent_Debug
+difficulty: L1
+symptom: RE
+symptom_sample: "IndexError: list index out of range\n  File \"main.py\", line 5,\
+  \ in average_of_first_three\n"
+buggy_code: "def average_of_first_three(scores):\n    # 计算前三门课的平均分\n    first_three\
+  \ = scores[:3]\n    third_score = first_three[2]  # 意图获取第三个分数\n    total = sum(first_three)\n\
+  \    return total / len(first_three)\n\nprint(average_of_first_three([85, 90]))\n"
+mine_location:
+  file: main.py
+  line: 4
+trigger_input: '[85, 90]'
+root_cause: 切片scores[:3]在列表长度不足3时返回长度小于3的列表，后续直接访问下标2导致IndexError
+cognitive_root: 以为切片一定返回指定长度的列表，忽略了源列表长度不足时切片返回的元素个数会少于预期
+thinking_pattern: index_confusion
+expected_fix: 'if len(first_three) < 3: return None 或使用条件判断'
+fix_check: len\(first_three\)\s*<\s*3
+expected_output: None
+internalize_questions:
+- 当scores列表只有2个元素时，scores[:3]返回什么？它的长度是多少？
+- 如果访问first_three[2]，下标2对应第几个元素？这个下标合法吗？
+hint_ladder:
+  L0: 用不同的输入测试你的函数，试试输入只有两个分数的情况。
+  L1: 报错信息说IndexError，下标越界。哪一行出错了？那一行在访问什么？
+  L2: 问题可能出在切片后的列表长度上。你认为：A. 切片范围写错了 B. 切片后访问了下标越界 C. 除法分母为零
+  L3: 切片scores[:3]在源列表长度不足3时，返回的列表长度是多少？
+  L4: 看第4行：first_three[2]。当first_three只有2个元素时，这个下标合法吗？
+  L5: 讲解思路：切片不会自动补全长度，当源列表元素少于3时，切片结果长度小于3。后续访问下标2会越界。应该在访问前检查切片后的长度，或改用其他方式处理不足情况。
