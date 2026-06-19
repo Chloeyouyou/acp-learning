@@ -22,3 +22,6 @@ Thumbs.db
 
 # 临时备份（改 UI 时的手工回滚点，不入库）
 *.bak
+
+# 自动出题候选（人审入库前不进 git）
+backend/patterns/_pending/
