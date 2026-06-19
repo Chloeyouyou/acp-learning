@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -6,7 +7,8 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PATTERNS_DIR = BASE_DIR / "patterns"
-DATABASE_URL = f"sqlite:///{BASE_DIR / 'acp.db'}"
+# 可用环境变量覆盖（VPS 挂数据卷 / 将来换 Postgres 用）；不设则用本地默认 SQLite。
+DATABASE_URL = os.environ.get("DATABASE_URL") or f"sqlite:///{BASE_DIR / 'acp.db'}"
 
 TUTOR_MODEL = "deepseek-chat"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
