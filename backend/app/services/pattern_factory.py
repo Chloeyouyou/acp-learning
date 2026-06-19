@@ -42,7 +42,11 @@ hint_ladder({L0..L5} 六档,从"自己多试"到"讲思路但不给改法",【�
 铁律：
 - buggy_code 必须真能跑出声明的 symptom（RE 真抛异常 / HANG 真死循环 / WA 真算错）。
 - hint_ladder、internalize_questions 绝不剧透 bug、绝不直接给改法。
-- cognitive_root 必须是"认知/思维默认值"层面的话，不是复述代码。"""
+- 【L5 红线·最易犯】L5 是"讲思路的上限"，只点破认知方向（如"想想这个运算到底做了什么"），
+  **绝不能出现具体改法**：不准说"应该用 X/改成 X/换成 Y 函数"、不准点名正确的运算符或函数（如"用 / "、"用 round"）。
+  写完 L5 自检：如果学生照着 L5 一字不改就能改对，就是泄题，重写。
+- cognitive_root 必须是"认知/思维默认值"层面的话，不是复述代码。
+- symptom_sample 简短一句（一个触发输入 + 错误现象），不要长篇罗列多组输入。"""
 
 
 def _examples(category: str, k: int = 2) -> str:
@@ -114,7 +118,7 @@ def generate_batch(tasks: list, retries: int = 3) -> dict:
             if cand is None:
                 print("   ✗ 生成/解析失败，重试")
                 continue
-            problems = pattern_validator.validate_candidate(cand)
+            problems = pattern_validator.validate_candidate(cand, t)
             if not problems:
                 path = write_pending(cand)
                 print(f"   ✓ 通过双关质检 → {path}")

@@ -81,8 +81,12 @@ def _error_family(kind: str, stderr: str) -> str | None:
 
 
 def log_execution(db: Session, *, student_id: str, session_id: str, pattern_id: str,
-                  source: str, kind: str, stderr: str = "", knowledge_points: list | None = None):
-    """记一条执行事实（run/submit 的真跑结果）。只 INSERT，不碰 capability_scores。"""
+                  source: str, kind: str, stderr: str = "", knowledge_points: list | None = None,
+                  mode: str = "debug"):
+    """记一条执行事实（run/submit 的真跑结果）。只 INSERT，不碰 capability_scores。
+
+    mode 标记本次执行属于哪种玩法（debug/review/…），盖进 meta 供日后按玩法切片。
+    """
     ev = ExecutionEvent(
         id=f"ex_{uuid.uuid4().hex[:16]}",
         version="v1",
@@ -93,9 +97,9 @@ def log_execution(db: Session, *, student_id: str, session_id: str, pattern_id: 
         kind=kind,
         error_family=_error_family(kind, stderr),
         knowledge_points=knowledge_points or [],
-        # meta 预留默认形状，B0 不填充
+        # meta 预留默认形状 + mode 盖戳
         meta={"ontology_tags": [], "trace_snapshot_id": None,
-              "stderr_summary": None, "stdout_summary": None},
+              "stderr_summary": None, "stdout_summary": None, "mode": mode},
         timestamp=now(),
     )
     db.add(ev)

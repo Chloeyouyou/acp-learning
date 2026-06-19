@@ -117,10 +117,28 @@ def check_fix_resolves(p: dict, fixed_code: str) -> list[str]:
     return []
 
 
-def validate_candidate(cand: dict) -> list[str]:
-    """生成期闸门：结构 + fix_check + 雷会响 + 雷能排。cand 需含 fixed_code。"""
+def check_task_match(cand: dict, task: dict) -> list[str]:
+    """对单：生成结果须符合订单的 category / thinking_pattern / 症状。
+
+    否则就是「让补 arithmetic 它却交了一道 null 题」——缺口没真补上。
+    """
+    problems = []
+    if task.get("category") and cand.get("category") != task["category"]:
+        problems.append(f"跑题：category 要 {task['category']}，实为 {cand.get('category')}")
+    if task.get("thinking_pattern") and cand.get("thinking_pattern") != task["thinking_pattern"]:
+        problems.append(f"跑题：thinking_pattern 要 {task['thinking_pattern']}，实为 {cand.get('thinking_pattern')}")
+    want_sym = task.get("error_target") or task.get("symptom")
+    if want_sym and cand.get("symptom") != want_sym:
+        problems.append(f"跑题：症状要 {want_sym}，实为 {cand.get('symptom')}")
+    return problems
+
+
+def validate_candidate(cand: dict, task: dict | None = None) -> list[str]:
+    """生成期闸门：[对单] + 结构 + fix_check + 雷会响 + 雷能排。cand 需含 fixed_code。"""
     fixed = cand.get("fixed_code")
     problems = []
+    if task:
+        problems += check_task_match(cand, task)
     problems += check_structure(cand)
     problems += check_fix_check(cand, fixed)
     # 结构都不全就别跑代码了，避免噪声
@@ -139,8 +157,13 @@ def validate_library_pattern(p: dict) -> list[str]:
     return problems
 
 
-def collect_stats(patterns: list[dict]) -> dict:
-    """题库分布统计（给 Planner 填缺口/防偏；不属于单题校验）。"""
+def collect_stats(patterns) -> dict:
+    """题库分布统计（给 Planner 填缺口/防偏；不属于单题校验）。
+
+    兼容 list[dict] 和 mine_engine.load_patterns() 的 dict[id->题]。
+    """
+    if isinstance(patterns, dict):
+        patterns = list(patterns.values())
     return {
         "total": len(patterns),
         "category": dict(Counter(p.get("category") for p in patterns)),

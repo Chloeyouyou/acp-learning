@@ -186,8 +186,9 @@ onMounted(async () => {
   // 从能力画像「做变式巩固」跳来：自动开始指定关卡（优先于续做）
   if (route.query.start) {
     const pid = String(route.query.start)
+    const mode = route.query.mode === 'review' ? 'review' : 'debug'
     router.replace({ query: {} })  // 清掉 query，避免刷新重复触发
-    start(pid)
+    start(pid, mode)
     return
   }
   // 断点续做：上次有未完成的关卡（非主动退出）→ 自动恢复对话与阶段
@@ -240,10 +241,10 @@ async function loadMastered() {
   } catch (e) { /* 拿不到就当都没掌握，照常显示 */ }
 }
 
-async function start(patternId) {
+async function start(patternId, mode = 'debug') {
   error.value = ''
   try {
-    const data = await api.createSession(patternId)
+    const data = await api.createSession(patternId, mode)
     session.id = data.session_id
     session.patternId = data.pattern_id || patternId   // 智能开题不传 id，用后端选中的
     showPrimer.value = false  // 新关卡练前小灶默认收起，需要的人再点开
@@ -265,7 +266,13 @@ async function start(patternId) {
     session.internalizeQuestions = []
     session.variant = null
     messages.value = []
-    setIntervention(patternId, data.intervention)
+    // 复习模式：温和区分开场，提醒这是回看老题（不重弹开题干预）
+    if (mode === 'review') {
+      messages.value.push({ role: 'system',
+        text: '🔁 复习模式：我们回头看看这道老题。还记得当时它为什么会出问题吗？先运行一下，凭记忆找找那个雷。' })
+    } else {
+      setIntervention(patternId, data.intervention)
+    }
   } catch (e) {
     error.value = e.message
   }

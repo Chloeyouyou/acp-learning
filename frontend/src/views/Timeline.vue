@@ -1,10 +1,13 @@
 <script setup>
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '../api'
 import GlossaryText from '../components/GlossaryText.vue'
 
+const router = useRouter()
 const data = ref(null)
 const error = ref('')
+const reviewDue = ref([])
 
 onMounted(async () => {
   try {
@@ -12,7 +15,18 @@ onMounted(async () => {
   } catch (e) {
     error.value = '加载失败：' + e.message
   }
+  try {
+    const r = await api.getReviewQueue()
+    reviewDue.value = r.due || []
+  } catch (e) { /* 复习卡拿不到不阻塞主时间线 */ }
 })
+
+const _CAT = { boundary: '边界条件', loop: '循环逻辑', null: '空值/None', arithmetic: '算术运算' }
+function catLabel(c) { return _CAT[c] || c }
+
+function startReview(pid) {
+  router.push({ path: '/arena', query: { start: pid, mode: 'review' } })
+}
 
 // 报错类型 → 大白话（治"看不懂英文报错"）
 const ERR = {
@@ -67,6 +81,20 @@ function fmtDay(d) {
   <div v-if="error" class="panel error">{{ error }}</div>
   <div v-else-if="!data" class="panel">加载中…</div>
   <template v-else>
+    <!-- 今日复习（间隔重复）：到期的老题，给一个回来的理由 -->
+    <div v-if="reviewDue.length" class="review">
+      <h3>回头看看 · {{ reviewDue.length }} 道</h3>
+      <p class="review-sub">这些题你早前解决过——隔一阵回看一次，才会真正记牢。</p>
+      <div class="review-list">
+        <button v-for="it in reviewDue" :key="it.pattern_id" class="review-item"
+                @click="startReview(it.pattern_id)">
+          <span class="ri-name">{{ it.name }}</span>
+          <span class="ri-meta">{{ catLabel(it.category) }} · 上次解决 {{ it.days_since }} 天前</span>
+          <span class="ri-go">去复习 →</span>
+        </button>
+      </div>
+    </div>
+
     <!-- 跨题思维默认值：镜子，非审判、非榜单 -->
     <div class="persona">
       <h3>你最近常见的思维默认值</h3>
@@ -146,6 +174,25 @@ function fmtDay(d) {
 
 <style scoped>
 .error { border-color: var(--red); color: var(--red); }
+
+/* 今日复习卡 */
+.review {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  padding: 18px 22px; box-shadow: 0 1px 2px rgba(43,41,36,0.03); margin-bottom: 22px;
+  border-left: 3px solid var(--primary);
+}
+.review h3 { margin: 0 0 4px; font-size: 17px; }
+.review-sub { margin: 0 0 12px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.review-list { display: flex; flex-direction: column; gap: 8px; }
+.review-item {
+  display: flex; align-items: baseline; gap: 12px; width: 100%; text-align: left;
+  background: var(--accent-soft); border: 1px solid var(--border); border-radius: 10px;
+  padding: 11px 14px; cursor: pointer; font: inherit; transition: background 0.15s;
+}
+.review-item:hover { background: #ece2d8; }
+.ri-name { font-family: var(--serif); font-size: 14.5px; font-weight: 600; color: var(--text); }
+.ri-meta { font-size: 12.5px; color: var(--muted); flex: 1; min-width: 0; }
+.ri-go { font-size: 13px; color: var(--primary-dark); white-space: nowrap; }
 
 /* 调试人格卡 */
 .persona {

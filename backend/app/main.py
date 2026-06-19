@@ -3,6 +3,7 @@
 闭环：埋雷（创建会话）→ AI共脑对话 → 提交修复（规则判定）→ 事件 → 画像。
 """
 
+import os
 import uuid
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 from .config import STAGES
 from .db import get_db, init_db
 from .models import TutorSession
-from .services import event_engine, mine_engine, profile, sandbox, timeline, tutor
+from .services import event_engine, mine_engine, profile, review, sandbox, timeline, tutor
 
 app = FastAPI(title="ACP Learning API", version="0.1.0")
 
@@ -36,6 +37,7 @@ def startup():
 class CreateSessionReq(BaseModel):
     student_id: str
     pattern_id: str | None = None
+    mode: str = "debug"  # debug（默认）/ review（复习）；coop 后续
 
 
 class MessageReq(BaseModel):
@@ -64,6 +66,7 @@ def create_session(req: CreateSessionReq, db: Session = Depends(get_db)):
     _cleanup_abandoned(db, req.student_id)
     pattern = mine_engine.pick_pattern_for_student(req.student_id, req.pattern_id, db)
     manifest = mine_engine.build_manifest(req.student_id, pattern)
+    manifest["mode"] = req.mode  # 玩法模式寄存在 manifest（零 schema 迁移）
     session = TutorSession(
         id=f"sess_{uuid.uuid4().hex[:12]}",
         student_id=req.student_id,
@@ -145,7 +148,8 @@ def run_code_endpoint(session_id: str, req: SubmitReq, db: Session = Depends(get
     event_engine.log_execution(
         db, student_id=session.student_id, session_id=session.id,
         pattern_id=session.pattern_id, source="run", kind=kind, stderr=r.stderr,
-        knowledge_points=mine_engine.get_pattern(session.pattern_id).get("knowledge_points", []))
+        knowledge_points=mine_engine.get_pattern(session.pattern_id).get("knowledge_points", []),
+        mode=(session.manifest or {}).get("mode", "debug"))
     return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out}
 
 
@@ -175,7 +179,8 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
         db, student_id=session.student_id, session_id=session.id,
         pattern_id=session.pattern_id, source="submit",
         kind=kind_map.get(result["kind"], result["kind"]), stderr=result.get("stderr", ""),
-        knowledge_points=mine.get("knowledge_points", []))
+        knowledge_points=mine.get("knowledge_points", []),
+        mode=(session.manifest or {}).get("mode", "debug"))
     execution_summary = {
         "kind": execution.kind,
         "error_family": execution.error_family,
@@ -214,21 +219,25 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
     session.history = list(session.history) + [
         {"role": "user", "content": "（系统：我提交的修复已通过测试）"},
         {"role": "assistant", "content": tutor_opening}]
-    event_engine.on_mine_fixed(
-        db, student_id=session.student_id, session_id=session.id,
-        mine=mine, max_hint_level=session.hint_level)
-    profile.update_knowledge_state(
-        db, student_id=session.student_id, pattern_id=session.pattern_id,
-        knowledge_points=mine["knowledge_points"], new_state="已解决")
-
-    # V0.3 迁移检验：本题是某已内化题的变式，且学生以低提示（≤L1）独立解出 → 记「迁移已验证」
+    # 复习模式：老题重解不再发能力增益事件，否则反复复习同一题会刷高 Debug 能力分、污染数字孪生。
+    # 执行事实（ExecutionEvent，已带 meta.mode=review）照常记——驱动间隔升档，留存信号留待将来单独消费。
+    is_review = (session.manifest or {}).get("mode") == "review"
     transfer_confirmed = False
-    src = profile.transfer_source(db, session.student_id, session.pattern_id)
-    if src and session.hint_level in ("L0", "L1"):
-        event_engine.on_transfer_confirmed(
+    if not is_review:
+        event_engine.on_mine_fixed(
             db, student_id=session.student_id, session_id=session.id,
-            mine=mine, source_pattern=src, hint_level=session.hint_level)
-        transfer_confirmed = True
+            mine=mine, max_hint_level=session.hint_level)
+        profile.update_knowledge_state(
+            db, student_id=session.student_id, pattern_id=session.pattern_id,
+            knowledge_points=mine["knowledge_points"], new_state="已解决")
+
+        # V0.3 迁移检验：本题是某已内化题的变式，且学生以低提示（≤L1）独立解出 → 记「迁移已验证」
+        src = profile.transfer_source(db, session.student_id, session.pattern_id)
+        if src and session.hint_level in ("L0", "L1"):
+            event_engine.on_transfer_confirmed(
+                db, student_id=session.student_id, session_id=session.id,
+                mine=mine, source_pattern=src, hint_level=session.hint_level)
+            transfer_confirmed = True
     db.commit()
     if transfer_confirmed:
         message = ("测试通过，雷已排除！🎯 这是你已内化知识点的变式题，你独立解出来了——"
@@ -263,6 +272,42 @@ def get_profile(student_id: str, db: Session = Depends(get_db)):
 def get_timeline(student_id: str, db: Session = Depends(get_db)):
     """B1 调试成长轨迹（纯派生只读）：一道题=一个 Episode，串观察/尝试链/认知根因/收获。"""
     return timeline.build_timeline(db, student_id)
+
+
+@app.get("/api/students/{student_id}/review-queue")
+def get_review_queue(student_id: str, db: Session = Depends(get_db)):
+    """今日复习队列（间隔重复，纯派生只读）：哪些已解决/已内化的题到期该回看。"""
+    return {"due": review.due_queue(db, student_id)}
+
+
+@app.get("/api/admin/students/{student_id}/sessions")
+def admin_list_sessions(student_id: str, token: str | None = None, db: Session = Depends(get_db)):
+    """【作者/QA 只读】按学号列出全部会话 + 完整对话历史 + 内化判定，供复盘任何一局。
+
+    学生端不链接、不使用——仅作者直连 URL 或工具调用。安全：若设置了环境变量
+    ACP_ADMIN_TOKEN 则必须带 ?token= 匹配才放行；未设置则默认放行（本地开发免配置）。
+    部署提示：在 Render 设 ACP_ADMIN_TOKEN 可锁住此端点。
+    """
+    required = os.environ.get("ACP_ADMIN_TOKEN")
+    if required and token != required:
+        raise HTTPException(403, "forbidden")
+    sessions = (db.query(TutorSession).filter_by(student_id=student_id)
+                .order_by(TutorSession.created_at.desc()).all())
+    return [
+        {
+            "session_id": s.id,
+            "pattern_id": s.pattern_id,
+            "mode": (s.manifest or {}).get("mode", "debug"),
+            "stage": s.stage,
+            "mine_status": s.mine_status,
+            "status": s.status,
+            "hint_level": s.hint_level,
+            "internalize_scores": s.internalize_scores,
+            "created_at": s.created_at,
+            "history": s.history,
+        }
+        for s in sessions
+    ]
 
 
 @app.get("/api/students/{student_id}/capabilities/{capability}/events")

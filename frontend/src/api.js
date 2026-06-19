@@ -24,8 +24,8 @@ export function getStudentId() {
 
 export const api = {
   listPatterns: () => request('GET', '/patterns'),
-  createSession: (patternId) =>
-    request('POST', '/sessions', { student_id: getStudentId(), pattern_id: patternId }),
+  createSession: (patternId, mode = 'debug') =>
+    request('POST', '/sessions', { student_id: getStudentId(), pattern_id: patternId, mode }),
   sendMessage: (sessionId, content) =>
     request('POST', `/sessions/${sessionId}/messages`, { content }),
   submitFix: (sessionId, code) =>
@@ -37,6 +37,7 @@ export const api = {
     request('GET', `/patterns/${patternId}/walkthrough${deep ? '?deep=true' : ''}`),
   getProfile: () => request('GET', `/students/${getStudentId()}/profile`),
   getTimeline: () => request('GET', `/students/${getStudentId()}/timeline`),
+  getReviewQueue: () => request('GET', `/students/${getStudentId()}/review-queue`),
   getRecommendations: () => request('GET', `/students/${getStudentId()}/recommendations`),
   getCapabilityEvents: (capability) =>
     request('GET', `/students/${getStudentId()}/capabilities/${capability}/events`),
