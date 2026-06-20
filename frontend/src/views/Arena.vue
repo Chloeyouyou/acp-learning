@@ -45,6 +45,7 @@ const recsLoading = ref(false)
 const activeSessions = ref([])   // 未完成关卡（接着做）；后端 active-sessions 是唯一真相，按活跃度倒序，第一条置顶高亮
 const abandoning = ref(null)     // 正在二次确认「放弃」的 session_id（null=没有确认框）
 const resumeExpanded = ref(false) // 「接着做」是否展开其余未完成关卡（默认只露最近一局，页面态不持久化）
+const archiveOpen = ref(false)   // 档案面板（未完成关卡）是否打开——大厅「接着做」文字按钮触发
 const openCats = reactive({})    // 自己挑选模式：哪些分组已展开（默认只开第一组）
 const session = reactive({
   id: null, patternId: null, code: '', task: '', stage: '①发现', hintLevel: 'L0',
@@ -57,6 +58,22 @@ const originalCode = ref('')
 const codeChanged = computed(() => session.code !== originalCode.value)
 // 接着做：默认只显示最近一局，展开后显示全部（页面态，不持久化）
 const visibleResume = computed(() => resumeExpanded.value ? activeSessions.value : activeSessions.value.slice(0, 1))
+
+// 灵犀感知层（设计 11）：从现成信号推一句「读过你」的招呼，至多一条；无信号返回 null。
+// 纯派生、只读、不追问、不诊断、给选择留出口。第一版只用大厅已有的 activeSessions。
+const presenceHint = computed(() => {
+  const list = activeSessions.value
+  if (!list.length) return null   // 久别回来（无未完成）需后端最近活跃时间，第一版不做
+  const top = list[0]
+  const gapDays = Math.floor((Date.now() - new Date(top.last_active_at).getTime()) / 86400000)
+  if (Number.isNaN(gapDays)) return '我还记得你上次停在这里，但要不要继续，由你决定。'
+  if (gapDays >= 7) return '好久不见，不急，今天可以先开一道轻一点的。'
+  const highStages = ['③归因', '④修复', '⑤验证']
+  if (gapDays >= 2 && highStages.includes(top.stage)) {
+    return `上次那道你在${top.stage.slice(1)}阶段停了挺久，今天可以接着收尾，也可以先换一道轻松的。`
+  }
+  return '我还记得你上次停在这里，但要不要继续，由你决定。'
+})
 const masteredKps = ref(new Set())   // 学生已内化的知识点（练前小灶用来标「已掌握」）
 const showPrimer = ref(false)        // 练前小灶默认收起（需要的人再点开），避免页面被撑长
 const intervention = ref(null)       // 开题前小检查（命中跨题高频思维默认值才有）；帮手语气、可忽略、本题只首次弹
@@ -226,6 +243,7 @@ function relTime(ts) {
 // 显式点击续做某关：拉会话、灌入状态，从静默自动恢复改为用户主动触发
 async function resume(sessionId) {
   error.value = ''
+  archiveOpen.value = false   // 进题前关掉档案面板，避免退出回大厅时它还开着
   try {
     const d = await api.getSession(sessionId)
     if (d.status !== 'active') {   // 已被别处结束/放弃 → 刷新列表
@@ -511,105 +529,60 @@ function quit() {
   <!-- 选题 -->
   <div v-if="!session.id" class="lobby">
     <div class="lobby-hero">
-      <h2>Bug 闯关训练场</h2>
-      <p class="hint">
-        每一关的代码里都藏着一个真实 Bug。你的任务是<b>发现它</b>、和「知返」一起<b>定位它</b>、
-        亲手<b>修好它</b>，再讲清楚它为什么会发生——走完六步，知识点才真正属于你。
-      </p>
+      <h2 class="lobby-title">
+        Bug 闯关训练场
+        <!-- 接着做：稳定文字按钮（不用图标库/SVG，避免渲染成空白方块），点开档案面板 -->
+        <button
+          v-if="activeSessions.length"
+          class="archive-btn"
+          title="接着做"
+          aria-label="接着做"
+          @click="archiveOpen = true"
+        >接着做</button>
+      </h2>
+      <p class="lobby-sub">和「知返」一起发现、定位、修好代码里的真实 Bug。</p>
     </div>
 
-    <!-- 接着做：未完成的关卡，最近一局置顶高亮（设计 08）。系统记得你停在哪里，但不替你做决定。 -->
-    <section v-if="activeSessions.length" class="resume">
-      <h3 class="resume-title">接着做</h3>
-      <!-- 默认只露最近一局，其余收进「展开查看」——别把新题入口挤出屏幕 -->
-      <div
-        v-for="(s, i) in visibleResume"
-        :key="s.session_id"
-        :class="['resume-card', { featured: i === 0 }]"
-      >
-        <div class="resume-info">
-          <span class="resume-name">{{ s.name }}</span>
-          <span class="resume-stage">上次停在：{{ s.stage }}</span>
-          <span class="resume-time">{{ relTime(s.last_active_at) }}</span>
-        </div>
-        <div v-if="abandoning !== s.session_id" class="resume-actions">
-          <button class="resume-go" @click="resume(s.session_id)">
-            {{ i === 0 ? '继续上次 →' : '继续 →' }}
-          </button>
-          <button class="resume-drop" @click="abandoning = s.session_id">放弃</button>
-        </div>
-        <div v-else class="resume-confirm">
-          <span>放弃后不会删除你的学习记录，只是不再出现在「接着做」里。确认放弃吗？</span>
-          <div class="resume-confirm-btns">
-            <button class="resume-drop-yes" @click="abandon(s.session_id)">放弃</button>
-            <button class="resume-keep" @click="abandoning = null">算了，继续做</button>
-          </div>
-        </div>
-      </div>
-      <button
-        v-if="activeSessions.length > 1"
-        class="resume-more"
-        @click="resumeExpanded = !resumeExpanded"
-      >
-        {{ resumeExpanded ? '收起' : `还有 ${activeSessions.length - 1} 个未完成 · 展开查看` }}
-      </button>
-    </section>
+    <!-- 灵犀感知层（设计 11）：一句「读过你」的招呼，推理不追问、给选择留出口、命中才出现 -->
+    <p v-if="presenceHint" class="presence">{{ presenceHint }}</p>
 
-    <!-- 智能开一题：不指定题，后端按画像挑你最该补的弱点（系统帮你挑） -->
-    <button class="smart-open" @click="start()">
-      <span class="smart-open-main">🎲 智能开一题</span>
+    <!-- 主角：开一道新题（不指定题，后端按画像/随机挑）。大厅唯一焦点。 -->
+    <button class="smart-open hero" @click="start()">
+      <span class="smart-open-main">智能开一题</span>
       <span class="smart-open-sub">让知返按你的画像，挑一道最该补的</span>
     </button>
 
-    <!-- 模式切换 -->
-    <div class="mode-tabs">
-      <button :class="['mode-tab', { on: lobbyMode === 'smart' }]" @click="lobbyMode = 'smart'">✦ 智能推荐</button>
-      <button :class="['mode-tab', { on: lobbyMode === 'browse' }]" @click="lobbyMode = 'browse'">浏览全部题目</button>
-    </div>
+    <!-- 安静入口：推荐与题库搬去能力画像（IA 见 doc 10，落地下一轮），这里先指过去 -->
+    <RouterLink to="/profile" class="browse-link">查看推荐与题库 →</RouterLink>
 
-    <!-- 智能推荐：只给少数几题 + 推荐理由 -->
-    <div v-if="lobbyMode === 'smart'" class="smart">
-      <p v-if="recsLoading" class="hint">正在根据你的能力画像生成推荐…</p>
-      <p v-else-if="!recs.length" class="hint">暂时没有可推荐的题目——你可能已经把现有题目都内化了，去「浏览全部题目」复习吧。</p>
-      <div v-else class="rec-list">
-        <button v-for="(r, i) in recs" :key="r.id" :class="['rec-card', { featured: i === 0 }]" @click="start(r.id)">
-          <div class="rec-main">
-            <span class="rec-reason">{{ i === 0 ? '🎯 ' : '' }}{{ r.reason }}</span>
-            <span class="rec-name">{{ r.name }}</span>
-            <div class="rec-meta">
-              <span class="diff-badge">{{ r.difficulty }}</span>
-              <span v-for="kp in r.knowledge_points" :key="kp" class="kp-tag">{{ kp }}</span>
-              <span v-if="r.state !== '未接触'" class="state-chip">{{ r.state }}</span>
+    <!-- 档案面板：未完成关卡（接着做）。点标题旁「接着做」按钮打开。复用 resume/abandon，不改逻辑。 -->
+    <div v-if="archiveOpen" class="archive-overlay" @click.self="archiveOpen = false">
+      <div class="archive-panel">
+        <div class="archive-head">
+          <h3>接着做</h3>
+          <button class="archive-close" aria-label="关闭" @click="archiveOpen = false">×</button>
+        </div>
+        <p class="archive-sub">没做完的题都在这儿，想接着做随时回来。</p>
+        <div v-for="s in activeSessions" :key="s.session_id" class="resume-card">
+          <div class="resume-info">
+            <span class="resume-name">{{ s.name }}</span>
+            <span class="resume-stage">上次停在：{{ s.stage }}</span>
+            <span class="resume-time">{{ relTime(s.last_active_at) }}</span>
+          </div>
+          <div v-if="abandoning !== s.session_id" class="resume-actions">
+            <button class="resume-go" @click="resume(s.session_id)">继续 →</button>
+            <button class="resume-drop" @click="abandoning = s.session_id">放弃</button>
+          </div>
+          <div v-else class="resume-confirm">
+            <span>放弃后不会删除你的学习记录，只是不再出现在「接着做」里。确认放弃吗？</span>
+            <div class="resume-confirm-btns">
+              <button class="resume-drop-yes" @click="abandon(s.session_id)">放弃</button>
+              <button class="resume-keep" @click="abandoning = null">算了，继续做</button>
             </div>
           </div>
-          <span class="rec-cta">{{ i === 0 ? '开始挑战 →' : '挑战 →' }}</span>
-        </button>
-      </div>
-      <p class="smart-foot">想自己挑？切到「浏览全部题目」，{{ patterns.length }} 道题按类型分好了组。</p>
-    </div>
-
-    <!-- 自己挑选：按类型分组，默认只展开第一组 -->
-    <template v-else>
-      <section v-for="g in grouped" :key="g.category" class="cat-group">
-        <button class="cat-group-head" @click="toggleCat(g.category)">
-          <span class="cat-caret" :class="{ open: openCats[g.category] }">▸</span>
-          <span class="cat-title">{{ g.label }}<span class="cat-count">{{ g.items.length }} 题</span></span>
-          <span class="cat-desc">{{ g.desc }}</span>
-        </button>
-        <div v-show="openCats[g.category]" class="cards">
-          <button v-for="p in g.items" :key="p.id" class="card" @click="start(p.id)">
-            <div class="card-head">
-              <h3>{{ p.name }}</h3>
-              <span class="diff-badge">{{ p.difficulty }}</span>
-            </div>
-            <div v-if="p.knowledge_points?.length" class="kp-tags">
-              <span v-for="kp in p.knowledge_points" :key="kp" class="kp-tag">{{ kp }}</span>
-            </div>
-            <span class="card-cta">开始挑战 →</span>
-          </button>
         </div>
-      </section>
-    </template>
+      </div>
+    </div>
   </div>
 
   <!-- 做题 -->
@@ -891,7 +864,24 @@ function quit() {
 .hint { color: var(--muted); margin: 0; line-height: 1.8; font-size: 15px; }
 .hint b { color: var(--text); font-weight: 600; }
 
-/* 模式切换 */
+/* 标题 + 接着做 文字按钮（稳定，不用图标库/SVG） */
+.lobby-title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.archive-btn {
+  font-size: 13px; color: var(--muted); font-family: inherit; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+  padding: 4px 14px; transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.archive-btn:hover { color: var(--primary); border-color: #dac9b8; background: var(--accent-soft); }
+.lobby-sub { color: var(--muted); margin: 0; font-size: 15px; }
+
+/* 灵犀感知层：一句安静的「读过你」，柔和不抢焦点（设计 11） */
+.presence {
+  margin: 0 0 18px; padding: 11px 15px;
+  border-left: 3px solid #e0cdbb; border-radius: 0 8px 8px 0;
+  background: rgba(193, 95, 60, 0.05);
+  font-size: 14.5px; color: var(--text); line-height: 1.7;
+}
+
 /* 智能开一题：系统按画像帮你挑最该补的 */
 .smart-open {
   display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
@@ -905,6 +895,32 @@ function quit() {
 }
 .smart-open-main { font-family: var(--serif); font-size: 17px; font-weight: 600; color: var(--primary-dark); }
 .smart-open-sub { font-size: 13px; color: var(--muted); }
+/* 主角放大居中（大厅唯一焦点） */
+.smart-open.hero { align-items: center; text-align: center; gap: 5px; padding: 26px 28px; margin-bottom: 14px; }
+.smart-open.hero .smart-open-main { font-size: 21px; }
+
+/* 安静入口：查看推荐与题库（跳能力画像） */
+.browse-link {
+  display: inline-block; text-decoration: none;
+  font-size: 14px; color: var(--muted); padding: 4px 2px; transition: color 0.15s;
+}
+.browse-link:hover { color: var(--text); }
+
+/* 档案面板：未完成关卡（接着做） */
+.archive-overlay {
+  position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+  padding: 24px; background: rgba(43, 41, 36, 0.35);
+}
+.archive-panel {
+  width: 100%; max-width: 480px; max-height: 80vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 24px;
+  box-shadow: 0 24px 60px -28px rgba(43, 41, 36, 0.45);
+}
+.archive-head { display: flex; align-items: center; justify-content: space-between; }
+.archive-head h3 { font-family: var(--serif); font-size: 18px; font-weight: 600; color: var(--text); margin: 0; }
+.archive-close { border: none; background: none; font-size: 22px; line-height: 1; color: var(--muted); cursor: pointer; }
+.archive-close:hover { color: var(--text); }
+.archive-sub { font-size: 13px; color: var(--muted); margin: 6px 0 16px; }
 
 /* 接着做：未完成关卡，最近一局置顶高亮 */
 .resume { margin-bottom: 26px; }
