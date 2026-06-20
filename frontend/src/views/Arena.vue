@@ -1052,7 +1052,11 @@ function quit() {
   gap: 20px; align-items: stretch;
 }
 .code-column { min-width: 0; display: flex; flex-direction: column; gap: 12px; height: 100%; }
-.code-panel { flex: 1 1 auto; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+.code-panel {
+  flex: 1 1 auto; display: flex; flex-direction: column; position: relative; overflow: hidden;
+  /* 扁平化：去盒子，融进背景；代码框自己保留纸面质感作为唯一左侧表面 */
+  background: transparent; border: none; border-radius: 0; padding: 0; box-shadow: none;
+}
 .explain-panel { max-height: 560px; overflow-y: auto; }
 .explain-body { display: flex; flex-direction: column; gap: 14px; }
 .tool-shelf { padding: 0 4px; }
@@ -1195,8 +1199,9 @@ function quit() {
 
 /* —— 做题页重组（doc 10 Part 2）：知返为右栏主角 —— */
 .tutor-panel {
-  min-height: 650px; height: 100%; padding: 22px 24px; display: flex; flex-direction: column;
-  box-shadow: 0 8px 28px -24px rgba(86, 55, 38, 0.45);
+  min-height: 650px; height: 100%; padding: 0; display: flex; flex-direction: column;
+  /* 扁平化：去盒子，知返+对话直接坐在背景上 */
+  background: transparent; border: none; border-radius: 0; box-shadow: none;
 }
 .tutor-head {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
