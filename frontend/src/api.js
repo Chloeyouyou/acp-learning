@@ -13,13 +13,48 @@ async function request(method, path, body) {
   return res.json()
 }
 
+// ---- 轻量身份（无密码/无后端鉴权）：学号即稳定 student_id，存 localStorage ----
+// 解决旧的随机 student_id 一清缓存/换设备就丢进度的问题。
+const ID_KEY = 'student_id'
+const NAME_KEY = 'student_name'
+const CHOSEN_KEY = 'identity_chosen'  // '1' = 用户已显式确认过身份（区分旧的随机 id）
+
 export function getStudentId() {
-  let id = localStorage.getItem('student_id')
-  if (!id) {
-    id = 'stu_' + Math.random().toString(36).slice(2, 8)
-    localStorage.setItem('student_id', id)
-  }
-  return id
+  return localStorage.getItem(ID_KEY) || ''
+}
+
+export function getStudentName() {
+  return localStorage.getItem(NAME_KEY) || ''
+}
+
+// 是否已确立身份（已显式选过 + 有 id）。否则 App 弹身份页。
+export function hasIdentity() {
+  return localStorage.getItem(CHOSEN_KEY) === '1' && !!getStudentId()
+}
+
+// 本设备遗留的旧随机 id（有 id 但没显式选过身份）——用于迁移提示；新访客返回 ''
+export function getLegacyId() {
+  if (localStorage.getItem(CHOSEN_KEY) === '1') return ''
+  return getStudentId()
+}
+
+// 用学号（+可选姓名）确立身份
+export function setIdentity(id, name = '') {
+  localStorage.setItem(ID_KEY, id)
+  if (name) localStorage.setItem(NAME_KEY, name)
+  else localStorage.removeItem(NAME_KEY)
+  localStorage.setItem(CHOSEN_KEY, '1')
+}
+
+// 沿用本设备已有记录（旧随机 id）：保留 id，仅标记为已选 + 可补姓名
+export function keepLegacyIdentity(name = '') {
+  if (name) localStorage.setItem(NAME_KEY, name)
+  localStorage.setItem(CHOSEN_KEY, '1')
+}
+
+// 切换身份：撤销「已选」标记，重新进入身份页（不删旧 id，仍作迁移候选）
+export function clearIdentityChoice() {
+  localStorage.removeItem(CHOSEN_KEY)
 }
 
 export const api = {
