@@ -55,14 +55,6 @@ const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否�
 // A+B 空间管理：终端默认折叠成一条状态条、逐行讲解做成代码区上滑抽屉
 const consoleOpen = ref(false)       // 终端默认折叠（只剩状态条），点开看完整 traceback
 const thoughtOpen = ref(true)        // （保留，已不再用于折叠四步线）
-// 右栏细进度：观察→猜测→验证→总结（纯展示，按当前阶段高亮）
-const PROGRESS = [
-  { key: '观察', stages: ['①发现'] },
-  { key: '猜测', stages: ['②定位', '③归因', '④修复'] },
-  { key: '验证', stages: ['⑤验证'] },
-  { key: '总结', stages: ['⑥内化'] },
-]
-const progressIdx = computed(() => PROGRESS.findIndex((p) => p.stages.includes(session.stage)))
 const walkOpen = ref(false)          // 逐行讲解抽屉是否打开（覆盖在代码上）
 const walkTall = ref(false)          // 抽屉高度档：false=60% / true=90%
 const walkthrough = ref('')          // 逐行讲解文本（点按钮自动生成）
@@ -546,15 +538,6 @@ function quit() {
 
   <!-- 做题 -->
   <div v-else class="workspace">
-    <!-- 开题前的小检查：帮手语气、非评价、可忽略、本题只首次弹 -->
-    <div v-if="intervention" class="precheck">
-      <div class="precheck-main">
-        <div class="precheck-title">💡 开题前的小检查</div>
-        <div class="precheck-body">这类题里，先多看一眼：{{ intervention.advice }}</div>
-      </div>
-      <button class="precheck-close" @click="dismissIntervention" aria-label="收起">×</button>
-    </div>
-
     <div class="cols">
       <div class="code-column">
       <div class="panel code-panel">
@@ -586,20 +569,13 @@ function quit() {
         </div>
 
         <div v-if="session.done" class="banner banner-done">
-          🎉 <b>本关完成！</b>该知识点已升级为「已内化」（成因 / 定位 / 迁移复述通过）。去能力画像看看，或挑战下一题。
+          🎉 <b>本关完成！</b>知识点已内化。
           <div v-if="session.variant" class="variant-offer">
-            <span class="variant-label">想检验是否真的学会？试试这道<b>同类变式题</b>——独立解出才算迁移到位：</span>
-            <button class="primary variant-btn" @click="start(session.variant.id)">
-              挑战变式：{{ session.variant.name }} →
-            </button>
+            <button class="primary variant-btn" @click="start(session.variant.id)">挑战变式：{{ session.variant.name }} →</button>
           </div>
         </div>
         <div v-else-if="session.fixed" class="banner banner-fixed">
-          <div class="bf-title">代码修对了 · 进度到 ⑤验证（还没结束）</div>
-          <div class="bf-body">
-            这只是<b>「已解决」</b>——会改 ≠ 真懂。<b>「已解决」≠「已掌握」</b>。
-            接着和导师走完 ⑤验证（边界测试）与 ⑥内化（讲清成因/定位/迁移），知识点才升级为「已内化」，这一关才算真正学会。
-          </div>
+          ✓ 代码修对了——接着到右边和知返走完<b>验证</b>、<b>内化</b>，这关才算真学会。
         </div>
 
         <!-- 逐行讲解抽屉：从代码区底部上滑、覆盖代码下部，不撑高页面；两档高度 + 关闭 -->
@@ -692,17 +668,8 @@ function quit() {
             <span class="tutor-stage">现在 · {{ session.stage.slice(1) }}</span>
           </div>
           <div class="tutor-head-r">
-            <span class="hint-level">提示 {{ session.hintLevel }}</span>
             <button class="quit-btn" @click="quit">退出</button>
           </div>
-        </div>
-
-        <!-- 细进度：观察→猜测→验证→总结（纯展示，按当前阶段高亮；doc 10） -->
-        <div class="progress-line">
-          <template v-for="(p, i) in PROGRESS" :key="p.key">
-            <span :class="['pstep', { on: i === progressIdx, done: i < progressIdx }]">{{ p.key }}</span>
-            <span v-if="i < PROGRESS.length - 1" class="parrow">›</span>
-          </template>
         </div>
 
         <!-- 观察卡：首次运行后、①发现阶段出现的内联小卡（函数不变，只是从四步线挪出来） -->
@@ -733,10 +700,6 @@ function quit() {
           </div>
         </div>
 
-        <div class="tutor-divider">
-          <span class="tutor-avatar">返</span>
-          <div><b class="tutor-poem">实迷途其未远，觉今是而昨非</b></div>
-        </div>
         <div ref="chatBox" class="chat">
           <div v-for="(m, i) in visibleMessages" :key="i" :class="['msg', m.role]">
             <div v-if="m.role === 'tutor'" class="avatar tutor-avatar">知</div>
@@ -1104,7 +1067,15 @@ function quit() {
 }
 @media (max-width: 900px) {
   .cols { grid-template-columns: 1fr; }
-  .thinking-panel { min-height: auto; }
+  .tutor-panel { min-height: auto; }
+}
+/* 宽屏：做题页锁进一屏高度，左栏与聊天各自内部滚动——整页不下拉 */
+@media (min-width: 901px) {
+  .workspace { height: calc(100vh - 148px); min-height: 520px; }
+  .cols { height: 100%; }
+  .code-column { height: 100%; overflow-y: auto; }
+  .tutor-panel { height: 100%; min-height: 0; }
+  .chat { min-height: 0; }
 }
 /* 手机端细节 */
 @media (max-width: 640px) {
