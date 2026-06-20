@@ -553,7 +553,7 @@ function quit() {
     </button>
 
     <!-- 安静入口：推荐与题库搬去能力画像（IA 见 doc 10，落地下一轮），这里先指过去 -->
-    <RouterLink to="/profile" class="browse-link">查看推荐与题库 →</RouterLink>
+    <RouterLink :to="{ path: '/profile', query: { tab: '推荐' } }" class="browse-link">查看推荐与题库 →</RouterLink>
 
     <!-- 档案面板：未完成关卡（接着做）。点标题旁「接着做」按钮打开。复用 resume/abandon，不改逻辑。 -->
     <div v-if="archiveOpen" class="archive-overlay" @click.self="archiveOpen = false">
