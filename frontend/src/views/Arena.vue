@@ -9,44 +9,13 @@ const route = useRoute()
 const router = useRouter()
 
 const STAGES = ['①发现', '②定位', '③归因', '④修复', '⑤验证', '⑥内化']
-
-// Bug 分类：中文名 + 一句话说明（决定大厅分组的顺序与文案）
-const CATEGORY_META = {
-  boundary: { label: '边界类', desc: '数组越界、差一错误——和「范围」打交道时最常见的坑。' },
-  loop: { label: '循环类', desc: '循环次数、终止条件、累加逻辑里的细节失误。' },
-  null: { label: '空值类', desc: '空对象、缺字段、None——没防住「什么都没有」的情况。' },
-  arithmetic: { label: '算术类', desc: '除零、溢出等数值运算中的边界问题。' },
-}
-const CATEGORY_ORDER = ['boundary', 'loop', 'null', 'arithmetic']
-function catMeta(c) {
-  return CATEGORY_META[c] || { label: c, desc: '' }
-}
 function stageIndex(s) { return STAGES.indexOf(s) }
 
-// 按类型分组（固定顺序，组内按难度升序），降低「一次 15 张卡」的密度
-const grouped = computed(() => {
-  const byCat = {}
-  for (const p of patterns.value) (byCat[p.category] ||= []).push(p)
-  const order = [...CATEGORY_ORDER, ...Object.keys(byCat).filter((c) => !CATEGORY_ORDER.includes(c))]
-  return order
-    .filter((c) => byCat[c]?.length)
-    .map((c) => ({
-      category: c,
-      ...catMeta(c),
-      items: byCat[c].sort((a, b) => (a.difficulty || '').localeCompare(b.difficulty || '')),
-    }))
-})
 
-
-const patterns = ref([])
-const lobbyMode = ref('smart')   // 'smart' 智能推荐 | 'browse' 自己挑选
-const recs = ref([])             // 个性化推荐（后端按能力画像生成）
-const recsLoading = ref(false)
+const patterns = ref([])         // 题库（仅供做题页「练前小灶」按 pattern_id 查知识点；大厅不再铺题库）
 const activeSessions = ref([])   // 未完成关卡（接着做）；后端 active-sessions 是唯一真相，按活跃度倒序，第一条置顶高亮
 const abandoning = ref(null)     // 正在二次确认「放弃」的 session_id（null=没有确认框）
-const resumeExpanded = ref(false) // 「接着做」是否展开其余未完成关卡（默认只露最近一局，页面态不持久化）
 const archiveOpen = ref(false)   // 档案面板（未完成关卡）是否打开——大厅「接着做」文字按钮触发
-const openCats = reactive({})    // 自己挑选模式：哪些分组已展开（默认只开第一组）
 const session = reactive({
   id: null, patternId: null, code: '', task: '', stage: '①发现', hintLevel: 'L0',
   fixed: false,      // 代码已通过测试（进入⑤验证），但本关尚未结束
@@ -56,9 +25,6 @@ const session = reactive({
 })
 const originalCode = ref('')
 const codeChanged = computed(() => session.code !== originalCode.value)
-// 接着做：默认只显示最近一局，展开后显示全部（页面态，不持久化）
-const visibleResume = computed(() => resumeExpanded.value ? activeSessions.value : activeSessions.value.slice(0, 1))
-
 // 灵犀感知层（设计 11）：从现成信号推一句「读过你」的招呼，至多一条；无信号返回 null。
 // 纯派生、只读、不追问、不诊断、给选择留出口。第一版只用大厅已有的 activeSessions。
 const presenceHint = computed(() => {
@@ -187,7 +153,6 @@ const primerConcepts = computed(() => {
     mastered: masteredKps.value.has(kp),
   }))
 })
-function toggleCat(c) { openCats[c] = !openCats[c] }
 const messages = ref([]) // {role: 'student'|'tutor'|'system', text}
 const draft = ref('')
 const summaryDraft = ref('')
@@ -199,11 +164,9 @@ const chatBox = ref(null)
 onMounted(async () => {
   try {
     patterns.value = await api.listPatterns()
-    if (grouped.value[0]) openCats[grouped.value[0].category] = true  // 默认只展开第一组
   } catch (e) {
     error.value = '无法连接后端：' + e.message
   }
-  loadRecs()
   loadMastered()
   // 从能力画像「做变式巩固」跳来：自动开始指定关卡（优先于续做）
   if (route.query.start) {
@@ -277,17 +240,6 @@ async function abandon(sessionId) {
     error.value = '放弃失败：' + e.message
   } finally {
     abandoning.value = null
-  }
-}
-
-async function loadRecs() {
-  recsLoading.value = true
-  try {
-    recs.value = await api.getRecommendations()
-  } catch (e) {
-    recs.value = []
-  } finally {
-    recsLoading.value = false
   }
 }
 
@@ -518,7 +470,6 @@ function quit() {
   // 退出回大厅：会话在后端仍是 active（未放弃），会重新出现在「接着做」里。
   session.id = null
   messages.value = []
-  loadRecs()           // 闯关后能力可能变化，回大厅刷新个性化推荐
   loadActiveSessions() // 刚退出的这道题会回到「接着做」列表
 }
 </script>
