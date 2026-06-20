@@ -52,9 +52,17 @@ function toggleExplain() {
   localStorage.setItem('arena_panels', JSON.stringify({ explain: showExplain.value, tutor: true }))
 }
 const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否展开（默认收起，需要的人点开）
-// A+B 空间管理：终端可折叠、思考过程可折叠、逐行讲解做成代码区上滑抽屉
-const consoleOpen = ref(true)        // 终端展开/折叠（折叠后只剩状态条）
-const thoughtOpen = ref(true)        // 「我的思考过程」四步区展开/折叠
+// A+B 空间管理：终端默认折叠成一条状态条、逐行讲解做成代码区上滑抽屉
+const consoleOpen = ref(false)       // 终端默认折叠（只剩状态条），点开看完整 traceback
+const thoughtOpen = ref(true)        // （保留，已不再用于折叠四步线）
+// 右栏细进度：观察→猜测→验证→总结（纯展示，按当前阶段高亮）
+const PROGRESS = [
+  { key: '观察', stages: ['①发现'] },
+  { key: '猜测', stages: ['②定位', '③归因', '④修复'] },
+  { key: '验证', stages: ['⑤验证'] },
+  { key: '总结', stages: ['⑥内化'] },
+]
+const progressIdx = computed(() => PROGRESS.findIndex((p) => p.stages.includes(session.stage)))
 const walkOpen = ref(false)          // 逐行讲解抽屉是否打开（覆盖在代码上）
 const walkTall = ref(false)          // 抽屉高度档：false=60% / true=90%
 const walkthrough = ref('')          // 逐行讲解文本（点按钮自动生成）
@@ -547,33 +555,14 @@ function quit() {
       <button class="precheck-close" @click="dismissIntervention" aria-label="收起">×</button>
     </div>
 
-    <div class="stage-bar panel">
-      <div class="current-stage">
-        <span class="current-stage-label">当前阶段</span>
-        <b>{{ session.stage }}</b>
-        <span>· {{ session.stage === '③归因' ? '正在弄清为什么出错' :
-          session.stage === '④修复' ? '把原因变成自己的修复' :
-          session.stage === '⑤验证' ? '检查修复在边界情况是否可靠' :
-          session.stage === '⑥内化' ? '把这次经验变成下次的方法' :
-          session.stage === '②定位' ? '顺着线索找到可疑位置' : '先看清代码实际发生了什么' }}</span>
-      </div>
-      <div class="stage-meta">
-        <span class="hint-level">提示级别 <b>{{ session.hintLevel }}</b></span>
-        <button @click="quit">退出关卡</button>
-      </div>
-    </div>
-
     <div class="cols">
       <div class="code-column">
       <div class="panel code-panel">
         <div class="panel-title">
           <span class="title-text">代码</span>
-          <span class="code-actions">
-            <button class="walk-trigger" @click="openWalk">📖 逐行讲解</button>
-            <button class="primary" :disabled="running || submitting || session.fixed" @click="runAndCheck">
-              {{ running || submitting ? '运行中…' : '▶ 运行' }}
-            </button>
-          </span>
+          <button class="primary" :disabled="running || submitting || session.fixed" @click="runAndCheck">
+            {{ running || submitting ? '运行中…' : '▶ 运行' }}
+          </button>
         </div>
         <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
 
@@ -639,15 +628,16 @@ function quit() {
         </div>
       </div>
 
-      <!-- 解释降为代码旁的按需工具，不与思考主线并列。 -->
+      <!-- 看不懂代码？一个轻入口，合并 逐行讲解 + 认符号 + 补概念（左侧主按钮只留运行） -->
       <div class="tool-shelf">
         <button :class="['tool-trigger', { open: showExplain }]" @click="toggleExplain">
-          <span><b>卡住时的小工具</b> · 认符号、补概念（逐行讲解在代码区右上「📖」）</span>
+          <span><b>看不懂代码？</b> · 逐行讲解、认符号、补概念</span>
           <span>{{ showExplain ? '收起 ↑' : '打开 ↓' }}</span>
         </button>
       </div>
       <div v-if="showExplain" class="panel explain-panel">
         <div class="explain-body">
+          <button class="walk-trigger-inline" @click="openWalk">📖 逐行讲解（在代码上滑出）</button>
           <!-- 认符号 -->
           <div v-if="visibleBricks.length" class="syntax-box">
             <button class="syntax-head" @click="showSyntax = !showSyntax">
@@ -694,81 +684,53 @@ function quit() {
       </div>
       </div>
 
-      <div class="panel thinking-panel">
-        <div class="thinking-head">
-          <div>
-            <div class="thinking-kicker">这不是作业，写不出来也可以直接问知返</div>
-            <h3>我的思考过程</h3>
+      <div class="panel tutor-panel">
+        <!-- 知返为右栏主角：标题 + 当前阶段 + 退出（stage-bar 已删，退出挪到这） -->
+        <div class="tutor-head">
+          <div class="tutor-head-l">
+            <h3>知返</h3>
+            <span class="tutor-stage">现在 · {{ session.stage.slice(1) }}</span>
           </div>
-          <span class="thinking-stage">现在 · {{ session.stage.slice(1) }}</span>
-          <button class="thought-toggle" @click="thoughtOpen = !thoughtOpen">{{ thoughtOpen ? '收起 ▲' : '展开 ▼' }}</button>
+          <div class="tutor-head-r">
+            <span class="hint-level">提示 {{ session.hintLevel }}</span>
+            <button class="quit-btn" @click="quit">退出</button>
+          </div>
         </div>
 
-        <div v-show="thoughtOpen" class="thought-line">
-          <section :class="['thought-step', { active: session.stage === '①发现', filled: observationRecord?.observation }]">
-            <span class="thought-dot">1</span>
-            <div class="thought-content">
-              <div class="thought-title">观察 <span>运行后，实际发生了什么？</span></div>
-              <div v-if="observationRecord?.observation" class="thought-note">
-                {{ observationRecord.observation }}
-              </div>
-              <div v-else-if="!observationPending" class="thought-empty">
-                点一次“运行并检查”，这里会帮你接住真实结果。
-              </div>
-              <div v-if="observationPending" class="obs-card">
-                <div class="obs-hint">对照左边的真实运行结果，随手勾一勾。可以留空，也可以直接请知返一起看。</div>
-                <div class="obs-options">
-                  <label v-for="(_, k) in obsChecks" :key="k" class="obs-check">
-                    <input type="checkbox" v-model="obsChecks[k]" /> {{ k }}
-                  </label>
-                </div>
-              </div>
-            </div>
-          </section>
+        <!-- 细进度：观察→猜测→验证→总结（纯展示，按当前阶段高亮；doc 10） -->
+        <div class="progress-line">
+          <template v-for="(p, i) in PROGRESS" :key="p.key">
+            <span :class="['pstep', { on: i === progressIdx, done: i < progressIdx }]">{{ p.key }}</span>
+            <span v-if="i < PROGRESS.length - 1" class="parrow">›</span>
+          </template>
+        </div>
 
-          <section :class="['thought-step', { active: ['②定位', '③归因', '④修复'].includes(session.stage), filled: observationRecord?.guess }]">
-            <span class="thought-dot">2</span>
-            <div class="thought-content">
-              <div class="thought-title">猜测 <span>问题可能在哪里，为什么？</span></div>
-              <div v-if="observationRecord?.guess" class="thought-note">
-                {{ observationRecord.guess }}
-              </div>
-              <template v-else-if="observationPending">
-                <textarea v-model="obsGuess" class="obs-guess" rows="2"
-                          placeholder="问题可能出在……（说不上来可以留空）" />
-                <div class="obs-actions">
-                  <button class="primary" :disabled="sending" @click="submitObservation">记下来，再听知返怎么想 →</button>
-                  <button class="obs-skip" :disabled="sending" @click="skipObservation">我看不懂，直接请知返帮助</button>
-                </div>
-              </template>
-              <div v-else class="thought-empty">先凭感觉也可以，知返会陪你把猜测一点点变清楚。</div>
-            </div>
-          </section>
+        <!-- 观察卡：首次运行后、①发现阶段出现的内联小卡（函数不变，只是从四步线挪出来） -->
+        <div v-if="observationPending" class="inline-card">
+          <div class="ic-title">先记一笔：你观察到了什么？</div>
+          <div class="ic-hint">对照左边真实运行结果随手勾一勾，可留空，也可直接请知返一起看。</div>
+          <div class="obs-options">
+            <label v-for="(_, k) in obsChecks" :key="k" class="obs-check">
+              <input type="checkbox" v-model="obsChecks[k]" /> {{ k }}
+            </label>
+          </div>
+          <textarea v-model="obsGuess" class="ic-textarea" rows="2"
+                    placeholder="我猜问题可能出在……（说不上来可以留空）" />
+          <div class="ic-actions">
+            <button class="primary" :disabled="sending" @click="submitObservation">记下来，再听知返怎么想 →</button>
+            <button class="ic-skip" :disabled="sending" @click="skipObservation">我看不懂，直接请知返帮助</button>
+          </div>
+        </div>
 
-          <section :class="['thought-step', { active: session.stage === '⑤验证', filled: runResult || session.fixed }]">
-            <span class="thought-dot">3</span>
-            <div class="thought-content">
-              <div class="thought-title">验证 <span>什么结果能支持或推翻猜测？</span></div>
-              <div :class="['thought-note', { muted: !runResult && !session.fixed }]">{{ verificationNote }}</div>
-            </div>
-          </section>
-
-          <section :class="['thought-step', { active: session.stage === '⑥内化', filled: summaryRecord?.summary }]">
-            <span class="thought-dot">4</span>
-            <div class="thought-content">
-              <div class="thought-title">总结 <span>下次再遇到时，我想记住什么？</span></div>
-              <div v-if="summaryRecord?.summary" class="thought-note">{{ summaryRecord.summary }}</div>
-              <div v-else-if="session.stage === '⑥内化'" class="summary-compose">
-                <textarea v-model="summaryDraft" rows="2"
-                          placeholder="比如：这个 Bug 为什么发生、我是怎么定位的、下次先检查什么……" />
-                <div class="summary-actions">
-                  <button class="primary" :disabled="sending || !summaryDraft.trim()" @click="submitSummary">留下这句话</button>
-                  <span>也可以不写，直接在下面和知返聊。</span>
-                </div>
-              </div>
-              <div v-else class="thought-empty">走到最后，这里会自然长出一条属于你的经验。</div>
-            </div>
-          </section>
+        <!-- 总结卡：⑥内化阶段、还没留总结时出现 -->
+        <div v-else-if="session.stage === '⑥内化' && !summaryRecord?.summary" class="inline-card">
+          <div class="ic-title">最后一步：留一句给下次的自己</div>
+          <textarea v-model="summaryDraft" class="ic-textarea" rows="2"
+                    placeholder="比如：这个 Bug 为什么发生、我是怎么定位的、下次先检查什么……" />
+          <div class="ic-actions">
+            <button class="primary" :disabled="sending || !summaryDraft.trim()" @click="submitSummary">留下这句话</button>
+            <span class="ic-note">也可以不写，直接在下面和知返聊。</span>
+          </div>
         </div>
 
         <div class="tutor-divider">
@@ -1259,6 +1221,51 @@ function quit() {
   text-decoration: underline; padding: 0; cursor: pointer;
 }
 .obs-skip:hover { color: var(--primary); }
+
+/* —— 做题页重组（doc 10 Part 2）：知返为右栏主角 —— */
+.tutor-panel {
+  min-height: 650px; height: 100%; padding: 22px 24px; display: flex; flex-direction: column;
+  box-shadow: 0 8px 28px -24px rgba(86, 55, 38, 0.45);
+}
+.tutor-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding-bottom: 14px; border-bottom: 1px solid var(--border);
+}
+.tutor-head-l { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.tutor-head-l h3 { margin: 0; font-family: var(--serif); font-size: 21px; font-weight: 600; }
+.tutor-stage { padding: 3px 10px; border-radius: 999px; color: var(--primary-dark); background: var(--accent-soft); font-size: 12px; }
+.tutor-head-r { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.quit-btn { font-size: 13px; color: var(--muted); background: none; border: 1px solid var(--border); border-radius: 8px; padding: 4px 12px; cursor: pointer; }
+.quit-btn:hover { color: var(--text); border-color: #dac9b8; }
+
+/* 细进度：观察→猜测→验证→总结（纯展示） */
+.progress-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 13px 0; font-size: 13px; }
+.pstep { color: var(--muted); }
+.pstep.done { color: var(--primary-dark); }
+.pstep.on { color: var(--primary); font-weight: 600; }
+.parrow { color: #cdbfae; font-size: 12px; }
+
+/* 内联小卡：观察卡 / 总结卡 */
+.inline-card { margin-bottom: 14px; padding: 14px 16px; border-radius: 12px; background: var(--accent-soft); border: 1px solid #e0cdbb; }
+.ic-title { font-family: var(--serif); font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.ic-hint { font-size: 12.5px; color: var(--muted); line-height: 1.6; margin-bottom: 10px; }
+.ic-textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; background: #fffdf9; margin-top: 8px;
+  font-family: inherit; font-size: 13px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; outline: none;
+}
+.ic-textarea:focus { border-color: var(--primary); }
+.ic-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.ic-actions .primary { font-size: 12.5px; padding: 7px 12px; }
+.ic-skip { font-size: 12.5px; color: var(--muted); background: none; border: none; cursor: pointer; }
+.ic-skip:hover { color: var(--text); }
+.ic-note { color: var(--muted); font-size: 12px; }
+
+/* 「看不懂代码？」里的逐行讲解按钮 */
+.walk-trigger-inline {
+  font-size: 13px; color: var(--primary); background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 12px; cursor: pointer; margin-bottom: 12px;
+}
+.walk-trigger-inline:hover { border-color: var(--primary); }
 .variant-offer { margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0cdbb; display: flex; flex-direction: column; gap: 8px; }
 .variant-label { font-size: 13px; }
 .variant-btn { align-self: flex-start; }
