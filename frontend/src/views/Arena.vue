@@ -1321,25 +1321,19 @@ function quit() {
 .tutor-poem { font-family: var(--serif); font-size: 14.5px; color: var(--text); }
 .chat {
   min-height: 380px; flex: 1 1 380px; overflow-y: auto; display: flex; flex-direction: column;
-  gap: 12px; padding: 4px 3px 8px;
+  gap: 22px; padding: 8px 2px 12px;
 }
-.msg { display: flex; align-items: flex-end; gap: 9px; }
-.msg.student { justify-content: flex-end; }
-.msg .avatar { align-self: flex-start; }
-.bubble {
-  max-width: 88%; padding: 11px 14px; border-radius: 14px;
-  font-size: 14px; line-height: 1.7; white-space: pre-wrap;
-}
-.msg.tutor .bubble {
-  background: #f3eee4; color: var(--text); border-bottom-left-radius: 5px;
-}
+/* Claude chat 风：全宽堆叠、助手纯文本、用户浅色块、去头像 */
+.msg { display: block; }
+.msg .avatar { display: none; }
+.bubble { max-width: 100%; font-size: 15px; line-height: 1.78; white-space: pre-wrap; }
+.msg.tutor .bubble { background: transparent; color: var(--text); padding: 0; }
 .msg.student .bubble {
-  background: var(--primary); color: #fff; border-bottom-right-radius: 5px;
+  background: var(--accent-soft); color: var(--text); border-radius: 16px; padding: 12px 16px;
 }
-.msg.system { justify-content: center; }
 .msg.system .bubble {
-  background: transparent; color: var(--muted); font-size: 13px; max-width: 100%;
-  border: 1px solid var(--border); border-radius: 10px; text-align: center;
+  background: transparent; color: var(--muted); font-size: 13px; text-align: center;
+  border: none; max-width: 100%; padding: 0;
 }
 .typing { display: inline-flex; gap: 4px; align-items: center; }
 .typing span {
@@ -1350,7 +1344,14 @@ function quit() {
 .typing span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes blink { 0%, 60%, 100% { opacity: 0.25; } 30% { opacity: 1; } }
 
-.composer { display: flex; gap: 8px; margin-top: 12px; align-items: flex-end; }
-.composer textarea { resize: none; }
-.send-btn { align-self: stretch; }
+/* Claude 风输入框：圆角盒，内嵌无边框 textarea + 发送 */
+.composer {
+  display: flex; gap: 8px; margin-top: 14px; align-items: flex-end;
+  border: 1px solid var(--border); border-radius: 18px; padding: 8px 8px 8px 16px; background: var(--panel);
+}
+.composer textarea {
+  resize: none; border: none; background: transparent; outline: none;
+  flex: 1; padding: 6px 0; font-size: 14.5px; line-height: 1.6;
+}
+.send-btn { align-self: flex-end; border-radius: 12px; }
 </style>
