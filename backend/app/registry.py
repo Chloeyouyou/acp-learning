@@ -12,12 +12,13 @@ CAPABILITY_REGISTRY = {
     "Prompt_Design":        {"zh": "提示词设计", "dimension": "AI协作能力",  "weight": 0.30},
 }
 
-# MVP范围（02文档 §7）：导师LLM只允许产出这4类高置信度事件
+# LLM 允许产出的能力事件类型。Prompt_Design 随提问训练 P1-full 启用（04文档 §4.10 主 producer=llm_judge）。
 LLM_ALLOWED_CAPABILITIES = {
     "Root_Cause_Reasoning",
     "Hypothesis_Testing",
     "Independent_Debug",
     "AI_Verification",
+    "Prompt_Design",
 }
 
 DELTA_MIN, DELTA_MAX = -3, 3

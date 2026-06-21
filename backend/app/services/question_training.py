@@ -11,14 +11,20 @@ import uuid
 from sqlalchemy.orm import Session
 
 from ..config import TUTOR_MODEL
-from ..models import ExecutionEvent, now
-from . import tutor
+from ..models import Event, ExecutionEvent, now
+from . import event_engine, tutor
 
 # P1-lite 资产化用的命名空间常量（doc12）——确保对画像/成长轨迹双隐形
 QT_SOURCE = "qt_diagnose"
 QT_PATTERN_ID = "QUESTION_TRAINING"
 QT_KIND = "QT"
 CONFIDENCE_MIN = 0.7  # 短板统计的置信门槛（与画像同口径）
+
+# P1-full 计分（doc12 / 04文档 §4.9）
+QT_SESSION_PREFIX = "qtsess_"
+DAILY_POSITIVE_CAP = 6  # Prompt_Design 每日正向 delta 合计封顶（04文档 §5.5）
+# 三要素齐全度 → delta：3项+2 / 2项+1 / 1项0(不记) / 0项(纯"帮我看看")-1
+_DELTA_BY_FACTORS = {3: 2, 2: 1, 1: 0, 0: -1}
 
 # 预置场景：每个给一句背景，学生据此写提问。前端也用同一份（id 对齐）。
 SCENARIOS = {
@@ -220,3 +226,104 @@ def weakness_summary(db: Session, student_id: str, recent_n: int = 8) -> dict | 
         "miss_count": miss[worst_key],
         "sample_size": len(usable),
     }
+
+
+# ---- P1-full 计分（doc12 / 04文档 §4.9）：把诊断结果记成 Prompt_Design 能力事件，进画像。----
+# 走 event_engine.emit（confidence≥0.7 才进画像分，低置信入库不计分，沿用现有规则）。
+
+def _today(ts: str) -> str:
+    return (ts or "")[:10]   # ISO 时间戳取日期前缀 YYYY-MM-DD
+
+
+def _today_positive_sum(db: Session, student_id: str) -> int:
+    """今日已记的 Prompt_Design 正向 delta 合计（日上限用）。"""
+    today = now()[:10]
+    rows = (db.query(Event)
+            .filter_by(student_id=student_id, capability="Prompt_Design")
+            .all())
+    return sum(e.delta for e in rows if e.delta > 0 and _today(e.timestamp) == today)
+
+
+def _scored_same_prompt_today(db: Session, student_id: str, prompt: str) -> bool:
+    """今日是否已对完全相同的提问记过正向分（防复制粘贴刷分）。"""
+    today = now()[:10]
+    rows = (db.query(Event)
+            .filter_by(student_id=student_id, capability="Prompt_Design")
+            .all())
+    for e in rows:
+        if e.delta > 0 and _today(e.timestamp) == today \
+                and ((e.evidence or {}).get("refs") or {}).get("prompt") == prompt:
+            return True
+    return False
+
+
+# 泛泛求代办（甩锅式收尾）：命中则计分降一档（doc12 C 档）。
+_VAGUE_HANDOFF = ("帮我看看", "帮我看下", "帮我看一下", "帮看看", "看看哪", "看下哪",
+                  "看一下哪", "看看怎么", "帮我改", "帮我弄", "帮我搞定", "怎么办", "咋办", "怎么弄")
+# 明确协作请求：出现这类"请你判断/分析/解释/对比"的求助，不算泛泛求代办（避免误伤好提问）。
+_CLEAR_COLLAB = ("判断", "分析", "解释", "说明", "对比", "比较", "是不是", "是否", "还是", "为什么", "原因")
+
+
+def _is_vague_handoff(prompt: str) -> bool:
+    p = (prompt or "")
+    if not any(k in p for k in _VAGUE_HANDOFF):
+        return False
+    # 即便出现"帮我看看"，只要同时有明确协作请求（请你判断/分析/A还是B…），就不算泛泛
+    if any(k in p for k in _CLEAR_COLLAB):
+        return False
+    return True
+
+
+def score_diagnosis(db: Session, *, student_id: str, scenario_id: str, prompt: str, result: dict) -> Event | None:
+    """P1-full：把一次诊断记成 Prompt_Design 能力事件（进画像）。返回事件或 None（未记分）。
+    不记分的情况：匿名 / fallback降级 / 仅1要素(delta0) / 日上限已满 / 同句今日已记。
+    """
+    if not student_id or result.get("degraded"):
+        return None
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return None
+
+    n = sum([bool(result.get("phenomenon")), bool(result.get("context")), bool(result.get("expectation"))])
+    delta = _DELTA_BY_FACTORS[n]
+    if delta == 0:
+        return None  # 1 个要素：不奖不罚，不产事件（emit 也拒绝 delta=0）
+
+    # C 档：泛泛求代办（"帮我看看"且无明确协作请求）降一档。
+    # 2要素本应 +1 → 降为 0 不记；0要素保持 -1；三要素完整不受影响（已是完整提问）。
+    if _is_vague_handoff(prompt) and n == 2:
+        return None
+
+    if delta > 0:
+        # 日上限：超过 +6 不再记正向；防同句复制粘贴刷分
+        remaining = DAILY_POSITIVE_CAP - _today_positive_sum(db, student_id)
+        if remaining <= 0:
+            return None
+        if _scored_same_prompt_today(db, student_id, prompt):
+            return None
+        delta = min(delta, remaining)
+    # 负向（-1，纯"帮我看看"）不封顶（04文档 §5.5），照记
+
+    present = [_FACTOR_ZH[k] for k in _FACTOR_ZH if result.get(k)]
+    missing = [_FACTOR_ZH[k] for k in _FACTOR_ZH if not result.get(k)]
+    summary = (f"提问三要素 {n}/3（有：{'、'.join(present) or '无'}；"
+               f"缺：{'、'.join(missing) or '无'}）")
+    try:
+        return event_engine.emit(
+            db,
+            student_id=student_id,
+            session_id=f"{QT_SESSION_PREFIX}{student_id}",
+            capability="Prompt_Design",
+            delta=delta,
+            producer="llm_judge",
+            confidence=float(result.get("confidence", 0.7)),
+            evidence={
+                "type": "prompt_diagnosis",
+                "summary": summary,
+                "refs": {"scenario_id": scenario_id, "prompt": prompt,
+                         "factors": {k: bool(result.get(k)) for k in _FACTOR_ZH}},
+            },
+            context={"source_module": "question_training", "scenario_id": scenario_id},
+        )
+    except event_engine.EventRejected:
+        return None

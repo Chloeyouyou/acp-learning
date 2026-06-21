@@ -399,10 +399,14 @@ class DiagnoseResp(BaseModel):
 def diagnose_question(req: DiagnoseReq, db: Session = Depends(get_db)):
     """提问训练（docs/design/12）：诊断提问的三要素完整度 + 给分 + 反馈。
     只评价提问本身，不替学生答技术问题、不臆断运行结果。
-    P1-lite：诊断后沉淀为 ExecutionEvent 数字资产（只记事实、不计分、不动画像）。"""
+    P1-lite：诊断后沉淀为 ExecutionEvent 数字资产（只记事实）。
+    P1-full：再记一条 Prompt_Design 能力事件进画像（日上限/同句去重/低置信不计分）。"""
     result = question_training.diagnose(req.scenario_id, req.prompt)
     if req.student_id and req.prompt.strip():
         question_training.log_diagnosis(
+            db, student_id=req.student_id, scenario_id=req.scenario_id,
+            prompt=req.prompt, result=result)
+        question_training.score_diagnosis(
             db, student_id=req.student_id, scenario_id=req.scenario_id,
             prompt=req.prompt, result=result)
     return result

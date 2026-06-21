@@ -18,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import models  # noqa: F401  注册表到 Base.metadata
 from app.db import Base
-from app.models import ExecutionEvent, KnowledgeState, TutorSession
+from app.models import Event, ExecutionEvent, KnowledgeState, TutorSession
 from app.services import event_engine, mine_engine, pattern_validator, profile, review, sandbox, timeline
 
 _engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
@@ -459,6 +459,143 @@ def 提问训练_degraded与低置信不参与短板统计():
                         result={"phenomenon": False, "context": False, "expectation": False,
                                 "score": 12, "feedback": "f", "confidence": 0.5, "degraded": False})
     assert q.weakness_summary(db, "stu_qt4") is None
+
+
+def _qres(p, c, e, conf=0.9, degraded=False):
+    return {"phenomenon": p, "context": c, "expectation": e,
+            "score": 0, "feedback": "f", "confidence": conf, "degraded": degraded}
+
+
+@test
+def 提问训练计分_三要素全_Prompt_Design正分点亮AI协作维度():
+    from app.services import question_training as q
+    from app.services import profile
+    db = TestSession()
+    sid = "stu_sc1"
+    # 计分前：AI协作维度无分
+    before = profile.get_profile(db, sid)
+    ai_before = [d for d in before["dimensions"] if d["name"] == "AI协作能力"][0]
+    assert ai_before["score"] is None
+    # 三要素全 → +2
+    ev = q.score_diagnosis(db, student_id=sid, scenario_id="login",
+                           prompt="登录报NPE在第32行，期望登录成功", result=_qres(True, True, True))
+    assert ev is not None and ev.capability == "Prompt_Design" and ev.delta == 2
+    after = profile.get_profile(db, sid)
+    ai_after = [d for d in after["dimensions"] if d["name"] == "AI协作能力"][0]
+    assert ai_after["score"] is not None, after
+    assert after["vector"]["Prompt_Design"]["events_count"] == 1
+    db.close()
+
+
+@test
+def 提问训练计分_degraded和单要素不记分():
+    from app.services import question_training as q
+    db = TestSession()
+    assert q.score_diagnosis(db, student_id="s", scenario_id="login", prompt="x",
+                             result=_qres(True, True, True, degraded=True)) is None
+    assert q.score_diagnosis(db, student_id="s", scenario_id="login", prompt="只有现象",
+                             result=_qres(True, False, False)) is None  # 1要素→delta0→不记
+    assert db.query(Event).filter_by(student_id="s", capability="Prompt_Design").count() == 0
+    db.close()
+
+
+@test
+def 提问训练计分_纯帮我看看记负分():
+    from app.services import question_training as q
+    db = TestSession()
+    ev = q.score_diagnosis(db, student_id="s_neg", scenario_id="login", prompt="代码报错了帮我看看",
+                           result=_qres(False, False, False))
+    assert ev is not None and ev.delta == -1
+    db.close()
+
+
+@test
+def 提问训练计分_日上限6封顶():
+    from app.services import question_training as q
+    db = TestSession()
+    sid = "stu_cap"
+    # 不同提问各 +2，3 条到 +6
+    for i in range(3):
+        ev = q.score_diagnosis(db, student_id=sid, scenario_id="login",
+                               prompt=f"完整提问版本{i}", result=_qres(True, True, True))
+        assert ev is not None, i
+    # 第 4 条超上限 → 不记
+    assert q.score_diagnosis(db, student_id=sid, scenario_id="login",
+                             prompt="完整提问版本4", result=_qres(True, True, True)) is None
+    db.close()
+
+
+@test
+def 提问训练计分_同句今日不重复记():
+    from app.services import question_training as q
+    db = TestSession()
+    sid = "stu_dup"
+    p = "登录报NPE在第32行，期望登录成功"
+    assert q.score_diagnosis(db, student_id=sid, scenario_id="login", prompt=p, result=_qres(True, True, True)) is not None
+    assert q.score_diagnosis(db, student_id=sid, scenario_id="login", prompt=p, result=_qres(True, True, True)) is None
+    db.close()
+
+
+@test
+def 提问训练计分_泛泛求代办2要素降档不记():
+    from app.services import question_training as q
+    db = TestSession()
+    # 2要素(现象+上下文) + "帮我看看" → C档降为0、不记
+    ev = q.score_diagnosis(db, student_id="s_vague", scenario_id="login",
+                           prompt="登录报错了，帮我看看", result=_qres(True, True, False))
+    assert ev is None
+    assert db.query(Event).filter_by(student_id="s_vague", capability="Prompt_Design").count() == 0
+    db.close()
+
+
+@test
+def 提问训练计分_泛泛求代办0要素仍负分():
+    from app.services import question_training as q
+    db = TestSession()
+    ev = q.score_diagnosis(db, student_id="s_v0", scenario_id="login",
+                           prompt="帮我看看", result=_qres(False, False, False))
+    assert ev is not None and ev.delta == -1
+    db.close()
+
+
+@test
+def 提问训练计分_明确协作请求不算泛泛():
+    from app.services import question_training as q
+    # 含"判断/还是"等明确协作请求 → 不被当泛泛求代办（即使有"帮我"）
+    assert q._is_vague_handoff("可以帮我判断是接口返回结构问题，还是前端取值逻辑问题吗？") is False
+    assert q._is_vague_handoff("帮我看看") is True
+    assert q._is_vague_handoff("登录报错了，帮我看看") is True
+    db = TestSession()
+    # 2要素 + 明确协作请求 → 正常 +1（不降档）
+    ev = q.score_diagnosis(db, student_id="s_collab", scenario_id="login",
+                           prompt="登录报错，是接口问题还是前端取值问题？", result=_qres(True, True, False))
+    assert ev is not None and ev.delta == 1
+    db.close()
+
+
+@test
+def 提问训练计分_三要素完整不受泛泛影响():
+    from app.services import question_training as q
+    db = TestSession()
+    # 三要素齐全即便带"帮我看看"也照记 +2（已是完整提问）
+    ev = q.score_diagnosis(db, student_id="s_full3", scenario_id="login",
+                           prompt="登录报NPE在第32行，期望登录成功，帮我看看", result=_qres(True, True, True))
+    assert ev is not None and ev.delta == 2
+    db.close()
+
+
+@test
+def 提问训练计分_低置信入库但不进画像():
+    from app.services import question_training as q
+    from app.models import CapabilityScore
+    db = TestSession()
+    sid = "stu_lowconf"
+    ev = q.score_diagnosis(db, student_id=sid, scenario_id="login",
+                           prompt="低置信完整提问", result=_qres(True, True, True, conf=0.5))
+    assert ev is not None  # 事件入库
+    # 但 confidence<0.7 不进画像分
+    assert db.query(CapabilityScore).filter_by(student_id=sid, capability="Prompt_Design").first() is None
+    db.close()
 
 
 def main():
