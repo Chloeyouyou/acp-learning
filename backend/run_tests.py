@@ -385,6 +385,82 @@ def 提问训练_fallback结构完整且不崩():
     assert r["degraded"] is True and r["confidence"] == 0.0
 
 
+@test
+def 提问训练_资产化落ExecutionEvent且命名空间正确():
+    from app.services import question_training as q
+    db = TestSession()
+    r = {"phenomenon": True, "context": True, "expectation": False, "score": 66,
+         "feedback": "现象上下文已清，缺预期", "confidence": 0.9, "degraded": False}
+    ev = q.log_diagnosis(db, student_id="stu_qt1", scenario_id="login", prompt="登录登不上去", result=r)
+    assert ev is not None
+    row = db.query(ExecutionEvent).filter_by(student_id="stu_qt1").one()
+    assert row.source == "qt_diagnose"
+    assert row.pattern_id == "QUESTION_TRAINING"
+    assert row.kind == "QT"
+    assert row.knowledge_points == []                    # 空 kp → 对画像隐形
+    assert row.session_id == "qtsess_stu_qt1"            # 合成 session → 对轨迹隐形
+    assert row.meta["scenario_id"] == "login" and row.meta["score"] == 66
+    assert row.meta["expectation"] is False
+    db.close()
+
+
+@test
+def 提问训练_资产不进画像不进成长轨迹():
+    from app.services import question_training as q
+    from app.services import profile, timeline
+    db = TestSession()
+    # 先给该生建一个真实知识点状态 + 写若干 qt 资产
+    profile.update_knowledge_state(db, student_id="stu_qt2", pattern_id="BP-X",
+                                   knowledge_points=["循环"], new_state="已接触")
+    for _ in range(4):
+        q.log_diagnosis(db, student_id="stu_qt2", scenario_id="login", prompt="登录登不上去",
+                        result={"phenomenon": True, "context": True, "expectation": False,
+                                "score": 66, "feedback": "缺预期", "confidence": 0.9, "degraded": False})
+    # 画像掌握度里"循环"的 evidence_count 不应被 qt 事件抬高（qt 是空 kp）
+    mastery = profile.knowledge_mastery(db, "stu_qt2")
+    loop = [m for m in mastery if m["kp"] == "循环"]
+    assert loop and loop[0]["evidence_count"] == 0, loop
+    # 成长轨迹不应出现 qt 事件
+    blob = str(timeline.build_timeline(db, "stu_qt2"))
+    assert "qt_diagnose" not in blob and "QUESTION_TRAINING" not in blob
+    db.close()
+
+
+@test
+def 提问训练_短板统计样本不足返回None_够了返回最常漏():
+    from app.services import question_training as q
+    db = TestSession()
+    # 2 条 < 门槛(3) → None
+    for _ in range(2):
+        q.log_diagnosis(db, student_id="stu_qt3", scenario_id="login", prompt="x",
+                        result={"phenomenon": True, "context": True, "expectation": False,
+                                "score": 66, "feedback": "f", "confidence": 0.9, "degraded": False})
+    assert q.weakness_summary(db, "stu_qt3") is None
+    # 再加 2 条（共 4 条，都缺预期）→ 返回 expectation
+    for _ in range(2):
+        q.log_diagnosis(db, student_id="stu_qt3", scenario_id="login", prompt="x",
+                        result={"phenomenon": True, "context": True, "expectation": False,
+                                "score": 66, "feedback": "f", "confidence": 0.9, "degraded": False})
+    w = q.weakness_summary(db, "stu_qt3")
+    assert w and w["factor"] == "expectation" and w["miss_count"] == 4
+    db.close()
+
+
+@test
+def 提问训练_degraded与低置信不参与短板统计():
+    from app.services import question_training as q
+    db = TestSession()
+    # 3 条都是 degraded 或低置信 → 不参与 → 样本不足 → None
+    q.log_diagnosis(db, student_id="stu_qt4", scenario_id="login", prompt="x",
+                    result={"phenomenon": False, "context": False, "expectation": False,
+                            "score": 12, "feedback": "f", "confidence": 0.0, "degraded": True})
+    for _ in range(2):
+        q.log_diagnosis(db, student_id="stu_qt4", scenario_id="login", prompt="x",
+                        result={"phenomenon": False, "context": False, "expectation": False,
+                                "score": 12, "feedback": "f", "confidence": 0.5, "degraded": False})
+    assert q.weakness_summary(db, "stu_qt4") is None
+
+
 def main():
     passed = failed = 0
     for fn in _tests:

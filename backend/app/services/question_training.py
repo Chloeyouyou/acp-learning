@@ -6,9 +6,19 @@ P0 边界：不调 event_engine、不落 Prompt_Design、不动画像、不复�
 """
 
 import json
+import uuid
+
+from sqlalchemy.orm import Session
 
 from ..config import TUTOR_MODEL
+from ..models import ExecutionEvent, now
 from . import tutor
+
+# P1-lite 资产化用的命名空间常量（doc12）——确保对画像/成长轨迹双隐形
+QT_SOURCE = "qt_diagnose"
+QT_PATTERN_ID = "QUESTION_TRAINING"
+QT_KIND = "QT"
+CONFIDENCE_MIN = 0.7  # 短板统计的置信门槛（与画像同口径）
 
 # 预置场景：每个给一句背景，学生据此写提问。前端也用同一份（id 对齐）。
 SCENARIOS = {
@@ -125,4 +135,88 @@ def diagnose(scenario_id: str, prompt: str) -> dict:
         "feedback": feedback.strip(),
         "confidence": confidence,
         "degraded": False,
+    }
+
+
+# ---- P1-lite 资产化（doc12）：把诊断沉淀成 ExecutionEvent 事实日志。----
+# 走 ExecutionEvent 而非 Event：它只 INSERT、永不调 apply_event，结构上就不进画像分。
+# 命名空间隔离（source/合成session/kp=[]）保证对画像与成长轨迹双隐形。
+
+def _summary(feedback: str) -> str:
+    f = (feedback or "").strip().replace("\n", " ")
+    return f[:80]
+
+
+def log_diagnosis(db: Session, *, student_id: str, scenario_id: str, prompt: str, result: dict) -> ExecutionEvent | None:
+    """把一次诊断沉淀为数字资产（ExecutionEvent）。student_id 为空则跳过（匿名不落库）。"""
+    if not student_id:
+        return None
+    ev = ExecutionEvent(
+        id=f"qt_{uuid.uuid4().hex[:16]}",
+        version="v1",
+        student_id=student_id,
+        session_id=f"qtsess_{student_id}",   # 合成 id，不建 TutorSession → 对成长轨迹隐形
+        pattern_id=QT_PATTERN_ID,            # 哨兵，提问训练无 pattern
+        source=QT_SOURCE,                    # 独立来源，timeline 只认 run/submit
+        kind=QT_KIND,                        # 非 RE/WA/HANG/OK
+        error_family=None,
+        knowledge_points=[],                 # 空 kp → 对画像掌握度隐形
+        meta={
+            "mode": "question_training",
+            "scenario_id": scenario_id,
+            "prompt": prompt,
+            "phenomenon": bool(result.get("phenomenon")),
+            "context": bool(result.get("context")),
+            "expectation": bool(result.get("expectation")),
+            "score": result.get("score"),
+            "feedback_summary": _summary(result.get("feedback", "")),
+            "confidence": result.get("confidence"),
+            "degraded": bool(result.get("degraded")),
+        },
+        timestamp=now(),
+    )
+    db.add(ev)
+    db.commit()
+    return ev
+
+
+# 三要素键 → 中文（短板展示用）
+_FACTOR_ZH = {"phenomenon": "现象", "context": "上下文", "expectation": "预期"}
+WEAKNESS_MIN_SAMPLES = 3  # doc11 闸门：样本不足不展示
+
+
+def weakness_summary(db: Session, student_id: str, recent_n: int = 8) -> dict | None:
+    """回放本人 qt_diagnose 资产，统计最近最常漏的要素（doc11/12 短板个性化的数据源）。
+    degraded / confidence<0.7 记录事实但不参与统计；样本不足返回 None（不展示）。
+    """
+    if not student_id:
+        return None
+    rows = (db.query(ExecutionEvent)
+            .filter_by(student_id=student_id, source=QT_SOURCE)
+            .order_by(ExecutionEvent.timestamp.desc())
+            .all())
+    # 过滤：排除 degraded 和低置信（不参与短板统计）
+    usable = []
+    for r in rows:
+        m = r.meta or {}
+        if m.get("degraded"):
+            continue
+        c = m.get("confidence")
+        if c is not None and c < CONFIDENCE_MIN:
+            continue
+        usable.append(m)
+        if len(usable) >= recent_n:
+            break
+    if len(usable) < WEAKNESS_MIN_SAMPLES:
+        return None
+    # 数各要素被判 false 的次数
+    miss = {k: sum(1 for m in usable if not m.get(k)) for k in _FACTOR_ZH}
+    worst_key = max(miss, key=miss.get)
+    if miss[worst_key] == 0:
+        return None  # 三要素都常写到，无短板可提
+    return {
+        "factor": worst_key,
+        "factor_zh": _FACTOR_ZH[worst_key],
+        "miss_count": miss[worst_key],
+        "sample_size": len(usable),
     }

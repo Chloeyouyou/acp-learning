@@ -1,6 +1,13 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { api } from '../api'
+
+// 短板个性化（遵 doc11 灵犀宪章：观察式措辞、样本足才显示）。从 P1-lite 资产回放得来。
+const weakness = ref(null)   // { factor, factor_zh, miss_count, sample_size } | null
+async function loadWeakness() {
+  try { weakness.value = (await api.getQuestionWeakness()).weakness } catch { weakness.value = null }
+}
+onMounted(loadWeakness)
 
 // 预置场景（id 与后端 question_training.SCENARIOS 对齐）
 const SCENARIOS = [
@@ -45,6 +52,7 @@ async function submit() {
     list.push({ prompt: p, result: r })
     historyByScenario.value[scenarioId.value] = list
     viewIndex.value = list.length - 1     // 跳到最新一版
+    loadWeakness()                        // 资产更新后刷新短板（不阻塞）
   } catch (e) {
     error.value = e.message || '诊断失败，请稍后再试'
   } finally {
@@ -105,6 +113,11 @@ const scoreDelta = computed(() => {
         {{ s.title }}
       </button>
     </div>
+
+    <!-- 短板个性化提醒（观察式，非贴标签；样本足才出现）-->
+    <p v-if="weakness" class="qt-weakness">
+      最近几次里，你的【{{ weakness.factor_zh }}】写得相对少一些——这次可以先试着把它说清楚。
+    </p>
 
     <div class="qt-grid">
       <!-- 左：写提问 + 对照 -->
@@ -212,7 +225,8 @@ const scoreDelta = computed(() => {
 .qt-header h2 { font-family: var(--serif); font-size: 20px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
 .qt-header p { font-size: 14px; color: var(--muted); line-height: 1.7; margin: 0; max-width: 660px; }
 
-.qt-scenarios { display: flex; gap: 9px; flex-wrap: wrap; margin-bottom: 18px; }
+.qt-scenarios { display: flex; gap: 9px; flex-wrap: wrap; margin-bottom: 14px; }
+.qt-weakness { margin: 0 0 16px; font-size: 13px; color: var(--primary-dark); background: var(--accent-soft); border-left: 3px solid var(--primary); border-radius: 8px; padding: 9px 13px; line-height: 1.6; }
 .qt-sc { font: inherit; font-size: 13px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 7px 15px; cursor: pointer; transition: all 0.15s; }
 .qt-sc:hover { color: var(--text); border-color: #dac9b8; }
 .qt-sc.on { color: #fff; background: var(--primary); border-color: var(--primary); }
