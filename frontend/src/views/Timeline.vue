@@ -81,35 +81,45 @@ function fmtDay(d) {
   <div v-if="error" class="panel error">{{ error }}</div>
   <div v-else-if="!data" class="panel">加载中…</div>
   <template v-else>
-    <!-- 今日复习（间隔重复）：到期的老题，给一个回来的理由 -->
-    <div v-if="reviewDue.length" class="review">
-      <h3>回头看看 · {{ reviewDue.length }} 道</h3>
-      <p class="review-sub">这些题你早前解决过——隔一阵回看一次，才会真正记牢。</p>
-      <div class="review-list">
-        <button v-for="it in reviewDue" :key="it.pattern_id" class="review-item"
-                @click="startReview(it.pattern_id)">
-          <span class="ri-name">{{ it.name }}</span>
-          <span class="ri-meta">{{ catLabel(it.category) }} · 上次解决 {{ it.days_since }} 天前</span>
-          <span class="ri-go">去复习 →</span>
-        </button>
+   <div class="tl-wrap">
+    <!-- 安静上下文行：复习 + 思维默认值 并排（设计稿）-->
+    <div class="ctx-row">
+      <!-- 回头看看（间隔复习）-->
+      <div v-if="reviewDue.length" class="ctx-card">
+        <div class="ctx-head">
+          <span class="ctx-title">回头看看</span>
+          <span class="ctx-meta">{{ reviewDue.length }} 道到期</span>
+        </div>
+        <p class="ctx-sub">隔一阵回看一次，才会真正记牢。</p>
+        <div class="rv-list">
+          <button v-for="it in reviewDue" :key="it.pattern_id" class="rv-item" @click="startReview(it.pattern_id)">
+            <span class="rv-name">{{ it.name }}</span>
+            <span class="rv-foot">
+              <span class="rv-meta">{{ catLabel(it.category) }} · {{ it.days_since }} 天前</span>
+              <span class="rv-go">去复习 →</span>
+            </span>
+          </button>
+        </div>
+      </div>
+      <!-- 你常见的思维默认值：镜子，非审判 -->
+      <div class="ctx-card">
+        <div class="ctx-title">你常见的思维默认值</div>
+        <template v-if="data.thinking_patterns.enough">
+          <div v-for="tp in data.thinking_patterns.items" :key="tp.id" class="tp">
+            <div class="tp-name">{{ tp.name }}</div>
+            <div class="tp-evidence">出现在 {{ tp.count }} 道题：{{ tp.members.join('、') }}</div>
+            <div class="tp-advice">下次先问：{{ tp.advice }}</div>
+          </div>
+          <p v-if="data.persona.enough" class="persona-foot">{{ data.persona.line }}</p>
+        </template>
+        <p v-else class="note">{{ data.thinking_patterns.hint }}</p>
       </div>
     </div>
 
-    <!-- 跨题思维默认值：镜子，非审判、非榜单 -->
-    <div class="persona">
-      <h3>你最近常见的思维默认值</h3>
-      <template v-if="data.thinking_patterns.enough">
-        <div v-for="tp in data.thinking_patterns.items" :key="tp.id" class="tp">
-          <div class="tp-name">{{ tp.name }}</div>
-          <div class="tp-evidence">出现在 {{ tp.count }} 道题：{{ tp.members.join('、') }}</div>
-          <div v-if="tp.reflections?.length" class="tp-reflection">
-            你的思考记录：{{ tp.reflections.join('；') }}
-          </div>
-          <div class="tp-advice">下次先问自己：{{ tp.advice }}</div>
-        </div>
-        <p v-if="data.persona.enough" class="persona-foot">{{ data.persona.line }}</p>
-      </template>
-      <p v-else class="note">{{ data.thinking_patterns.hint }}</p>
+    <!-- 小标题 -->
+    <div class="tl-heading">
+      <h2>一道题，一段经历</h2>
+      <span>从最近往回看</span>
     </div>
 
     <!-- 空态 -->
@@ -117,9 +127,9 @@ function fmtDay(d) {
       还没有调试记录——去训练场闯一关，这里会长出你的成长轨迹。
     </div>
 
-    <!-- 时间线：一道题 = 一段经历 -->
+    <!-- 时间线：一道题 = 一段经历；最近一条为焦点 -->
     <div v-else class="timeline">
-      <div v-for="ep in data.episodes" :key="ep.pattern_id" class="node">
+      <div v-for="(ep, ei) in data.episodes" :key="ep.pattern_id" :class="['node', { focal: ei === 0 }]">
         <span class="dot" />
         <div class="card">
           <!-- 标题=认知根因（记忆点），Bug 名缩成下面一行出处 -->
@@ -169,96 +179,71 @@ function fmtDay(d) {
         </div>
       </div>
     </div>
+   </div>
   </template>
 </template>
 
 <style scoped>
 .error { border-color: var(--red); color: var(--red); }
-
-/* 今日复习卡 */
-.review {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
-  padding: 18px 22px; box-shadow: 0 1px 2px rgba(43,41,36,0.03); margin-bottom: 22px;
-  border-left: 3px solid var(--primary);
-}
-.review h3 { margin: 0 0 4px; font-size: 17px; }
-.review-sub { margin: 0 0 12px; color: var(--muted); font-size: 13px; line-height: 1.6; }
-.review-list { display: flex; flex-direction: column; gap: 8px; }
-.review-item {
-  display: flex; align-items: baseline; gap: 12px; width: 100%; text-align: left;
-  background: var(--accent-soft); border: 1px solid var(--border); border-radius: 10px;
-  padding: 11px 14px; cursor: pointer; font: inherit; transition: background 0.15s;
-}
-.review-item:hover { background: #ece2d8; }
-.ri-name { font-family: var(--serif); font-size: 14.5px; font-weight: 600; color: var(--text); }
-.ri-meta { font-size: 12.5px; color: var(--muted); flex: 1; min-width: 0; }
-.ri-go { font-size: 13px; color: var(--primary-dark); white-space: nowrap; }
-
-/* 调试人格卡 */
-.persona {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
-  padding: 18px 22px; box-shadow: 0 1px 2px rgba(43,41,36,0.03); margin-bottom: 22px;
-}
-.persona h3 { margin: 0 0 12px; font-size: 17px; }
 .note { color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.tl-wrap { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
 
-/* 思维默认值：一条条镜子，不排名不评分 */
-.tp { padding: 10px 0; border-top: 1px solid var(--border); }
-.tp:first-of-type { border-top: none; padding-top: 0; }
-.tp-name { font-family: var(--serif); font-size: 15px; font-weight: 600; color: var(--text); }
-.tp-evidence { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
-.tp-reflection {
-  font-size: 12.5px; color: var(--text); margin-top: 6px; line-height: 1.55;
-  padding-left: 10px; border-left: 2px solid #d6aa91;
-}
-.tp-advice { font-size: 13px; color: var(--primary-dark); margin-top: 5px; }
-.persona-foot { margin: 12px 0 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
+/* 安静上下文行：复习 + 思维默认值 并排（设计稿）*/
+.ctx-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.ctx-card { flex: 1; min-width: 280px; background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 15px 17px; }
+.ctx-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.ctx-title { font-family: var(--serif); font-size: 15px; font-weight: 600; color: var(--text); }
+.ctx-meta { font-size: 12px; color: var(--muted); }
+.ctx-sub { margin: 0 0 11px; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.rv-list { display: flex; flex-direction: column; gap: 7px; }
+.rv-item { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; background: var(--accent-soft); border: 1px solid var(--border); border-radius: 9px; padding: 9px 12px; cursor: pointer; font: inherit; transition: border-color 0.15s; }
+.rv-item:hover { border-color: var(--primary); }
+.rv-name { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.4; }
+.rv-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.rv-meta { font-size: 11.5px; color: var(--muted); }
+.rv-go { font-size: 12px; color: var(--primary-dark); white-space: nowrap; }
+.tp { border-left: 2px solid #d6aa91; padding-left: 11px; margin-bottom: 12px; }
+.tp:last-of-type { margin-bottom: 0; }
+.tp-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.tp-evidence { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.tp-reflection { font-size: 12px; color: var(--text); margin-top: 5px; line-height: 1.5; }
+.tp-advice { font-size: 12.5px; color: var(--primary-dark); margin-top: 5px; }
+.persona-foot { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+
+/* 小标题 */
+.tl-heading { display: flex; align-items: baseline; gap: 10px; margin-top: 8px; }
+.tl-heading h2 { font-family: var(--serif); font-size: 19px; font-weight: 600; color: var(--text); margin: 0; }
+.tl-heading span { font-size: 13px; color: var(--muted); }
 
 .empty { color: var(--muted); text-align: center; padding: 40px 20px; }
 
-/* 竖向时间线 */
-.timeline { position: relative; padding-left: 26px; }
-.timeline::before {
-  content: ''; position: absolute; left: 7px; top: 6px; bottom: 6px;
-  width: 2px; background: var(--border);
-}
-.node { position: relative; margin-bottom: 20px; }
-.dot {
-  position: absolute; left: -25px; top: 19px; width: 9px; height: 9px;
-  border-radius: 50%; background: var(--primary); border: 2px solid var(--bg);
-}
-.card {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  padding: 16px 18px; box-shadow: 0 1px 2px rgba(43,41,36,0.04);
-}
+/* 竖向时间线：最近一条为焦点 */
+.timeline { position: relative; padding-left: 30px; }
+.timeline::before { content: ''; position: absolute; left: 9px; top: 8px; bottom: 8px; width: 2px; background: var(--border); }
+.node { position: relative; margin-bottom: 18px; }
+.dot { position: absolute; left: -26px; top: 20px; width: 9px; height: 9px; border-radius: 50%; background: #c8a48c; border: 2px solid var(--bg); }
+.node.focal .dot { left: -29px; top: 22px; width: 14px; height: 14px; background: var(--primary); border: 3px solid var(--bg); box-shadow: 0 0 0 3px rgba(193,95,60,0.18); }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+.node.focal .card { background: #fff; border-color: #f0d8c8; border-left: 3px solid var(--primary); box-shadow: 0 14px 30px -18px rgba(193,95,60,0.3); }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .head-main { min-width: 0; }
-.title { font-family: var(--serif); font-size: 16px; font-weight: 600; line-height: 1.45; }
+.title { font-family: var(--serif); font-size: 16px; font-weight: 600; line-height: 1.45; color: var(--text); }
 .subtitle { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
 .sub { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
-.badge { margin-top: 2px; }
-
-.badge { font-size: 12px; padding: 3px 11px; border-radius: 999px; white-space: nowrap; }
+.badge { font-size: 12px; padding: 3px 11px; border-radius: 999px; white-space: nowrap; margin-top: 2px; }
 .badge.进行中 { background: #f3ecd6; color: #87651f; }
 .badge.已解决 { background: var(--accent-soft); color: var(--primary-dark); }
 .badge.已内化 { background: #e4ede0; color: #3f5837; }
-
-/* 统一文字小标体系：观察 / 猜测 / 收获 / 日期 同款克制标签 */
 .field { display: flex; gap: 12px; margin-top: 9px; font-size: 13.5px; line-height: 1.55; align-items: baseline; }
-.tag { font-size: 12px; color: var(--muted); letter-spacing: 0.5px; min-width: 40px; flex-shrink: 0; }
+.tag { font-size: 12px; color: var(--muted); min-width: 40px; flex-shrink: 0; }
 .field-val { color: var(--text); flex: 1; min-width: 0; }
 .gain-tag { color: #6f8a64; }
 .summary-tag { color: var(--primary-dark); }
-
 .rounds { margin-top: 9px; display: flex; flex-direction: column; gap: 6px; }
 .round { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .day { min-width: 60px; }
 .link { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-/* 报错链当配角：字号小、颜色收敛，不和认知根因抢镜 */
-.pill {
-  font-size: 11.5px; padding: 1px 8px; border-radius: 6px;
-  background: #f1e3de; color: #9a6a58;
-}
+.pill { font-size: 11.5px; padding: 1px 8px; border-radius: 6px; background: #f1e3de; color: #9a6a58; }
 .pill.ok { background: #e7eee3; color: #4d6244; }
 .pill.pending { background: #ece6da; color: var(--muted); }
 .arrow { color: #cfc6b5; font-size: 11px; }
