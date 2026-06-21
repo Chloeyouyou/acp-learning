@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session
 from .config import STAGES
 from .db import get_db, init_db
 from .models import ExecutionEvent, TutorSession
-from .services import event_engine, mine_engine, profile, review, sandbox, timeline, tutor
+from .services import (
+    event_engine, mine_engine, profile, question_training, review, sandbox, timeline, tutor,
+)
 
 app = FastAPI(title="ACP Learning API", version="0.1.0")
 
@@ -375,6 +377,28 @@ def code_walkthrough(pattern_id: str, deep: bool = False):
         raise HTTPException(404, "pattern not found")
     return {"pattern_id": pattern_id, "deep": deep,
             "walkthrough": tutor.explain_code(pattern_id, deep=deep)}
+
+
+class DiagnoseReq(BaseModel):
+    scenario_id: str
+    prompt: str
+
+
+class DiagnoseResp(BaseModel):
+    phenomenon: bool
+    context: bool
+    expectation: bool
+    score: int
+    feedback: str
+    confidence: float
+    degraded: bool = False
+
+
+@app.post("/api/question-training/diagnose", response_model=DiagnoseResp)
+def diagnose_question(req: DiagnoseReq):
+    """提问训练 P0（docs/design/12）：诊断提问的三要素完整度 + 给分 + 反馈。
+    只评价提问本身，不替学生答技术问题、不臆断运行结果；不动画像/能力分。"""
+    return question_training.diagnose(req.scenario_id, req.prompt)
 
 
 @app.get("/api/health")

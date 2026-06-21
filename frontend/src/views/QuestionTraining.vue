@@ -1,73 +1,106 @@
 <script setup>
 import { ref, computed } from 'vue'
+import { api } from '../api'
 
-// 自包含的 3 步互动：把同一个提问从「差」一步步补成「三要素齐全」（设计稿，前端写死，无后端）
-const L = [
-  {
-    prompt: '代码报错了',
-    s1: false, s2: false, s3: false,
-    s1Hint: '没说报了什么错、出现什么现象。',
-    s2Hint: '没说是哪段代码、哪个文件。',
-    s3Hint: '没说你期望发生什么。',
-    score: 18,
-    msg: '这样问，AI 只能猜。它不知道哪段代码、报了什么、你想要什么——补一个要素试试。',
-  },
-  {
-    prompt: '登录功能报错了，提示 NullPointerException。',
-    s1: true, s2: false, s3: false,
-    s1Hint: '说清了报错类型，AI 能对上号了。',
-    s2Hint: '还差：错在哪个文件 / 第几行？',
-    s3Hint: '还差：你本来期望它做什么？',
-    score: 52,
-    msg: '好多了——现象说清了。再告诉 AI「错在哪里」，它就能精准定位。',
-  },
-  {
-    prompt: '登录功能报 NullPointerException，出错在 UserService 第 32 行，\n我期望它完成登录并返回用户信息。',
-    s1: true, s2: true, s3: true,
-    s1Hint: '现象明确：NullPointerException。',
-    s2Hint: '定位明确：UserService 第 32 行。',
-    s3Hint: '预期明确：完成登录、返回用户信息。',
-    score: 90,
-    msg: '这就是一个 AI 能直接帮上忙的提问——现象、上下文、预期三要素齐了，AI 不用猜就能帮到点子上。',
-  },
+// 预置场景（id 与后端 question_training.SCENARIOS 对齐）
+const SCENARIOS = [
+  { id: 'login', title: '登录功能跑不通', brief: '你在做一个登录功能，点登录后没反应或报错。把这件事问清楚，让 AI 能直接帮上忙。' },
+  { id: 'list_empty', title: '列表页一直空白', brief: '你的页面应该显示一个列表，但运行后一直是空白，数据出不来。' },
+  { id: 'wrong_result', title: '函数算出来的结果不对', brief: '你写了个函数做计算，但它返回的数和你预期的对不上。' },
 ]
 
-const level = ref(0)
-const cur = computed(() => L[level.value])
-const stepNo = computed(() => level.value + 1)
-const levelLabel = computed(() => ['初稿', '补了现象', '三要素齐全'][level.value])
-const nextLabel = computed(() => (level.value < 2 ? '补一个要素 →' : '重新开始'))
-const scoreColor = computed(() => (cur.value.score >= 80 ? '#5c7a52' : cur.value.score >= 45 ? 'var(--primary)' : '#a89e8c'))
-const factors = computed(() => [
-  { key: '现象', desc: '报了什么、看到什么', ok: cur.value.s1, hint: cur.value.s1Hint },
-  { key: '上下文', desc: '哪个文件、哪一行', ok: cur.value.s2, hint: cur.value.s2Hint },
-  { key: '预期', desc: '你本来想要什么结果', ok: cur.value.s3, hint: cur.value.s3Hint },
-])
-function next() { level.value = level.value >= 2 ? 0 : level.value + 1 }
-function back() { level.value = Math.max(0, level.value - 1) }
+const scenarioId = ref(SCENARIOS[0].id)
+const scenario = computed(() => SCENARIOS.find((s) => s.id === scenarioId.value))
+
+const draft = ref('')
+const loading = ref(false)
+const error = ref('')
+const result = ref(null)       // { phenomenon, context, expectation, score, feedback, confidence, degraded }
+const prevScore = ref(null)    // 上一版分数（用于显示进步）
+const attempts = ref(0)        // 改了几版
+
+function pickScenario(id) {
+  if (id === scenarioId.value) return
+  scenarioId.value = id
+  // 换场景重置诊断（提问内容也清空，避免对不上）
+  draft.value = ''
+  result.value = null
+  prevScore.value = null
+  attempts.value = 0
+  error.value = ''
+}
+
+async function submit() {
+  const p = draft.value.trim()
+  if (!p || loading.value) return
+  loading.value = true
+  error.value = ''
+  try {
+    const r = await api.diagnoseQuestion(scenarioId.value, p)
+    prevScore.value = result.value ? result.value.score : null
+    result.value = r
+    attempts.value += 1
+  } catch (e) {
+    error.value = e.message || '诊断失败，请稍后再试'
+  } finally {
+    loading.value = false
+  }
+}
+
+const scoreColor = computed(() => {
+  const s = result.value?.score ?? 0
+  return s >= 80 ? '#5c7a52' : s >= 45 ? 'var(--primary)' : '#a89e8c'
+})
+const factors = computed(() => {
+  const r = result.value
+  return [
+    { key: '现象', desc: '报了什么、看到什么', ok: !!r?.phenomenon },
+    { key: '上下文', desc: '哪段代码、哪一行', ok: !!r?.context },
+    { key: '预期', desc: '你本来想要什么结果', ok: !!r?.expectation },
+  ]
+})
+const scoreDelta = computed(() => {
+  if (result.value == null || prevScore.value == null) return null
+  return result.value.score - prevScore.value
+})
 </script>
 
 <template>
   <div class="qt">
     <div class="qt-header">
       <h2>把问题问清楚，AI 才帮得上</h2>
-      <p>场景：你的登录功能跑不通。同样一件事，问得越清楚，AI 越能直接帮到点子上。试着把提问一步步补全。</p>
+      <p>同样一件事，问得越清楚，AI 越能直接帮到点子上。选一个场景，试着把你的提问写出来——知返只看你「问得好不好」，不替你解题。</p>
+    </div>
+
+    <!-- 场景选择 -->
+    <div class="qt-scenarios">
+      <button v-for="s in SCENARIOS" :key="s.id"
+              :class="['qt-sc', { on: s.id === scenarioId }]" @click="pickScenario(s.id)">
+        {{ s.title }}
+      </button>
     </div>
 
     <div class="qt-grid">
-      <!-- 左：正在写的提问 + 对照 -->
+      <!-- 左：写提问 + 对照 -->
       <div class="qt-left">
         <div class="panel">
           <div class="qt-promptbar">
             <span class="qt-promptlabel">你向 AI 的提问</span>
-            <span class="qt-lvl">{{ levelLabel }}</span>
+            <span class="qt-lvl">{{ scenario.title }}</span>
           </div>
-          <div class="qt-prompt">{{ cur.prompt }}</div>
+          <p class="qt-brief">{{ scenario.brief }}</p>
+          <textarea
+            v-model="draft" class="qt-input" rows="5"
+            placeholder="比如：写清楚报了什么错、在哪段代码、你本来想要什么结果…"
+            @keydown.ctrl.enter="submit"
+          />
           <div class="qt-ctrl">
-            <button class="qt-back" @click="back">← 退回</button>
-            <button class="qt-next" @click="next">{{ nextLabel }}</button>
-            <span class="qt-step">第 {{ stepNo }} / 3 步</span>
+            <button class="qt-next" :disabled="!draft.trim() || loading" @click="submit">
+              {{ loading ? '知返诊断中…' : result ? '再改一版 →' : '让知返看看 →' }}
+            </button>
+            <span v-if="attempts" class="qt-step">已改 {{ attempts }} 版</span>
           </div>
+          <p v-if="error" class="qt-error">{{ error }}</p>
         </div>
 
         <div class="panel qt-compare">
@@ -94,22 +127,34 @@ function back() { level.value = Math.max(0, level.value - 1) }
             <div class="qt-diag-sub">现象 + 上下文 + 预期</div>
           </div>
         </div>
-        <div class="qt-score">
-          <span class="qt-score-n" :style="{ color: scoreColor }">{{ cur.score }}</span>
-          <span class="qt-score-u">/ 100 提问分</span>
+
+        <!-- 空态：还没提交 -->
+        <div v-if="!result" class="qt-empty">
+          在左边写下你的提问，点「让知返看看」——它会告诉你这条提问缺了哪个要素、怎么补。
         </div>
-        <div class="qt-bar"><div class="qt-bar-f" :style="{ width: cur.score + '%', background: scoreColor }" /></div>
-        <div class="qt-factors">
-          <div v-for="f in factors" :key="f.key" :class="['qt-f', f.ok ? 'ok' : 'no']">
-            <div class="qt-f-head">
-              <span class="qt-f-icon">{{ f.ok ? '✓' : '○' }}</span>
-              <span class="qt-f-name">{{ f.key }}</span>
-              <span class="qt-f-desc">{{ f.desc }}</span>
-            </div>
-            <div class="qt-f-hint">{{ f.hint }}</div>
+
+        <template v-else>
+          <div class="qt-score">
+            <span class="qt-score-n" :style="{ color: scoreColor }">{{ result.score }}</span>
+            <span class="qt-score-u">/ 100 提问分</span>
+            <span v-if="scoreDelta != null && scoreDelta !== 0"
+                  :class="['qt-delta', scoreDelta > 0 ? 'up' : 'down']">
+              {{ scoreDelta > 0 ? '↑ +' + scoreDelta : '↓ ' + scoreDelta }}
+            </span>
           </div>
-        </div>
-        <div class="qt-msg">{{ cur.msg }}</div>
+          <div class="qt-bar"><div class="qt-bar-f" :style="{ width: result.score + '%', background: scoreColor }" /></div>
+          <div class="qt-factors">
+            <div v-for="f in factors" :key="f.key" :class="['qt-f', f.ok ? 'ok' : 'no']">
+              <div class="qt-f-head">
+                <span class="qt-f-icon">{{ f.ok ? '✓' : '○' }}</span>
+                <span class="qt-f-name">{{ f.key }}</span>
+                <span class="qt-f-desc">{{ f.desc }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="qt-msg">{{ result.feedback }}</div>
+          <p v-if="result.degraded" class="qt-degraded">（知返暂时离线，以上为本地提示）</p>
+        </template>
       </div>
     </div>
   </div>
@@ -117,26 +162,35 @@ function back() { level.value = Math.max(0, level.value - 1) }
 
 <style scoped>
 .qt { max-width: 1040px; margin: 0 auto; }
-.qt-header { margin-bottom: 18px; }
+.qt-header { margin-bottom: 16px; }
 .qt-header h2 { font-family: var(--serif); font-size: 20px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
-.qt-header p { font-size: 14px; color: var(--muted); line-height: 1.7; margin: 0; max-width: 640px; }
+.qt-header p { font-size: 14px; color: var(--muted); line-height: 1.7; margin: 0; max-width: 660px; }
+
+.qt-scenarios { display: flex; gap: 9px; flex-wrap: wrap; margin-bottom: 18px; }
+.qt-sc { font: inherit; font-size: 13px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 7px 15px; cursor: pointer; transition: all 0.15s; }
+.qt-sc:hover { color: var(--text); border-color: #dac9b8; }
+.qt-sc.on { color: #fff; background: var(--primary); border-color: var(--primary); }
+
 .qt-grid { display: grid; grid-template-columns: 1fr 400px; gap: 18px; align-items: start; }
 @media (max-width: 820px) { .qt-grid { grid-template-columns: 1fr; } }
 .qt-left { display: flex; flex-direction: column; gap: 14px; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 18px 20px; }
 
-.qt-promptbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.qt-promptbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .qt-promptlabel { font-size: 13.5px; font-weight: 600; color: var(--text); }
 .qt-lvl { font-size: 12px; color: var(--muted); }
-.qt-prompt {
-  background: #fff; border: 1px solid #e2dccd; border-radius: 11px; padding: 15px 16px; min-height: 130px;
-  font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 14.5px; line-height: 1.75; color: var(--text); white-space: pre-wrap;
+.qt-brief { font-size: 12.5px; color: var(--muted); line-height: 1.6; margin: 0 0 12px; }
+.qt-input {
+  width: 100%; box-sizing: border-box; background: #fff; border: 1px solid #e2dccd; border-radius: 11px;
+  padding: 13px 15px; font-family: inherit; font-size: 14px; line-height: 1.7; color: var(--text); resize: vertical; outline: none;
 }
-.qt-ctrl { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
-.qt-back { font: inherit; font-size: 13px; font-weight: 600; color: var(--muted); background: #fff; border: 1px solid var(--border); border-radius: 9px; padding: 9px 16px; cursor: pointer; }
-.qt-back:hover { color: var(--text); }
-.qt-next { font: inherit; font-size: 13px; font-weight: 700; color: #fff; background: var(--primary); border: none; border-radius: 9px; padding: 9px 18px; cursor: pointer; }
-.qt-step { font-size: 12.5px; color: var(--muted); margin-left: auto; }
+.qt-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(193, 95, 60, 0.10); }
+.qt-input::placeholder { color: #b3ab9a; }
+.qt-ctrl { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.qt-next { font: inherit; font-size: 13px; font-weight: 700; color: #fff; background: var(--primary); border: none; border-radius: 9px; padding: 10px 20px; cursor: pointer; }
+.qt-next:disabled { opacity: 0.5; cursor: not-allowed; }
+.qt-step { font-size: 12.5px; color: var(--muted); }
+.qt-error { margin: 10px 0 0; font-size: 12.5px; color: #a54e30; }
 
 .qt-compare-t { font-size: 12.5px; font-weight: 600; color: var(--muted); margin-bottom: 9px; }
 .qt-compare-row { display: flex; gap: 12px; }
@@ -154,9 +208,14 @@ function back() { level.value = Math.max(0, level.value - 1) }
 .qt-ava { width: 34px; height: 34px; border-radius: 50%; background: var(--primary); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; flex: none; }
 .qt-diag-name { font-size: 15px; font-weight: 700; color: var(--text); line-height: 1; }
 .qt-diag-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.qt-empty { font-size: 13.5px; color: var(--muted); line-height: 1.7; padding: 8px 0; }
+
 .qt-score { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
 .qt-score-n { font-family: var(--serif); font-size: 38px; font-weight: 600; line-height: 1; }
 .qt-score-u { font-size: 13px; color: var(--muted); }
+.qt-delta { font-size: 12.5px; font-weight: 600; margin-left: auto; }
+.qt-delta.up { color: #5c7a52; }
+.qt-delta.down { color: #a89e8c; }
 .qt-bar { height: 8px; background: #ece6da; border-radius: 999px; overflow: hidden; margin-bottom: 18px; }
 .qt-bar-f { height: 100%; border-radius: 999px; transition: width 0.35s ease; }
 .qt-factors { display: flex; flex-direction: column; gap: 10px; }
@@ -169,6 +228,6 @@ function back() { level.value = Math.max(0, level.value - 1) }
 .qt-f.no .qt-f-icon { color: #a89e8c; }
 .qt-f-name { font-size: 14px; font-weight: 600; color: var(--text); }
 .qt-f-desc { font-size: 12px; color: var(--muted); margin-left: auto; }
-.qt-f-hint { font-size: 12.5px; color: var(--muted); line-height: 1.55; margin-top: 6px; }
 .qt-msg { margin-top: 16px; padding-top: 15px; border-top: 1px solid #f1e8da; font-size: 13.5px; line-height: 1.7; color: var(--text); }
+.qt-degraded { margin: 8px 0 0; font-size: 11.5px; color: #a89e8c; }
 </style>

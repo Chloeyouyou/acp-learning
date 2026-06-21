@@ -78,4 +78,6 @@ export const api = {
   getRecommendations: () => request('GET', `/students/${getStudentId()}/recommendations`),
   getCapabilityEvents: (capability) =>
     request('GET', `/students/${getStudentId()}/capabilities/${capability}/events`),
+  diagnoseQuestion: (scenarioId, prompt) =>
+    request('POST', '/question-training/diagnose', { scenario_id: scenarioId, prompt }),
 }

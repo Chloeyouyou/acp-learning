@@ -357,6 +357,34 @@ def sandbox_基本():
     assert sandbox.normalize_output("  6  ") == "6"
 
 
+@test
+def 提问训练_三要素评分单调():
+    from app.services import question_training as q
+    s0 = q._score_from_factors(False, False, False)
+    s1 = q._score_from_factors(True, False, False)
+    s2 = q._score_from_factors(True, True, False)
+    s3 = q._score_from_factors(True, True, True)
+    assert s0 < s1 < s2 < s3, (s0, s1, s2, s3)
+    assert 0 <= s0 and s3 <= 100
+
+
+@test
+def 提问训练_空提问不调LLM得0():
+    from app.services import question_training as q
+    r = q.diagnose("login", "   ")
+    assert r["score"] == 0 and r["degraded"] is False
+    assert not r["phenomenon"] and not r["context"] and not r["expectation"]
+
+
+@test
+def 提问训练_fallback结构完整且不崩():
+    from app.services import question_training as q
+    r = q._fallback("随便写的提问")
+    for k in ("phenomenon", "context", "expectation", "score", "feedback", "confidence", "degraded"):
+        assert k in r, k
+    assert r["degraded"] is True and r["confidence"] == 0.0
+
+
 def main():
     passed = failed = 0
     for fn in _tests:
