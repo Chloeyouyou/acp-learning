@@ -36,23 +36,39 @@ function switchIdentity() {
 
 <template>
   <template v-if="ready">
-    <div class="app-page">
-      <div class="app-card">
-        <header class="topbar">
-          <div class="brand"><span class="brand-logo">知</span> ACP Learning</div>
-          <nav>
-            <RouterLink to="/arena">Bug 闯关</RouterLink>
-            <RouterLink to="/timeline">成长轨迹</RouterLink>
-            <RouterLink to="/profile">能力画像</RouterLink>
-          </nav>
-          <span class="topbar-id">{{ studentId }}<template v-if="studentName"> · {{ studentName }}</template></span>
-          <button class="topbar-switch" @click="switchIdentity" title="切换身份">切换身份</button>
-        </header>
-        <main class="content">
-          <RouterView />
-        </main>
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
+          <defs><path id="acp-ray" d="M24 6 Q20.6 14 24 23 Q27.4 14 24 6 Z" /></defs>
+          <g fill="currentColor">
+            <use href="#acp-ray" />
+            <use href="#acp-ray" transform="rotate(30 24 24)" />
+            <use href="#acp-ray" transform="rotate(60 24 24)" />
+            <use href="#acp-ray" transform="rotate(90 24 24)" />
+            <use href="#acp-ray" transform="rotate(120 24 24)" />
+            <use href="#acp-ray" transform="rotate(150 24 24)" />
+            <use href="#acp-ray" transform="rotate(180 24 24)" />
+            <use href="#acp-ray" transform="rotate(210 24 24)" />
+            <use href="#acp-ray" transform="rotate(240 24 24)" />
+            <use href="#acp-ray" transform="rotate(270 24 24)" />
+            <use href="#acp-ray" transform="rotate(300 24 24)" />
+            <use href="#acp-ray" transform="rotate(330 24 24)" />
+          </g>
+        </svg>
+        <span>ACP Learning</span>
       </div>
-    </div>
+      <nav>
+        <RouterLink to="/arena">Bug闯关训练场</RouterLink>
+        <RouterLink to="/timeline">成长轨迹</RouterLink>
+        <RouterLink to="/profile">能力画像</RouterLink>
+      </nav>
+      <button class="student" @click="switchIdentity" title="切换身份">
+        当前：{{ studentId }}<template v-if="studentName"> / {{ studentName }}</template>
+      </button>
+    </header>
+    <main class="content">
+      <RouterView />
+    </main>
   </template>
 
   <!-- 轻量身份页：没确立身份时盖住全站；无密码、无后端鉴权 -->
@@ -81,27 +97,59 @@ function switchIdentity() {
 </template>
 
 <style scoped>
-/* 共用外壳（设计稿）：暖象牙底 + 居中圆角卡 + 浅色顶栏 */
-.app-page {
-  min-height: 100vh; padding: 28px; box-sizing: border-box;
-  background: radial-gradient(1100px 560px at 88% -12%, #efe6d6 0%, rgba(239,230,214,0) 58%), #f4f1ea;
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 36px;
+  padding: 0 32px;
+  height: 64px;
+  background: rgba(244, 241, 234, 0.8);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
-.app-card {
-  max-width: 1480px; margin: 0 auto; display: flex; flex-direction: column;
-  background: #fcfbf7; border: 1px solid #e7e2d6; border-radius: 14px; overflow: hidden;
-  box-shadow: 0 24px 60px -34px rgba(43, 41, 36, 0.35);
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 19px;
+  color: var(--text);
+  letter-spacing: 0.3px;
 }
-.topbar { display: flex; align-items: center; gap: 26px; height: 60px; padding: 0 24px; background: #fcfbf7; border-bottom: 1px solid #ece5d8; }
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; color: #2b2924; }
-.brand-logo { width: 24px; height: 24px; border-radius: 7px; background: #c15f3c; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
-nav { display: flex; gap: 22px; flex: 1; font-size: 14px; }
-nav a { text-decoration: none; color: #8a8275; transition: color 0.15s; }
-nav a:hover { color: #2b2924; }
-nav a.router-link-active { color: #2b2924; font-weight: 600; }
-.topbar-id { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #8a8275; background: #f4efe5; border: 1px solid #e7e2d6; padding: 6px 13px; border-radius: 7px; }
-.topbar-switch { font-size: 13px; color: #6f695d; background: #fff; border: 1px solid #e7e2d6; padding: 7px 14px; border-radius: 8px; cursor: pointer; }
-.topbar-switch:hover { border-color: #c15f3c; color: #c15f3c; }
-.content { flex: 1; padding: 28px 30px; background: #faf7f0; }
+.brand-mark {
+  width: 25px;
+  height: 25px;
+  color: var(--primary);
+  flex-shrink: 0;
+}
+nav { display: flex; gap: 26px; flex: 1; }
+nav a {
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 14.5px;
+  padding: 6px 2px;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s;
+}
+nav a:hover { color: var(--text); }
+nav a.router-link-active { color: var(--primary); border-color: var(--primary); }
+.student {
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--accent-soft);
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, color 0.15s;
+}
+.student:hover { color: var(--text); border-color: #dac9b8; }
+.content { flex: 1; padding: 40px 32px; max-width: 1120px; margin: 0 auto; width: 100%; }
 
 /* 轻量身份页 */
 .identity-gate {
@@ -141,12 +189,12 @@ nav a.router-link-active { color: #2b2924; font-weight: 600; }
 
 /* 手机端：顶栏收紧、隐藏学号、内容留白变小 */
 @media (max-width: 640px) {
-  .app-page { padding: 12px; }
   .topbar { gap: 12px; padding: 0 14px; height: 54px; }
-  .brand { font-size: 15px; gap: 7px; }
+  .brand { font-size: 16px; gap: 7px; }
+  .brand-mark { width: 22px; height: 22px; }
   nav { gap: 14px; }
-  nav a { font-size: 13px; }
-  .topbar-id, .topbar-switch { display: none; }
-  .content { padding: 16px 14px; }
+  nav a { font-size: 13px; padding: 6px 0; }
+  .student { display: none; }
+  .content { padding: 18px 12px; }
 }
 </style>
