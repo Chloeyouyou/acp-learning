@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref, computed, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api } from '../api'
+import { api, getStudentId } from '../api'
 import GlossaryText from '../components/GlossaryText.vue'
 import { GLOSSARY, bricksInCode } from '../glossary'
 
@@ -139,6 +139,53 @@ async function loadWalkthrough(deep = false) {
     walkLoading.value = false
   }
 }
+
+const studentId = getStudentId()   // 做题页浅色顶栏显示
+
+// 浅色代码编辑器：行号 + 语法高亮叠加层（透明 textarea 在上、高亮 pre 在下、滚动同步）
+const taEl = ref(null)
+const hlEl = ref(null)
+const gutterEl = ref(null)
+const codeLineCount = computed(() => (session.code || '').split('\n').length)
+function _escHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
+function highlightPython(src) {
+  return _escHtml(src || '').replace(
+    /(#[^\n]*)|('[^'\n]*'|"[^"\n]*")|\b(def|return|for|in|if|elif|else|while|and|or|not|None|True|False|import|from|class|with|as|pass|break|continue|lambda|yield|try|except|finally|raise|is|assert|del)\b|\b(print|range|len|int|str|list|dict|set|tuple|float|sum|max|min|abs|enumerate|zip|map|filter|sorted|input|open|append|round)\b|\b(\d+\.?\d*)\b/g,
+    (m, com, str, kw, bi, num) =>
+      com ? `<span class="t-com">${com}</span>`
+        : str ? `<span class="t-str">${str}</span>`
+        : kw ? `<span class="t-kw">${kw}</span>`
+        : bi ? `<span class="t-bi">${bi}</span>`
+        : num ? `<span class="t-num">${num}</span>` : m,
+  )
+}
+const highlightedCode = computed(() => highlightPython(session.code))
+function syncScroll() {
+  const ta = taEl.value
+  if (!ta) return
+  if (hlEl.value) { hlEl.value.scrollTop = ta.scrollTop; hlEl.value.scrollLeft = ta.scrollLeft }
+  if (gutterEl.value) gutterEl.value.scrollTop = ta.scrollTop
+}
+const termHint = computed(() => {
+  const r = runResult.value
+  if (!r || r.timed_out) return ''
+  if (r.stderr) { const last = (r.stderr.trim().split('\n').pop() || '').slice(0, 40); return last ? ' · ' + last : '' }
+  if (r.stdout) { const first = (r.stdout.trim().split('\n')[0] || '').slice(0, 28); return first ? ' · 输出 ' + first : '' }
+  return ''
+})
+
+// 单焦点：点行号 → 滑出那一行的讲解（内容用现成「逐行讲解」walkRows，不泄雷位置）
+const selectedLine = ref(null)
+function clickLine(n) {
+  selectedLine.value = selectedLine.value === n ? null : n
+  if (selectedLine.value && !walkthrough.value && !walkLoading.value) loadWalkthrough(false)
+}
+const lineNote = computed(() => {
+  if (!selectedLine.value) return ''
+  if (walkLoading.value) return '知返正在生成逐行讲解…'
+  const r = (walkRows.value || [])[selectedLine.value - 1]
+  return r?.explain || '这一行还没有讲解——点「运行」看真实结果，或在右边问知返。'
+})
 
 // 「代码怎么读」：这道题代码里实际出现的语法符号，给完全没见过代码的人扫盲
 const syntaxBricks = computed(() => bricksInCode(session.code))
@@ -537,62 +584,62 @@ function quit() {
   </div>
 
   <!-- 做题 -->
-  <div v-else class="workspace">
-    <!-- 开题前的小检查：帮手语气、非评价、可忽略、本题只首次弹 -->
-    <div v-if="intervention" class="precheck">
-      <div class="precheck-main">
-        <div class="precheck-title">💡 开题前的小检查</div>
-        <div class="precheck-body">这类题里，先多看一眼：{{ intervention.advice }}</div>
-      </div>
-      <button class="precheck-close" @click="dismissIntervention" aria-label="收起">×</button>
+  <div v-else class="ws">
+   <div class="ws-card">
+    <!-- 浅色顶栏（做题页全屏接管为暖纸卡片；盖住共享顶栏，不影响其它页） -->
+    <div class="wt">
+      <div class="wt-brand"><span class="wt-logo">知</span> ACP Learning</div>
+      <nav class="wt-nav">
+        <RouterLink to="/arena" class="wt-on">Bug 闯关</RouterLink>
+        <RouterLink to="/timeline">成长轨迹</RouterLink>
+        <RouterLink to="/profile">能力画像</RouterLink>
+      </nav>
+      <span class="wt-id">{{ studentId }}</span>
+      <button class="wt-quit" @click="quit">退出关卡</button>
     </div>
 
-    <div class="stage-bar panel">
-      <div class="current-stage">
-        <span class="current-stage-label">当前阶段</span>
-        <b>{{ session.stage }}</b>
-        <span>· {{ session.stage === '③归因' ? '正在弄清为什么出错' :
-          session.stage === '④修复' ? '把原因变成自己的修复' :
-          session.stage === '⑤验证' ? '检查修复在边界情况是否可靠' :
-          session.stage === '⑥内化' ? '把这次经验变成下次的方法' :
-          session.stage === '②定位' ? '顺着线索找到可疑位置' : '先看清代码实际发生了什么' }}</span>
-      </div>
-      <div class="stage-meta">
-        <span class="hint-level">提示级别 <b>{{ session.hintLevel }}</b></span>
-        <button @click="quit">退出关卡</button>
-      </div>
-    </div>
-
-    <div class="cols">
-      <div class="code-column">
-      <div class="panel code-panel">
-        <div class="panel-title">
-          <span class="title-text">代码</span>
-          <span class="code-actions">
-            <button class="walk-trigger" @click="openWalk">📖 逐行讲解</button>
-            <button class="primary" :disabled="running || submitting || session.fixed" @click="runAndCheck">
+    <div class="wb">
+      <div class="wl">
+        <!-- 代码卡（暖纸） -->
+        <div class="cc">
+          <div class="cc-bar">
+            <span class="cc-tab">main.py</span>
+            <button class="cc-run" :disabled="running || submitting || session.fixed" @click="runAndCheck">
               {{ running || submitting ? '运行中…' : '▶ 运行' }}
             </button>
-          </span>
-        </div>
-        <textarea v-model="session.code" class="code" spellcheck="false" :disabled="session.fixed" />
+          </div>
+          <div class="cc-edit">
+            <div ref="gutterEl" class="cc-gutter">
+              <div v-for="n in codeLineCount" :key="n" :class="{ on: selectedLine === n }" @click="clickLine(n)">{{ n }}</div>
+            </div>
+            <div class="cc-wrap">
+              <div v-if="selectedLine" class="cc-band" :style="{ top: (16 + (selectedLine - 1) * 31) + 'px' }" />
+              <pre ref="hlEl" class="cc-hl" aria-hidden="true"><code v-html="highlightedCode" /></pre>
+              <textarea ref="taEl" v-model="session.code" class="cc-ta" spellcheck="false"
+                        :disabled="session.fixed" @scroll="syncScroll" />
+            </div>
+            <!-- 滑出讲解便签：点行号触发，内容用现成「逐行讲解」(walkRows)；不泄雷 -->
+            <div v-if="selectedLine" class="cc-note" :style="{ top: Math.max(8, (16 + (selectedLine - 1) * 31) - 6) + 'px' }">
+              <div class="cc-note-head">
+                <span class="cc-note-line">第 {{ selectedLine }} 行</span>
+                <button class="cc-note-x" @click="selectedLine = null" aria-label="收起">×</button>
+              </div>
+              <div class="cc-note-body">{{ lineNote }}</div>
+            </div>
+          </div>
 
-        <!-- 运行结果：真实运行（路线A，真跑非AI猜），终端样式 + 可折叠（点头部收起，腾纵向空间） -->
-        <div v-if="runResult" class="console">
-          <button class="console-bar" @click="consoleOpen = !consoleOpen">
-            <span class="console-dots"><i></i><i></i><i></i></span>
-            <span class="console-title">终端 · 真实运行结果</span>
-            <span class="console-status"
-                  :class="{ ok: !runResult.stderr && !runResult.timed_out, bad: runResult.stderr || runResult.timed_out }">
-              {{ runResult.timed_out ? '⏱ 超时（很可能死循环）' : (runResult.stderr ? '✗ 报错' : '✓ 运行成功') }}
-            </span>
-            <span class="console-caret">{{ consoleOpen ? '收起 ▲' : '展开 ▼' }}</span>
-          </button>
-          <div v-show="consoleOpen" class="console-body">
-            <div class="console-cmd">$ python main.py</div>
-            <pre v-if="runResult.stdout" class="console-out">{{ runResult.stdout }}</pre>
-            <pre v-if="runResult.stderr" class="console-err">{{ runResult.stderr }}</pre>
-            <div v-if="!runResult.stdout && !runResult.stderr && !runResult.timed_out" class="console-muted">（程序没有任何输出）</div>
+          <!-- 终端状态条（默认一行，运行后可展开） -->
+          <div class="cc-term">
+            <button class="cc-term-bar" @click="runResult && (consoleOpen = !consoleOpen)">
+              <span class="cc-term-g">›_</span>
+              <span class="cc-term-s" :class="{ bad: runResult && (runResult.stderr || runResult.timed_out) }">{{ runResult ? ((runResult.timed_out ? '超时 · 很可能死循环' : (runResult.stderr ? '运行报错' : '运行成功')) + termHint) : '还没运行 · 点「运行」看真实结果' }}</span>
+              <span v-if="runResult" class="cc-term-c">{{ consoleOpen ? '收起 ▾' : '展开 ▾' }}</span>
+            </button>
+            <div v-if="runResult" v-show="consoleOpen" class="cc-term-body">
+              <pre v-if="runResult.stdout" class="console-out">{{ runResult.stdout }}</pre>
+              <pre v-if="runResult.stderr" class="console-err">{{ runResult.stderr }}</pre>
+              <div v-if="!runResult.stdout && !runResult.stderr && !runResult.timed_out" class="console-muted">（程序没有任何输出）</div>
+            </div>
           </div>
         </div>
 
@@ -606,14 +653,10 @@ function quit() {
           </div>
         </div>
         <div v-else-if="session.fixed" class="banner banner-fixed">
-          <div class="bf-title">代码修对了 · 进度到 ⑤验证（还没结束）</div>
-          <div class="bf-body">
-            这只是<b>「已解决」</b>——会改 ≠ 真懂。<b>「已解决」≠「已掌握」</b>。
-            接着和导师走完 ⑤验证（边界测试）与 ⑥内化（讲清成因/定位/迁移），知识点才升级为「已内化」，这一关才算真正学会。
-          </div>
+          ✓ 代码修对了——接着到右边和知返走完<b>验证</b>、<b>内化</b>，这关才算真学会。
         </div>
 
-        <!-- 逐行讲解抽屉：从代码区底部上滑、覆盖代码下部，不撑高页面；两档高度 + 关闭 -->
+        <!-- 逐行讲解抽屉（完整通读；点行号是即时单行讲解） -->
         <div v-if="walkOpen" :class="['walk-drawer', { tall: walkTall }]">
           <div class="walk-drawer-bar">
             <span class="walk-drawer-title">逐行讲解</span>
@@ -637,17 +680,17 @@ function quit() {
             <div v-else class="walk-loading">加载中…</div>
           </div>
         </div>
-      </div>
 
-      <!-- 解释降为代码旁的按需工具，不与思考主线并列。 -->
+      <!-- 看不懂代码?：合并 逐行讲解 + 认符号 + 补概念 -->
       <div class="tool-shelf">
         <button :class="['tool-trigger', { open: showExplain }]" @click="toggleExplain">
-          <span><b>卡住时的小工具</b> · 认符号、补概念（逐行讲解在代码区右上「📖」）</span>
-          <span>{{ showExplain ? '收起 ↑' : '打开 ↓' }}</span>
+          <span><b>看不懂代码?</b> · 逐行讲解、认符号、补概念</span>
+          <span>{{ showExplain ? '收起 ↑' : '展开 ↓' }}</span>
         </button>
       </div>
       <div v-if="showExplain" class="panel explain-panel">
         <div class="explain-body">
+          <button class="walk-trigger-inline" @click="openWalk">📖 逐行讲解（完整通读，从代码上滑出）</button>
           <!-- 认符号 -->
           <div v-if="visibleBricks.length" class="syntax-box">
             <button class="syntax-head" @click="showSyntax = !showSyntax">
@@ -694,15 +737,15 @@ function quit() {
       </div>
       </div>
 
-      <div class="panel thinking-panel">
+      <div class="wr">
         <div class="thinking-head">
-          <div>
-            <div class="thinking-kicker">这不是作业，写不出来也可以直接问知返</div>
-            <h3>我的思考过程</h3>
+          <span class="thinking-kicker">这不是作业，写不出来也可以直接问知返</span>
+          <div class="thinking-head-r">
+            <span class="thinking-stage">现在 · {{ session.stage.slice(1) }}</span>
+            <button class="thought-toggle" @click="thoughtOpen = !thoughtOpen">{{ thoughtOpen ? '收起 ▲' : '展开 ▼' }}</button>
           </div>
-          <span class="thinking-stage">现在 · {{ session.stage.slice(1) }}</span>
-          <button class="thought-toggle" @click="thoughtOpen = !thoughtOpen">{{ thoughtOpen ? '收起 ▲' : '展开 ▼' }}</button>
         </div>
+        <h3 class="wr-title acp-serif">我的思考过程</h3>
 
         <div v-show="thoughtOpen" class="thought-line">
           <section :class="['thought-step', { active: session.stage === '①发现', filled: observationRecord?.observation }]">
@@ -789,20 +832,119 @@ function quit() {
           </div>
         </div>
         <div class="composer">
-          <textarea
-            v-model="draft" rows="2"
-            placeholder="描述你观察到的现象、你的猜测、你的验证过程…（Ctrl+Enter 发送）"
-            @keydown.ctrl.enter="send"
-          />
-          <button class="primary send-btn" :disabled="sending" @click="send">发送</button>
+          <div class="composer-box">
+            <textarea
+              v-model="draft" rows="1"
+              placeholder="描述你的观察、猜测、验证…（Enter 发送，Shift+Enter 换行）"
+              @keydown.enter.exact.prevent="send"
+            />
+            <div class="composer-actions">
+              <button class="send-btn" :disabled="sending" @click="send">发送</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
+   </div>
   </div>
 </template>
 
 <style scoped>
 .error { border-color: var(--red); color: var(--red); margin-bottom: 16px; }
+
+/* ============ 做题页：浅色单焦点（设计稿 Arena B，1:1）============ */
+.ws {
+  position: fixed; inset: 0; z-index: 200; display: flex; padding: 24px; overflow: auto;
+  background: radial-gradient(1100px 560px at 88% -12%, #efe6d6 0%, rgba(239,230,214,0) 58%), #f4f1ea;
+}
+.ws-card {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  background: #fcfbf7; border: 1px solid #e7e2d6; border-radius: 14px; overflow: hidden;
+  box-shadow: 0 24px 60px -34px rgba(43,41,36,0.35);
+}
+.wt { flex: none; height: 60px; display: flex; align-items: center; gap: 26px; padding: 0 24px; background: #fcfbf7; border-bottom: 1px solid #ece5d8; }
+.wt-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; color: #2b2924; }
+.wt-logo { width: 24px; height: 24px; border-radius: 7px; background: #c15f3c; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+.wt-nav { display: flex; gap: 22px; flex: 1; font-size: 14px; }
+.wt-nav a { text-decoration: none; color: #8a8275; }
+.wt-nav a:hover { color: #2b2924; }
+.wt-nav a.wt-on, .wt-nav a.router-link-active { color: #2b2924; font-weight: 600; }
+.wt-id { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #8a8275; background: #f4efe5; border: 1px solid #e7e2d6; padding: 6px 13px; border-radius: 7px; }
+.wt-quit { font-size: 13px; color: #6f695d; background: #fff; border: 1px solid #e7e2d6; padding: 7px 14px; border-radius: 8px; cursor: pointer; }
+.wt-quit:hover { border-color: #c15f3c; color: #c15f3c; }
+.wb { flex: 1; min-height: 0; display: flex; }
+.wl { width: 60%; min-width: 0; border-right: 1px solid #ece5d8; display: flex; flex-direction: column; gap: 16px; padding: 20px; overflow-y: auto; background: #faf7f0; }
+.wr { width: 40%; min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: #fcfbf7; }
+
+/* 代码卡（暖纸）*/
+.cc { background: #fffdf8; border: 1px solid #ece4d4; border-radius: 11px; overflow: hidden; box-shadow: 0 1px 2px rgba(43,41,36,0.03); }
+.cc-bar { height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; background: #f7f1e6; border-bottom: 1px solid #ece4d4; }
+.cc-tab { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #2b2924; background: #fffdf8; padding: 5px 12px; border-radius: 6px 6px 0 0; border-bottom: 2px solid #c15f3c; }
+.cc-run { font-size: 13px; font-weight: 600; color: #fff; background: #c15f3c; border: none; border-radius: 7px; padding: 7px 16px; cursor: pointer; }
+.cc-run:disabled { opacity: 0.55; cursor: not-allowed; }
+.cc-edit { position: relative; display: flex; font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; background: #fffdf8; min-height: 280px; max-height: 52vh; }
+.cc-gutter { flex: none; width: 46px; text-align: right; padding: 16px 12px 16px 0; color: #c3b9a5; user-select: none; overflow: hidden; }
+.cc-gutter div { height: 31px; line-height: 31px; cursor: pointer; }
+.cc-gutter div:hover { color: #c15f3c; }
+.cc-gutter div.on { color: #c15f3c; font-weight: 700; }
+.cc-wrap { position: relative; flex: 1; min-width: 0; }
+.cc-band { position: absolute; left: 0; right: 0; height: 31px; background: #f7e1d4; border-left: 3px solid #c15f3c; pointer-events: none; }
+.cc-hl, .cc-ta { margin: 0; border: 0; padding: 16px; box-sizing: border-box; font-family: inherit; font-size: 13.5px; line-height: 31px; white-space: pre; tab-size: 4; }
+.cc-hl { position: absolute; inset: 0; overflow: hidden; color: #5b5347; pointer-events: none; }
+.cc-hl :deep(.t-kw) { color: #9a6a45; }
+.cc-hl :deep(.t-bi) { color: #b07d3c; }
+.cc-hl :deep(.t-num) { color: #b07d3c; }
+.cc-hl :deep(.t-str) { color: #5c7a52; }
+.cc-hl :deep(.t-com) { color: #a89e8c; font-style: italic; }
+.cc-ta { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; outline: none; background: transparent; color: transparent; caret-color: #c15f3c; overflow: auto; }
+.cc-note { position: absolute; right: 16px; width: 320px; background: #fff; border: 1px solid #f0d8c8; border-left: 3px solid #c15f3c; border-radius: 10px; box-shadow: 0 18px 36px -16px rgba(193,95,60,0.35); padding: 12px 15px; z-index: 3; }
+.cc-note-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.cc-note-line { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #fff; background: #c15f3c; padding: 2px 8px; border-radius: 5px; font-weight: 600; }
+.cc-note-x { margin-left: auto; border: none; background: none; font-size: 16px; color: #a89e8c; cursor: pointer; line-height: 1; }
+.cc-note-body { font-size: 13px; line-height: 1.7; color: #3a3530; }
+.cc-term { border-top: 1px solid #ece4d4; background: #f7f1e6; }
+.cc-term-bar { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 16px; background: none; border: none; cursor: pointer; text-align: left; }
+.cc-term-g { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #a89e8c; }
+.cc-term-s { font-size: 13px; color: #6f695d; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-term-s.bad { color: #a54e30; }
+.cc-term-c { font-size: 12px; color: #a89e8c; }
+.cc-term-body { padding: 0 16px 12px; max-height: 160px; overflow: auto; }
+.cc-term-body .console-out { color: #3a3530; font-size: 13px; margin: 0; white-space: pre-wrap; }
+.cc-term-body .console-err { color: #a54e30; font-size: 13px; margin: 0; white-space: pre-wrap; }
+.cc-term-body .console-muted { color: #a89e8c; font-size: 12.5px; }
+
+/* 看不懂代码 + explain（浅色）*/
+.wl .tool-trigger { background: #fcfbf7; border: 1px solid #e7e2d6; border-radius: 11px; color: #6f695d; }
+.wl .tool-trigger b { color: #2b2924; }
+.wl .explain-panel { background: #fcfbf7; border: 1px solid #e7e2d6; border-radius: 11px; }
+.wl .walk-trigger-inline { width: 100%; background: #f4efe5; border: 1px solid #e7e2d6; color: #6f695d; border-radius: 10px; padding: 10px; font-size: 13px; font-weight: 600; cursor: pointer; margin-bottom: 6px; }
+.wl .walk-trigger-inline:hover { border-color: #c15f3c; color: #c15f3c; }
+
+/* 右栏：我的思考过程（浅色，按设计）*/
+.wr-title { font-family: var(--serif); font-size: 21px; font-weight: 600; color: #2b2924; margin: 0; padding: 4px 24px 0; }
+.wr .thinking-head { padding: 18px 24px 0; border: none; align-items: flex-start; }
+.wr .thinking-kicker { font-size: 12.5px; color: #8a8275; line-height: 1.5; }
+.wr .thinking-head-r { display: flex; align-items: center; gap: 9px; flex: none; }
+.wr .thinking-stage { background: #eaddd2; color: #a54e30; padding: 4px 11px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.wr .thought-toggle { border: none; background: none; color: #a89e8c; font-size: 12.5px; cursor: pointer; }
+.wr .thought-line { padding: 10px 24px 0; overflow-y: auto; }
+.wr .chat { min-height: 0; flex: 1 1 auto; padding: 8px 24px; }
+/* 返诗句：和正文一样的 24px 左右留白，别贴边 */
+.wr .tutor-divider { padding: 16px 24px 12px; }
+/* 输入框：按设计稿——卡片内 输入在上、发送在下右对齐（发送不再竖排） */
+.wr .composer { display: block; padding: 12px 24px 18px; margin: 0; }
+.wr .composer-box { background: #fff; border: 1px solid #e2dccd; border-radius: 12px; padding: 13px 15px; }
+.wr .composer-box textarea {
+  width: 100%; box-sizing: border-box; border: none; outline: none; resize: none; background: transparent;
+  font-family: inherit; font-size: 13.5px; line-height: 1.5; color: var(--text);
+}
+.wr .composer-box textarea::placeholder { color: #b3ab9a; }
+.wr .composer-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.wr .composer-actions .send-btn {
+  background: #c15f3c; color: #fff; border: none; border-radius: 9px; padding: 8px 22px;
+  font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.wr .composer-actions .send-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
 /* ========== 方向 D：Anthropic 暖调克制风（象牙底 + 陶土点缀 + 衬线标题 + 大留白） ========== */
 /* ---------- 选题大厅 ---------- */
