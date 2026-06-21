@@ -461,6 +461,36 @@ def 提问训练_degraded与低置信不参与短板统计():
     assert q.weakness_summary(db, "stu_qt4") is None
 
 
+@test
+def 提问训练_custom场景注册且无隐藏背景():
+    from app.services import question_training as q
+    assert "custom" in q.SCENARIOS and q.SCENARIOS["custom"]["brief"] == ""
+
+
+@test
+def 提问训练_custom资产化与预置共存且短板合并():
+    from app.services import question_training as q
+    db = TestSession()
+    sid = "stu_custom"
+    # 2 条 custom + 2 条预置，都缺预期 → 短板统计应合并到 4 条、判 expectation
+    for _ in range(2):
+        q.log_diagnosis(db, student_id=sid, scenario_id="custom", prompt="我自己的问题x",
+                        result={"phenomenon": True, "context": True, "expectation": False,
+                                "score": 66, "feedback": "f", "confidence": 0.9, "degraded": False})
+    for _ in range(2):
+        q.log_diagnosis(db, student_id=sid, scenario_id="login", prompt="预置场景x",
+                        result={"phenomenon": True, "context": True, "expectation": False,
+                                "score": 66, "feedback": "f", "confidence": 0.9, "degraded": False})
+    # 资产里 custom 与预置共存
+    rows = db.query(ExecutionEvent).filter_by(student_id=sid, source="qt_diagnose").all()
+    sids = {(r.meta or {}).get("scenario_id") for r in rows}
+    assert sids == {"custom", "login"}, sids
+    # 短板统计合并 4 条
+    w = q.weakness_summary(db, sid)
+    assert w and w["factor"] == "expectation" and w["sample_size"] == 4
+    db.close()
+
+
 def _qres(p, c, e, conf=0.9, degraded=False):
     return {"phenomenon": p, "context": c, "expectation": e,
             "score": 0, "feedback": "f", "confidence": conf, "degraded": degraded}

@@ -14,7 +14,9 @@ const SCENARIOS = [
   { id: 'login', title: '登录功能跑不通', brief: '你在做一个登录功能，点登录后没反应或报错。把这件事问清楚，让 AI 能直接帮上忙。' },
   { id: 'list_empty', title: '列表页一直空白', brief: '你的页面应该显示一个列表，但运行后一直是空白，数据出不来。' },
   { id: 'wrong_result', title: '函数算出来的结果不对', brief: '你写了个函数做计算，但它返回的数和你预期的对不上。' },
+  { id: 'custom', title: '我自己的问题', brief: '' },
 ]
+const isCustom = computed(() => scenarioId.value === 'custom')
 
 const scenarioId = ref(SCENARIOS[0].id)
 const scenario = computed(() => SCENARIOS.find((s) => s.id === scenarioId.value))
@@ -127,12 +129,14 @@ const scoreDelta = computed(() => {
             <span class="qt-promptlabel">你向 AI 的提问</span>
             <span class="qt-lvl">{{ scenario.title }}</span>
           </div>
-          <p class="qt-brief">{{ scenario.brief }}</p>
+          <p v-if="isCustom" class="qt-brief">先讲清你的情况，再写你想问 AI 的问题——知返只看你“问得好不好”，不替你解题。</p>
+          <p v-else class="qt-brief">{{ scenario.brief }}</p>
           <textarea
             v-model="draft" class="qt-input" rows="5"
-            placeholder="比如：写清楚报了什么错、在哪段代码、你本来想要什么结果…"
+            :placeholder="isCustom ? '先讲清你的情况，再写你想问 AI 的问题…' : '比如：写清楚报了什么错、在哪段代码、你本来想要什么结果…'"
             @keydown.ctrl.enter="submit"
           />
+          <p v-if="isCustom" class="qt-privacy">⚠️ 别粘贴密码、token、真实隐私信息——这里只练怎么提问。</p>
           <div class="qt-ctrl">
             <button class="qt-next" :disabled="!draft.trim() || loading" @click="submit">
               {{ loading ? '知返诊断中…' : history.length ? '让知返再看看 →' : '让知返看看 →' }}
@@ -240,6 +244,7 @@ const scoreDelta = computed(() => {
 .qt-promptlabel { font-size: 13.5px; font-weight: 600; color: var(--text); }
 .qt-lvl { font-size: 12px; color: var(--muted); }
 .qt-brief { font-size: 12.5px; color: var(--muted); line-height: 1.6; margin: 0 0 12px; }
+.qt-privacy { font-size: 12px; color: #a07a45; background: #f7efe0; border-radius: 7px; padding: 7px 11px; margin: 10px 0 0; line-height: 1.5; }
 .qt-input {
   width: 100%; box-sizing: border-box; background: #fff; border: 1px solid #e2dccd; border-radius: 11px;
   padding: 13px 15px; font-family: inherit; font-size: 14px; line-height: 1.7; color: var(--text); resize: vertical; outline: none;

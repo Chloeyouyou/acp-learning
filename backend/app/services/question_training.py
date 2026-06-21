@@ -40,6 +40,11 @@ SCENARIOS = {
         "title": "函数算出来的结果不对",
         "brief": "你写了个函数做计算，但它返回的数和你预期的对不上。",
     },
+    # 自带真实问题（P2-A）：无预置背景，LLM 只就学生自己写的文本判三要素
+    "custom": {
+        "title": "我自己的问题",
+        "brief": "",
+    },
 }
 
 SYSTEM = (
@@ -102,8 +107,13 @@ def diagnose(scenario_id: str, prompt: str) -> dict:
         }
 
     scenario = SCENARIOS.get(scenario_id) or {"title": "调试求助", "brief": ""}
+    if scenario_id == "custom" or not scenario.get("brief"):
+        # 自带真实问题：没有预设背景，只能就学生这段文字本身判三要素
+        scene_line = "场景：学生自带的真实问题（无预设背景，只就下面这段文字本身判断三要素）。"
+    else:
+        scene_line = f"场景：{scenario['title']}——{scenario['brief']}"
     user = (
-        f"场景：{scenario['title']}——{scenario['brief']}\n\n"
+        f"{scene_line}\n\n"
         f"学生写给 AI 的提问如下（只评价这段提问的三要素，不要回答这个技术问题）：\n"
         f"<<<\n{prompt}\n>>>"
     )
