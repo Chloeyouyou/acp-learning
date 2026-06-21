@@ -153,7 +153,7 @@ const sortedMastery = computed(() =>
   }))
 
 // 下半部分用标签页：一次只看一块，避免页面又长又吵
-const tab = ref(route.query.tab === '推荐' ? '推荐' : '知识点')   // '知识点' | '能力' | '推荐'
+const tab = ref(route.query.tab === '推荐' ? '推荐' : '能力')   // 默认能力雷达（设计稿：雷达是主角）；'能力' | '知识点' | '推荐'
 
 // 维度还没数据时，解释它测什么、怎么才会有分（避免空维度看起来像坏了）
 const DIM_HINT = {
@@ -162,6 +162,13 @@ const DIM_HINT = {
 }
 const unevaluatedDims = computed(() =>
   (profile.value?.dimensions || []).filter((d) => d.score == null))
+
+// 雷达画 6 个 Debug 能力（设计稿：日志阅读/边界意识/根因分析/独立调试/假设验证/内化），而非 2 个高层维度
+const RADAR_CAPS = ['Log_Reading', 'Boundary_Awareness', 'Root_Cause_Reasoning', 'Independent_Debug', 'Hypothesis_Testing', 'Internalization']
+const radarDims = computed(() => RADAR_CAPS.map((cap) => {
+  const v = profile.value?.vector?.[cap]
+  return { name: ZH[cap] || cap, score: v && v.score != null ? Math.round(v.score) : null, confidence: v?.confidence }
+}))
 </script>
 
 <template>
@@ -193,8 +200,8 @@ const unevaluatedDims = computed(() =>
 
     <!-- 标签页：一次只看一块，页面不再又长又吵 -->
     <div class="tabbar">
-      <button :class="['tab', { on: tab === '知识点' }]" @click="tab = '知识点'">知识点</button>
       <button :class="['tab', { on: tab === '能力' }]" @click="tab = '能力'">能力雷达</button>
+      <button :class="['tab', { on: tab === '知识点' }]" @click="tab = '知识点'">知识点</button>
       <button :class="['tab', { on: tab === '推荐' }]" @click="tab = '推荐'">推荐与题库</button>
     </div>
 
@@ -202,7 +209,7 @@ const unevaluatedDims = computed(() =>
     <div v-show="tab === '能力'" class="tab-pane cap-pane">
       <div class="panel radar-panel">
         <h3>能力雷达</h3>
-        <RadarChart :dimensions="profile.dimensions" />
+        <RadarChart :dimensions="radarDims" />
         <div class="legend"><span class="dot low" /> 灰色=数据还少（事件&lt;5），多练会更准</div>
         <details v-for="d in unevaluatedDims" :key="d.name" class="dim-hint">
           <summary><b>「{{ d.name }}」还未评估</b></summary>

@@ -60,7 +60,7 @@ const valuePoints = computed(() =>
 .radar { width: 100%; max-width: 360px; }
 .ring { fill: none; stroke: var(--border); }
 .axis { stroke: var(--border); }
-.value { fill: rgba(37, 99, 235, 0.25); stroke: var(--primary); stroke-width: 2; }
+.value { fill: rgba(193, 95, 60, 0.18); stroke: var(--primary); stroke-width: 2; }
 .label { font-size: 12px; fill: var(--text); font-weight: 600; }
 .score { font-size: 11px; fill: var(--primary); }
 .score.low { fill: var(--muted); }
