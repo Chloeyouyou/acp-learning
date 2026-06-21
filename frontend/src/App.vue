@@ -59,6 +59,7 @@ function switchIdentity() {
       </div>
       <nav>
         <RouterLink to="/arena">Bug闯关训练场</RouterLink>
+        <RouterLink to="/question">提问训练</RouterLink>
         <RouterLink to="/timeline">成长轨迹</RouterLink>
         <RouterLink to="/profile">能力画像</RouterLink>
       </nav>
@@ -73,25 +74,37 @@ function switchIdentity() {
 
   <!-- 轻量身份页：没确立身份时盖住全站；无密码、无后端鉴权 -->
   <div v-else class="identity-gate">
-    <div class="identity-card">
-      <div class="identity-brand">ACP Learning</div>
-      <h1 class="identity-title">先填一下你的身份</h1>
-      <p class="identity-sub">用学号记住你——换设备、清缓存后，输同一个学号就能找回你的进度、接着做和复习。</p>
-
-      <label class="identity-field">
-        <span>学号</span>
-        <input v-model="formId" placeholder="例如 2025xxxxxx" @keyup.enter="confirmIdentity" />
-      </label>
-      <label class="identity-field">
-        <span>姓名（可选）</span>
-        <input v-model="formName" placeholder="昵称也行" @keyup.enter="confirmIdentity" />
-      </label>
-      <button class="identity-go" :disabled="!formId.trim()" @click="confirmIdentity">进入</button>
-
-      <div v-if="legacyId" class="identity-legacy">
-        <p>这台设备上已有一份学习记录（{{ legacyId }}）。</p>
-        <button class="identity-legacy-btn" @click="useLegacy">继续沿用这份记录</button>
+    <div class="identity-wrap">
+      <div class="identity-brandtop">
+        <svg class="identity-logo" viewBox="0 0 48 48" aria-hidden="true">
+          <defs><path id="acp-ray" d="M24 6 Q20.6 14 24 23 Q27.4 14 24 6 Z" /></defs>
+          <g fill="currentColor">
+            <use href="#acp-ray" /><use href="#acp-ray" transform="rotate(30 24 24)" /><use href="#acp-ray" transform="rotate(60 24 24)" />
+            <use href="#acp-ray" transform="rotate(90 24 24)" /><use href="#acp-ray" transform="rotate(120 24 24)" /><use href="#acp-ray" transform="rotate(150 24 24)" />
+            <use href="#acp-ray" transform="rotate(180 24 24)" /><use href="#acp-ray" transform="rotate(210 24 24)" /><use href="#acp-ray" transform="rotate(240 24 24)" />
+            <use href="#acp-ray" transform="rotate(270 24 24)" /><use href="#acp-ray" transform="rotate(300 24 24)" /><use href="#acp-ray" transform="rotate(330 24 24)" />
+          </g>
+        </svg>
+        <span class="identity-brandname">ACP Learning</span>
       </div>
+      <div class="identity-card">
+        <h1 class="identity-title">先填一下你的身份</h1>
+        <p class="identity-sub">用学号记住你——换设备、清缓存后，输同一个学号就能找回你的进度、接着做和复习。</p>
+        <label class="identity-field">
+          <span>学号</span>
+          <input class="focal" v-model="formId" placeholder="例如 2025xxxxxx" @keyup.enter="confirmIdentity" />
+        </label>
+        <label class="identity-field">
+          <span>姓名 <small>（可选）</small></span>
+          <input v-model="formName" placeholder="昵称也行" @keyup.enter="confirmIdentity" />
+        </label>
+        <button class="identity-go" :disabled="!formId.trim()" @click="confirmIdentity">进入</button>
+        <div v-if="legacyId" class="identity-legacy">
+          <p>这台设备上已有一份学习记录（{{ legacyId }}）。</p>
+          <button class="identity-legacy-btn" @click="useLegacy">继续沿用这份记录</button>
+        </div>
+      </div>
+      <p class="identity-foot">无密码、无后端鉴权 · 学号只用来在本地找回你的学习轨迹</p>
     </div>
   </div>
 </template>
@@ -156,10 +169,16 @@ nav a.router-link-active { color: var(--primary); border-color: var(--primary); 
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
   padding: 24px; background: var(--bg, #f4f1ea);
 }
+.identity-wrap { width: 100%; max-width: 440px; }
+.identity-brandtop { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 24px; }
+.identity-logo { width: 44px; height: 44px; color: var(--primary); }
+.identity-brandname { font-family: var(--serif); font-size: 19px; font-weight: 600; color: var(--text); letter-spacing: 0.3px; }
+.identity-foot { text-align: center; font-size: 12px; color: var(--muted); margin: 18px 0 0; line-height: 1.6; }
 .identity-card {
-  width: 100%; max-width: 420px; background: var(--panel); border: 1px solid var(--border);
-  border-radius: 18px; padding: 36px 32px; box-shadow: 0 24px 60px -30px rgba(43, 41, 36, 0.35);
+  width: 100%; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 18px; padding: 34px 32px; box-shadow: 0 24px 60px -30px rgba(43, 41, 36, 0.35);
 }
+.identity-field input.focal { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(193, 95, 60, 0.10); }
 .identity-brand {
   font-family: var(--serif); font-weight: 600; font-size: 18px; color: var(--primary);
   letter-spacing: 0.3px; margin-bottom: 20px;
