@@ -180,14 +180,9 @@ function showLine(n) {
   selectedLine.value = n
   if (!walkthrough.value && !walkLoading.value) loadWalkthrough(false)
 }
-function clickLine(n) {           // 行号：点同一行可收起
+function clickLine(n) {           // 点行号：滑出该行讲解；点同一行可收起
   if (selectedLine.value === n) { selectedLine.value = null; return }
   showLine(n)
-}
-function codeClick(e) {           // 点代码：按光标所在行滑出讲解（同时照常编辑）
-  const ta = e.target
-  const line = (ta.value.slice(0, ta.selectionStart).match(/\n/g) || []).length + 1
-  showLine(line)
 }
 const lineNote = computed(() => {
   if (!selectedLine.value) return ''
@@ -625,7 +620,7 @@ function quit() {
               <div v-if="selectedLine" class="cc-band" :style="{ top: (16 + (selectedLine - 1) * 31) + 'px' }" />
               <pre ref="hlEl" class="cc-hl" aria-hidden="true"><code v-html="highlightedCode" /></pre>
               <textarea ref="taEl" v-model="session.code" class="cc-ta" spellcheck="false"
-                        :disabled="session.fixed" @scroll="syncScroll" @click="codeClick" />
+                        :disabled="session.fixed" @scroll="syncScroll" />
             </div>
             <!-- 滑出讲解便签：点行号触发，内容用现成「逐行讲解」(walkRows)；不泄雷 -->
             <div v-if="selectedLine" class="cc-note" :style="{ top: Math.max(8, (16 + (selectedLine - 1) * 31) - 6) + 'px' }">
@@ -1146,50 +1141,6 @@ function quit() {
 }
 .card:hover .card-cta { transform: translateX(4px); }
 
-/* ---------- 阶段步进条 ---------- */
-.workspace { display: flex; flex-direction: column; gap: 20px; }
-
-/* 开题前的小检查：克制的帮手横幅，不告警、不阻断 */
-.precheck {
-  display: flex; align-items: flex-start; gap: 12px;
-  background: var(--accent-soft); border: 1px solid var(--border); border-radius: 12px;
-  padding: 12px 14px;
-}
-.precheck-main { flex: 1; min-width: 0; }
-.precheck-title { font-size: 13.5px; font-weight: 600; color: var(--primary-dark); }
-.precheck-body { font-size: 13.5px; color: var(--text); line-height: 1.6; margin-top: 3px; }
-.precheck-close {
-  border: none; background: none; color: var(--muted); font-size: 18px; line-height: 1;
-  cursor: pointer; padding: 2px 4px; flex-shrink: 0;
-}
-.precheck-close:hover { color: var(--text); }
-
-.stage-bar {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 16px; padding: 14px 22px; flex-wrap: wrap;
-}
-.current-stage { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.current-stage-label { color: var(--muted); font-size: 12.5px; }
-.current-stage b { font-family: var(--serif); color: var(--primary-dark); font-size: 15px; }
-.current-stage > span:last-child { color: var(--muted); font-size: 13px; }
-.stepper { display: flex; align-items: center; gap: 0; margin: 0; padding: 0; list-style: none; flex-wrap: wrap; }
-.step { display: flex; align-items: center; gap: 6px; color: var(--muted); position: relative; padding-right: 5px; }
-.step:not(:last-child)::after {
-  content: ''; width: 16px; height: 1px; background: var(--border); margin: 0 7px 0 6px;
-}
-.step-no {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 21px; height: 21px; border-radius: 50%; font-size: 11px; font-weight: 600;
-  background: #ece6da; color: var(--muted); transition: all 0.2s;
-}
-.step-label { font-size: 12.5px; }
-.step.active .step-no { background: var(--primary); color: #fff; box-shadow: 0 0 0 3px var(--accent-soft); }
-.step.active .step-label { color: var(--text); font-weight: 600; }
-.step.done .step-no { background: #cbb9a6; color: #fff; }
-.step.done .step-label { color: var(--muted); }
-.stage-meta { display: flex; align-items: center; gap: 16px; }
-.hint-level { font-size: 13px; color: var(--muted); }
-.hint-level b { color: var(--text); }
 
 /* ---------- 练前小灶 ---------- */
 /* 辅助层：移到主线下方（CSS order，不动 DOM），折叠条做成安静小条 */
@@ -1278,13 +1229,6 @@ function quit() {
 .walk-deep:hover { border-color: var(--primary); }
 .walk-deep-done { margin-top: 10px; font-size: 12px; color: var(--muted); }
 
-/* ---------- 认知过程双栏 ---------- */
-.cols {
-  display: grid; grid-template-columns: minmax(0, 44fr) minmax(390px, 56fr);
-  gap: 20px; align-items: stretch;
-}
-.code-column { min-width: 0; display: flex; flex-direction: column; gap: 12px; height: 100%; }
-.code-panel { flex: 1 1 auto; display: flex; flex-direction: column; position: relative; overflow: hidden; }
 .explain-panel { max-height: 560px; overflow-y: auto; }
 .explain-body { display: flex; flex-direction: column; gap: 14px; }
 .tool-shelf { padding: 0 4px; }
@@ -1315,26 +1259,6 @@ function quit() {
   .composer { flex-direction: column; align-items: stretch; }
   .send-btn { width: 100%; }
 }
-.panel-title {
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  flex-wrap: wrap; font-weight: 600; margin-bottom: 14px;
-}
-.title-text { display: inline-flex; align-items: center; gap: 9px; font-family: var(--serif); font-size: 15.5px; white-space: nowrap; }
-.title-sub { font-size: 12px; font-weight: 400; color: var(--muted); }
-
-/* ---------- 代码区 ---------- */
-.code {
-  width: 100%; min-height: 300px; height: auto; flex: 1 1 300px; resize: none; overflow: auto;
-  background: #f5f0e6; color: var(--text);
-  font-family: Consolas, 'Courier New', monospace; font-size: 14.5px;
-  line-height: 1.75; border: 1px solid #d8d0bf; border-radius: 10px; padding: 16px 18px;
-  box-shadow: inset 0 1px 0 #fffdf8, 0 2px 8px rgba(43,41,36,0.06);
-  white-space: pre-wrap; word-break: break-word; tab-size: 4;
-  scrollbar-width: none; -ms-overflow-style: none;   /* 可滚动但隐藏滚动条（仍可滚轮/拖动/键盘） */
-}
-.code::-webkit-scrollbar { display: none; }
-.code:focus { outline: 2px solid var(--accent-soft); border-color: var(--primary); }
-.code:disabled { opacity: 0.85; background: #efe9dc; }
 .banner {
   margin-top: 14px; padding: 13px 16px; border-radius: 10px; font-size: 13.5px; line-height: 1.75;
   background: var(--accent-soft); color: #7a3f28;
@@ -1343,35 +1267,9 @@ function quit() {
 .banner b { font-weight: 600; }
 .bf-title { font-weight: 600; color: var(--primary-dark); margin-bottom: 4px; }
 .bf-body { font-size: 13px; line-height: 1.7; }
-.code-actions { display: inline-flex; gap: 8px; flex-shrink: 0; }
-.code-actions button { white-space: nowrap; }
 /* 提交修复=克制次按钮（运行才是该先点的、温暖主按钮），降低"被评判"压力 */
 .submit-btn { color: var(--muted); }
 .submit-btn:hover:not(:disabled) { color: var(--primary); border-color: var(--primary); }
-/* 运行结果 = 正式终端：深色控制台，和浅色代码编辑区分工清楚 */
-.console {
-  margin-top: 14px; border-radius: 10px; overflow: hidden; background: #1e1c1a;
-  border: 1px solid #14120f; box-shadow: 0 3px 12px rgba(20,18,15,0.18);
-  font-family: Consolas, 'Courier New', monospace;
-}
-.console-bar { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 12px;
-  background: #2b2924; border: none; border-radius: 0; cursor: pointer; text-align: left; }
-.console-bar:hover { background: #332f2a; }
-.console-caret { font-size: 11px; color: #b9b0a0; margin-left: 10px; flex-shrink: 0; }
-.console-dots { display: inline-flex; gap: 6px; }
-.console-dots i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-.console-dots i:nth-child(1) { background: #e06c5a; }
-.console-dots i:nth-child(2) { background: #e3b341; }
-.console-dots i:nth-child(3) { background: #6fae5f; }
-.console-title { color: #b9b0a0; font-size: 12px; letter-spacing: 0.3px; }
-.console-status { margin-left: auto; font-size: 12px; font-weight: 600; }
-.console-status.ok { color: #8fc97e; }
-.console-status.bad { color: #f0907f; }
-.console-body { padding: 12px 14px; font-size: 13px; line-height: 1.6; max-height: 300px; overflow: auto; }
-
-/* 逐行讲解触发按钮（代码区右上） */
-.walk-trigger { font-size: 13px; padding: 6px 12px; }
-/* 逐行讲解抽屉：从代码区底部上滑、覆盖代码下部，不撑高页面 */
 /* 逐行讲解抽屉：从代码区底部上滑、覆盖代码下部，不撑高页面 */
 .walk-drawer {
   position: absolute; left: 0; right: 0; bottom: 0; height: 60%;
@@ -1394,7 +1292,6 @@ function quit() {
 /* 思考过程折叠开关 */
 .thought-toggle { font-size: 12px; padding: 3px 10px; border-radius: 7px; color: var(--muted); margin-left: 8px; flex-shrink: 0; }
 .thought-toggle:hover { color: var(--primary); border-color: var(--primary); }
-.console-cmd { color: #7e7668; margin-bottom: 6px; }
 .console-out { margin: 0; white-space: pre-wrap; word-break: break-word; color: #e6e0d4; }
 .console-err { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; color: #f0907f; }
 .console-muted { color: #7e7668; }
