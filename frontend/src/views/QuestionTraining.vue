@@ -15,19 +15,23 @@ const scenario = computed(() => SCENARIOS.find((s) => s.id === scenarioId.value)
 const draft = ref('')
 const loading = ref(false)
 const error = ref('')
-const result = ref(null)       // { phenomenon, context, expectation, score, feedback, confidence, degraded }
-const prevScore = ref(null)    // 上一版分数（用于显示进步）
-const attempts = ref(0)        // 改了几版
+
+// 历次提问保存（每个场景一份历史）：[{ prompt, result }]；viewIndex 指向当前翻看的版本
+const historyByScenario = ref({})
+const viewIndex = ref(-1)      // -1 = 正在写新的一版（草稿态）
+
+const history = computed(() => historyByScenario.value[scenarioId.value] || [])
+const viewing = computed(() => (viewIndex.value >= 0 ? history.value[viewIndex.value] : null))
+const result = computed(() => viewing.value?.result || null)
 
 function pickScenario(id) {
   if (id === scenarioId.value) return
   scenarioId.value = id
-  // 换场景重置诊断（提问内容也清空，避免对不上）
-  draft.value = ''
-  result.value = null
-  prevScore.value = null
-  attempts.value = 0
   error.value = ''
+  // 回到该场景的最后一版（若有），否则草稿态
+  const h = historyByScenario.value[id] || []
+  if (h.length) { viewIndex.value = h.length - 1; draft.value = h[h.length - 1].prompt }
+  else { viewIndex.value = -1; draft.value = '' }
 }
 
 async function submit() {
@@ -37,15 +41,33 @@ async function submit() {
   error.value = ''
   try {
     const r = await api.diagnoseQuestion(scenarioId.value, p)
-    prevScore.value = result.value ? result.value.score : null
-    result.value = r
-    attempts.value += 1
+    const list = historyByScenario.value[scenarioId.value] || []
+    list.push({ prompt: p, result: r })
+    historyByScenario.value[scenarioId.value] = list
+    viewIndex.value = list.length - 1     // 跳到最新一版
   } catch (e) {
     error.value = e.message || '诊断失败，请稍后再试'
   } finally {
     loading.value = false
   }
 }
+
+// 回退/前进翻看历史版本（参考原 demo 的 ← →）
+function goPrev() {
+  if (viewIndex.value > 0) { viewIndex.value -= 1; draft.value = viewing.value.prompt; error.value = '' }
+}
+function goNext() {
+  if (viewIndex.value < history.value.length - 1) { viewIndex.value += 1; draft.value = viewing.value.prompt; error.value = '' }
+}
+// 以当前版本为底，改新的一版（清诊断、保留文字让学生续改）
+function reviseNew() {
+  viewIndex.value = -1
+  error.value = ''
+}
+
+const canPrev = computed(() => viewIndex.value > 0)
+const canNext = computed(() => viewIndex.value >= 0 && viewIndex.value < history.value.length - 1)
+const isDraft = computed(() => viewIndex.value === -1)
 
 const scoreColor = computed(() => {
   const s = result.value?.score ?? 0
@@ -55,13 +77,17 @@ const factors = computed(() => {
   const r = result.value
   return [
     { key: '现象', desc: '报了什么、看到什么', ok: !!r?.phenomenon },
-    { key: '上下文', desc: '哪段代码、哪一行', ok: !!r?.context },
+    { key: '上下文', desc: '哪个功能、哪一步、哪一行', ok: !!r?.context },
     { key: '预期', desc: '你本来想要什么结果', ok: !!r?.expectation },
   ]
 })
+// 与上一版（翻看位置的前一版）比较分数变化
 const scoreDelta = computed(() => {
-  if (result.value == null || prevScore.value == null) return null
-  return result.value.score - prevScore.value
+  if (viewIndex.value <= 0) return null
+  const cur = history.value[viewIndex.value]?.result?.score
+  const prev = history.value[viewIndex.value - 1]?.result?.score
+  if (cur == null || prev == null) return null
+  return cur - prev
 })
 </script>
 
@@ -96,9 +122,19 @@ const scoreDelta = computed(() => {
           />
           <div class="qt-ctrl">
             <button class="qt-next" :disabled="!draft.trim() || loading" @click="submit">
-              {{ loading ? '知返诊断中…' : result ? '再改一版 →' : '让知返看看 →' }}
+              {{ loading ? '知返诊断中…' : history.length ? '让知返再看看 →' : '让知返看看 →' }}
             </button>
-            <span v-if="attempts" class="qt-step">已改 {{ attempts }} 版</span>
+            <button v-if="!isDraft" class="qt-revise" :disabled="loading" @click="reviseNew">改新的一版</button>
+          </div>
+
+          <!-- 历次提问保存 + 回退翻看 -->
+          <div v-if="history.length" class="qt-versions">
+            <button class="qt-vbtn" :disabled="!canPrev" @click="goPrev">← 上一版</button>
+            <span class="qt-vlabel">
+              <template v-if="isDraft">正在写新的一版（已存 {{ history.length }} 版）</template>
+              <template v-else>第 {{ viewIndex + 1 }} / {{ history.length }} 版</template>
+            </span>
+            <button class="qt-vbtn" :disabled="!canNext" @click="goNext">下一版 →</button>
           </div>
           <p v-if="error" class="qt-error">{{ error }}</p>
         </div>
@@ -128,9 +164,19 @@ const scoreDelta = computed(() => {
           </div>
         </div>
 
-        <!-- 空态：还没提交 -->
+        <!-- 空态：还没诊断也展示三要素，让面板不空、当作"会按这三点打分"的预告 -->
         <div v-if="!result" class="qt-empty">
-          在左边写下你的提问，点「让知返看看」——它会告诉你这条提问缺了哪个要素、怎么补。
+          <p class="qt-empty-lead">知返会照这三点看你的提问——写好它们，分数自然高：</p>
+          <div class="qt-factors">
+            <div v-for="f in factors" :key="f.key" class="qt-f pending">
+              <div class="qt-f-head">
+                <span class="qt-f-icon">○</span>
+                <span class="qt-f-name">{{ f.key }}</span>
+                <span class="qt-f-desc">{{ f.desc }}</span>
+              </div>
+            </div>
+          </div>
+          <p class="qt-empty-foot">在左边写下提问，点「让知返看看」。</p>
         </div>
 
         <template v-else>
@@ -189,8 +235,18 @@ const scoreDelta = computed(() => {
 .qt-ctrl { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .qt-next { font: inherit; font-size: 13px; font-weight: 700; color: #fff; background: var(--primary); border: none; border-radius: 9px; padding: 10px 20px; cursor: pointer; }
 .qt-next:disabled { opacity: 0.5; cursor: not-allowed; }
+.qt-revise { font: inherit; font-size: 13px; color: var(--muted); background: #fff; border: 1px solid var(--border); border-radius: 9px; padding: 10px 16px; cursor: pointer; }
+.qt-revise:hover:not(:disabled) { color: var(--primary); border-color: var(--primary); }
+.qt-revise:disabled { opacity: 0.5; cursor: not-allowed; }
 .qt-step { font-size: 12.5px; color: var(--muted); }
 .qt-error { margin: 10px 0 0; font-size: 12.5px; color: #a54e30; }
+
+/* 历次提问回退 */
+.qt-versions { display: flex; align-items: center; gap: 12px; margin-top: 13px; padding-top: 13px; border-top: 1px solid var(--border); }
+.qt-vbtn { font: inherit; font-size: 12.5px; color: var(--muted); background: none; border: 1px solid var(--border); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
+.qt-vbtn:hover:not(:disabled) { color: var(--text); border-color: #dac9b8; }
+.qt-vbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.qt-vlabel { font-size: 12.5px; color: var(--muted); flex: 1; text-align: center; }
 
 .qt-compare-t { font-size: 12.5px; font-weight: 600; color: var(--muted); margin-bottom: 9px; }
 .qt-compare-row { display: flex; gap: 12px; }
@@ -208,7 +264,10 @@ const scoreDelta = computed(() => {
 .qt-ava { width: 34px; height: 34px; border-radius: 50%; background: var(--primary); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; flex: none; }
 .qt-diag-name { font-size: 15px; font-weight: 700; color: var(--text); line-height: 1; }
 .qt-diag-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
-.qt-empty { font-size: 13.5px; color: var(--muted); line-height: 1.7; padding: 8px 0; }
+.qt-empty-lead { font-size: 13px; color: var(--muted); line-height: 1.7; margin: 0 0 12px; }
+.qt-empty-foot { font-size: 12.5px; color: #b3ab9a; margin: 14px 0 0; }
+.qt-f.pending { background: #faf7f0; border: 1px dashed #e2dccd; }
+.qt-f.pending .qt-f-icon { color: #c9bfad; }
 
 .qt-score { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
 .qt-score-n { font-family: var(--serif); font-size: 38px; font-weight: 600; line-height: 1; }
