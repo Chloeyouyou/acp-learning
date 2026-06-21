@@ -174,11 +174,20 @@ const termHint = computed(() => {
   return ''
 })
 
-// 单焦点：点行号 → 滑出那一行的讲解（内容用现成「逐行讲解」walkRows，不泄雷位置）
+// 单焦点：点代码行/行号 → 滑出那一行的讲解（内容用现成「逐行讲解」walkRows，不泄雷位置）
 const selectedLine = ref(null)
-function clickLine(n) {
-  selectedLine.value = selectedLine.value === n ? null : n
-  if (selectedLine.value && !walkthrough.value && !walkLoading.value) loadWalkthrough(false)
+function showLine(n) {
+  selectedLine.value = n
+  if (!walkthrough.value && !walkLoading.value) loadWalkthrough(false)
+}
+function clickLine(n) {           // 行号：点同一行可收起
+  if (selectedLine.value === n) { selectedLine.value = null; return }
+  showLine(n)
+}
+function codeClick(e) {           // 点代码：按光标所在行滑出讲解（同时照常编辑）
+  const ta = e.target
+  const line = (ta.value.slice(0, ta.selectionStart).match(/\n/g) || []).length + 1
+  showLine(line)
 }
 const lineNote = computed(() => {
   if (!selectedLine.value) return ''
@@ -616,7 +625,7 @@ function quit() {
               <div v-if="selectedLine" class="cc-band" :style="{ top: (16 + (selectedLine - 1) * 31) + 'px' }" />
               <pre ref="hlEl" class="cc-hl" aria-hidden="true"><code v-html="highlightedCode" /></pre>
               <textarea ref="taEl" v-model="session.code" class="cc-ta" spellcheck="false"
-                        :disabled="session.fixed" @scroll="syncScroll" />
+                        :disabled="session.fixed" @scroll="syncScroll" @click="codeClick" />
             </div>
             <!-- 滑出讲解便签：点行号触发，内容用现成「逐行讲解」(walkRows)；不泄雷 -->
             <div v-if="selectedLine" class="cc-note" :style="{ top: Math.max(8, (16 + (selectedLine - 1) * 31) - 6) + 'px' }">
@@ -631,7 +640,8 @@ function quit() {
           <!-- 终端状态条（默认一行，运行后可展开） -->
           <div class="cc-term">
             <button class="cc-term-bar" @click="runResult && (consoleOpen = !consoleOpen)">
-              <span class="cc-term-g">›_</span>
+              <span class="cc-dots"><i /><i /><i /></span>
+              <span class="cc-term-title">终端</span>
               <span class="cc-term-s" :class="{ bad: runResult && (runResult.stderr || runResult.timed_out) }">{{ runResult ? ((runResult.timed_out ? '超时 · 很可能死循环' : (runResult.stderr ? '运行报错' : '运行成功')) + termHint) : '还没运行 · 点「运行」看真实结果' }}</span>
               <span v-if="runResult" class="cc-term-c">{{ consoleOpen ? '收起 ▾' : '展开 ▾' }}</span>
             </button>
@@ -835,7 +845,7 @@ function quit() {
           <div class="composer-box">
             <textarea
               v-model="draft" rows="1"
-              placeholder="描述你的观察、猜测、验证…（Enter 发送，Shift+Enter 换行）"
+              placeholder="描述你的观察、猜测、验证…"
               @keydown.enter.exact.prevent="send"
             />
             <div class="composer-actions">
@@ -902,16 +912,21 @@ function quit() {
 .cc-note-line { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #fff; background: #c15f3c; padding: 2px 8px; border-radius: 5px; font-weight: 600; }
 .cc-note-x { margin-left: auto; border: none; background: none; font-size: 16px; color: #a89e8c; cursor: pointer; line-height: 1; }
 .cc-note-body { font-size: 13px; line-height: 1.7; color: #3a3530; }
-.cc-term { border-top: 1px solid #ece4d4; background: #f7f1e6; }
+.cc-term { border-top: 1px solid #1c2128; background: #11151b; }
 .cc-term-bar { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 16px; background: none; border: none; cursor: pointer; text-align: left; }
-.cc-term-g { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #a89e8c; }
-.cc-term-s { font-size: 13px; color: #6f695d; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cc-term-s.bad { color: #a54e30; }
-.cc-term-c { font-size: 12px; color: #a89e8c; }
-.cc-term-body { padding: 0 16px 12px; max-height: 160px; overflow: auto; }
-.cc-term-body .console-out { color: #3a3530; font-size: 13px; margin: 0; white-space: pre-wrap; }
-.cc-term-body .console-err { color: #a54e30; font-size: 13px; margin: 0; white-space: pre-wrap; }
-.cc-term-body .console-muted { color: #a89e8c; font-size: 12.5px; }
+.cc-dots { display: inline-flex; gap: 6px; align-items: center; flex: none; }
+.cc-dots i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.cc-dots i:nth-child(1) { background: #ff5f56; }
+.cc-dots i:nth-child(2) { background: #ffbd2e; }
+.cc-dots i:nth-child(3) { background: #27c93f; }
+.cc-term-title { font-size: 12px; color: #8b94a0; flex: none; }
+.cc-term-s { font-size: 13px; color: #c5cdd6; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-term-s.bad { color: #ff9d8c; }
+.cc-term-c { font-size: 12px; color: #6b7480; }
+.cc-term-body { padding: 4px 16px 12px; max-height: 160px; overflow: auto; }
+.cc-term-body .console-out { color: #c5cdd6; font-size: 13px; margin: 0; white-space: pre-wrap; }
+.cc-term-body .console-err { color: #ff9d8c; font-size: 13px; margin: 0; white-space: pre-wrap; }
+.cc-term-body .console-muted { color: #6b7480; font-size: 12.5px; }
 
 /* 看不懂代码 + explain（浅色）*/
 .wl .tool-trigger { background: #fcfbf7; border: 1px solid #e7e2d6; border-radius: 11px; color: #6f695d; }
