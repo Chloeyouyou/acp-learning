@@ -804,6 +804,66 @@ def 跃迁_内化三轴达标则升级已内化并结束会话():
         mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
 
 
+# ════════ 算分 / 画像（profile）════════
+
+@test
+def 算分_冷启动加倍且封顶100():
+    from app.services import event_engine
+    from app.models import CapabilityScore
+    db = TestSession()
+    # INITIAL=30；冷启动×2（events<10）；规则事件 conf=1.0 → 每条 +3×3×2 = +18
+    for _ in range(4):
+        event_engine.emit(db, student_id="sc_up", session_id="x", capability="Independent_Debug",
+                          delta=3, producer="rule", evidence={"summary": "fix"})
+    r = db.get(CapabilityScore, ("sc_up", "Independent_Debug"))
+    assert r.score == 100.0, r.score        # 30→48→66→84→100，4 条即封顶
+    assert r.events_count == 4
+    db.close()
+
+
+@test
+def 算分_负向事件下探不破0():
+    from app.services import event_engine
+    from app.models import CapabilityScore
+    db = TestSession()
+    for _ in range(2):  # 30 -18 -18 → 钳到 0
+        event_engine.emit(db, student_id="sc_dn", session_id="x", capability="Independent_Debug",
+                          delta=-3, producer="rule", evidence={"summary": "neg"})
+    r = db.get(CapabilityScore, ("sc_dn", "Independent_Debug"))
+    assert r.score == 0.0, r.score
+    db.close()
+
+
+@test
+def 算分_低置信LLM事件入库但不进分():
+    from app.services import event_engine
+    from app.models import CapabilityScore, Event
+    db = TestSession()
+    event_engine.emit(db, student_id="sc_lc", session_id="x", capability="Root_Cause_Reasoning",
+                      delta=3, producer="llm_judge", confidence=0.5, evidence={"summary": "弱证据"})
+    assert db.query(Event).filter_by(student_id="sc_lc").count() == 1          # 事件入库
+    assert db.get(CapabilityScore, ("sc_lc", "Root_Cause_Reasoning")) is None  # 但不进画像分
+    db.close()
+
+
+@test
+def 掌握度_状态映射与薄弱判定():
+    from app.services import profile
+    db = TestSession()
+    sid = "km1"
+    profile.update_knowledge_state(db, student_id=sid, pattern_id="P_A",
+                                   knowledge_points=["kpA"], new_state="已内化")
+    profile.update_knowledge_state(db, student_id=sid, pattern_id="P_B",
+                                   knowledge_points=["kpB"], new_state="已解决")
+    profile.update_knowledge_state(db, student_id=sid, pattern_id="P_C",
+                                   knowledge_points=["kpC"], new_state="已接触")
+    m = {x["kp"]: x for x in profile.knowledge_mastery(db, sid)}
+    assert m["kpA"]["mastery"] == "掌握" and m["kpA"]["weak"] is False
+    assert m["kpB"]["mastery"] == "在学" and m["kpB"]["weak"] is True   # 已解决→建议内化
+    assert m["kpC"]["mastery"] == "生疏" and m["kpC"]["weak"] is True   # 已接触→还没真正解决
+    db.close()
+
+
 def main():
     passed = failed = 0
     for fn in _tests:
