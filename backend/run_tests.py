@@ -628,6 +628,58 @@ def 提问训练计分_低置信入库但不进画像():
     db.close()
 
 
+@test
+def 状态机_修复阶段未提交时LLM不得擅自跃迁():
+    """硬门回归：离开④修复只能靠 judge_fix 提交通过。LLM 在对话里填 stage_transition=⑤
+    也不放行——否则代码从未判过就能走到⑤⑥甚至被标「已内化」（真实漏洞，2026-06-22 修）。"""
+    from app.services import mine_engine, tutor
+    from app.models import TutorSession
+    orig_get, orig_load, orig_llm = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        pat = _good_candidate()
+        mine_engine.get_pattern = lambda pid: {pat["id"]: pat}[pid]
+        mine_engine.load_patterns = lambda: {pat["id"]: pat}
+        tutor._call_llm = lambda system, history: tutor.TutorTurn(
+            reply="继续", stage_transition="⑤验证", hint_level_used="L1",
+            student_progressed=True, answer_begging=False, events=[])
+        db = TestSession()
+        sess = TutorSession(id="sess_gate1", student_id="g1", pattern_id=pat["id"],
+                            manifest=mine_engine.build_manifest("g1", pat), history=[],
+                            stage="④修复", mine_status="found")
+        db.add(sess); db.commit()
+        tutor.run_turn(db, sess, "改个边界就行")
+        assert sess.stage == "④修复", f"未提交不该离开④，实际到了 {sess.stage}"
+        assert sess.mine_status == "found", sess.mine_status
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = orig_get, orig_load, orig_llm
+
+
+@test
+def 状态机_提交通过后可正常进验证():
+    """对照：mine_status=fixed（提交已判过）时，④→⑤ 的跃迁正常放行，不被新门误伤。"""
+    from app.services import mine_engine, tutor
+    from app.models import TutorSession
+    orig_get, orig_load, orig_llm = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        pat = _good_candidate()
+        mine_engine.get_pattern = lambda pid: {pat["id"]: pat}[pid]
+        mine_engine.load_patterns = lambda: {pat["id"]: pat}
+        tutor._call_llm = lambda system, history: tutor.TutorTurn(
+            reply="继续", stage_transition="⑤验证", hint_level_used="L1",
+            student_progressed=True, answer_begging=False, events=[])
+        db = TestSession()
+        sess = TutorSession(id="sess_gate2", student_id="g2", pattern_id=pat["id"],
+                            manifest=mine_engine.build_manifest("g2", pat), history=[],
+                            stage="④修复", mine_status="fixed")  # 已提交判过
+        db.add(sess); db.commit()
+        tutor.run_turn(db, sess, "我想测空列表")
+        assert sess.stage == "⑤验证", f"已 fixed 应可进⑤，实际 {sess.stage}"
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = orig_get, orig_load, orig_llm
+
+
 def main():
     passed = failed = 0
     for fn in _tests:

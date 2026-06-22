@@ -718,8 +718,13 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
 
     allow_transition = (turn.stage_transition and not rule_advanced
                         and STAGES.index(turn.stage_transition) > STAGES.index(session.stage))
-    # ④修复放行门控：必须已走到「根因表达」步，前两步没走完时LLM的放行无效
+    # ③→④放行门控：必须已走到「根因表达」步，前两步没走完时LLM的放行无效
     if allow_transition and stage_before_llm == "③归因" and step_before_llm != "root_cause_expression":
+        allow_transition = False
+    # ④→⑤放行门控（真判题硬门）：离开④修复只能靠「提交通过」——main.submit_fix 里 judge_fix
+    # 通过后直接置 stage=⑤+mine_status=fixed，不走本路径。所以 run_turn 里只要还没 fixed，
+    # LLM 在对话中的任何跃迁一律拦下，否则代码从未判过就能一路走到⑤⑥、甚至被标「已内化」。
+    if allow_transition and stage_before_llm == "④修复" and session.mine_status != "fixed":
         allow_transition = False
     # ⑥内化放行门控：事件流为事实源——本会话至少有一条Hypothesis_Testing正向事件
     # （本轮申报的也算），否则学生还没完成任何边界测试，不得离开⑤验证
