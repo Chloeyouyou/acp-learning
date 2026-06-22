@@ -6,6 +6,7 @@
 import hmac
 import os
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +20,15 @@ from .services import (
     event_engine, mine_engine, profile, question_training, review, sandbox, timeline, tutor,
 )
 
-app = FastAPI(title="ACP Learning API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动：建表 + 预载题库（替代已废弃的 @app.on_event("startup")，审计 #6）
+    init_db()
+    mine_engine.load_patterns()
+    yield
+
+
+app = FastAPI(title="ACP Learning API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,12 +36,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def startup():
-    init_db()
-    mine_engine.load_patterns()
 
 
 # ---- 请求/响应模型 ----
