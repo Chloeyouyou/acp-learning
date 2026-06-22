@@ -680,6 +680,130 @@ def 状态机_提交通过后可正常进验证():
         mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = orig_get, orig_load, orig_llm
 
 
+# ════════ 导师纯规则函数（无 LLM、无 DB，最便宜的回归网）════════
+
+@test
+def 受挫检测_学生本人受挫与程序卡住要分开():
+    from app.services import tutor
+    # 学生本人受挫 → True
+    for s in ["我不会", "完全没思路", "太难了", "想放弃", "给个提示", "啊啊啊", "我卡住了"]:
+        assert tutor.detect_frustration(s), f"应判受挫: {s}"
+    # 描述程序卡住（不是本人受挫）→ False
+    for s in ["程序卡住了跑不完", "代码一直在循环卡住", "运行卡住"]:
+        assert not tutor.detect_frustration(s), f"程序卡死≠学生受挫: {s}"
+    # 负向断言别误伤：会不会/知不知道 不算受挫
+    for s in ["会不会越界", "我知不知道得测一下", "这样对不对"]:
+        assert not tutor.detect_frustration(s), f"不该误判受挫: {s}"
+
+
+@test
+def 错误签名识别_命中返回剧本_未命中None():
+    from app.services import tutor
+    sig, pb = tutor.detect_error_signature("我猜会报 IndexError")
+    assert sig == "IndexError" and "meaning" in pb
+    assert tutor.detect_error_signature("不知道哪里错") is None
+
+
+@test
+def 定位判定_引用雷行或点行号才算():
+    from app.services import mine_engine, tutor
+    orig = mine_engine.get_pattern
+    try:
+        pat = _good_candidate()  # 雷在第 2 行：return a[3]
+        mine_engine.get_pattern = lambda pid: {pat["id"]: pat}[pid]
+        assert tutor.message_points_at_mine("我觉得 return a[3] 有问题", pat["id"])
+        assert tutor.message_points_at_mine("第 2 行不对吧", pat["id"])
+        assert not tutor.message_points_at_mine("不知道在哪", pat["id"])
+    finally:
+        mine_engine.get_pattern = orig
+
+
+@test
+def 边界解释判定_要同时有边界输入和预期():
+    from app.services import tutor
+    assert tutor.message_explains_boundary_test("空列表传进去，预期返回 None")
+    assert not tutor.message_explains_boundary_test("空列表试试")      # 缺预期
+    assert not tutor.message_explains_boundary_test("应该返回正确结果")  # 缺具体边界输入
+
+
+@test
+def 内化实质性_纯表态不算_含机制才算():
+    from app.services import tutor
+    for s in ["我懂了", "好的", "嗯嗯", "以后注意"]:
+        assert not tutor.is_substantive(s), f"纯表态不该算: {s}"
+    assert tutor.is_substantive("因为下标从0数，长度3时最大下标是2，访问3就越界了")
+
+
+# ════════ run_turn 状态机跃迁（stub LLM，覆盖规则跃迁与硬门）════════
+
+def _stub_turn(tutor, **kw):
+    base = dict(reply="嗯", stage_transition=None, hint_level_used="L0",
+                student_progressed=True, answer_begging=False, events=[])
+    base.update(kw)
+    return lambda system, history: tutor.TutorTurn(**base)
+
+def _arena_session(tutor, mine_engine, *, stage, mine_status="planted"):
+    pat = _good_candidate()
+    mine_engine.get_pattern = lambda pid: {pat["id"]: pat}[pid]
+    mine_engine.load_patterns = lambda: {pat["id"]: pat}
+    from app.models import TutorSession
+    db = TestSession()
+    sess = TutorSession(id=f"s_{stage}", student_id="rt1", pattern_id=pat["id"],
+                        manifest=mine_engine.build_manifest("rt1", pat), history=[],
+                        stage=stage, mine_status=mine_status)
+    db.add(sess); db.commit()
+    return db, sess, pat
+
+
+@test
+def 跃迁_发现阶段贴出报错签名自动进定位():
+    from app.services import mine_engine, tutor
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        tutor._call_llm = _stub_turn(tutor)  # LLM 不报跃迁
+        db, sess, pat = _arena_session(tutor, mine_engine, stage="①发现")
+        tutor.run_turn(db, sess, "它会报 IndexError 吧")
+        assert sess.stage == "②定位", sess.stage  # 规则层据报错签名自动跃迁
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
+
+
+@test
+def 跃迁_定位阶段指认雷行自动进归因且雷标found():
+    from app.services import mine_engine, tutor
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        tutor._call_llm = _stub_turn(tutor)
+        db, sess, pat = _arena_session(tutor, mine_engine, stage="②定位")
+        tutor.run_turn(db, sess, "问题在 return a[3] 这行")
+        assert sess.stage == "③归因", sess.stage
+        assert sess.mine_status == "found", sess.mine_status
+        assert sess.attribution_step == "variable_trace"
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
+
+
+@test
+def 跃迁_内化三轴达标则升级已内化并结束会话():
+    from app.services import mine_engine, profile, tutor
+    from app.models import KnowledgeState
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        tutor._call_llm = _stub_turn(
+            tutor, internalization=tutor.InternalizationScore(cause=True, locate=True, prevent=False))
+        db, sess, pat = _arena_session(tutor, mine_engine, stage="⑥内化", mine_status="fixed")
+        tutor.run_turn(db, sess, "因为下标越界，定位靠看报错行和追踪变量，下次先查 range 边界")
+        assert sess.mine_status == "internalized", sess.mine_status
+        assert sess.status == "completed", sess.status
+        ks = db.get(KnowledgeState, ("rt1", pat["id"]))
+        assert ks and ks.state == "已内化", ks
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
+
+
 def main():
     passed = failed = 0
     for fn in _tests:
