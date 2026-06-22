@@ -15,8 +15,12 @@ from pathlib import Path
 OUTPUT_CAP = 8192  # stdout/stderr 各截断上限，防刷屏
 DEFAULT_TIMEOUT = 4.0
 
-# 强制子进程用 UTF-8 输出：否则中文 Windows 下子进程默认 GBK，打印中文会乱码/解码失败
-_UTF8_ENV = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+# 安全：绝不把父进程环境（含 DEEPSEEK_API_KEY 等密钥）灌进学生子进程——否则提交
+# `import os; print(os.environ["DEEPSEEK_API_KEY"])` 就能偷走 key。只传跑 Python 所需的最小白名单。
+# 同时强制 UTF-8 输出：中文 Windows 下子进程默认 GBK，打印中文会乱码/解码失败。
+_ENV_WHITELIST = ("PATH", "SYSTEMROOT", "TEMP", "TMP", "LANG", "LC_ALL")
+_UTF8_ENV = {k: os.environ[k] for k in _ENV_WHITELIST if k in os.environ}
+_UTF8_ENV.update({"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
 
 
 @dataclass

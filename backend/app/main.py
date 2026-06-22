@@ -3,6 +3,7 @@
 闭环：埋雷（创建会话）→ AI共脑对话 → 提交修复（规则判定）→ 事件 → 画像。
 """
 
+import hmac
 import os
 import uuid
 
@@ -333,12 +334,13 @@ def abandon_session(session_id: str, db: Session = Depends(get_db)):
 def admin_list_sessions(student_id: str, token: str | None = None, db: Session = Depends(get_db)):
     """【作者/QA 只读】按学号列出全部会话 + 完整对话历史 + 内化判定，供复盘任何一局。
 
-    学生端不链接、不使用——仅作者直连 URL 或工具调用。安全：若设置了环境变量
-    ACP_ADMIN_TOKEN 则必须带 ?token= 匹配才放行；未设置则默认放行（本地开发免配置）。
-    部署提示：在 Render 设 ACP_ADMIN_TOKEN 可锁住此端点。
+    学生端不链接、不使用——仅作者直连 URL 或工具调用。安全：默认拒绝——必须设置环境变量
+    ACP_ADMIN_TOKEN 且请求带匹配的 ?token= 才放行（常量时间比较，防时序侧信道）。
+    未设 ACP_ADMIN_TOKEN 一律 403——绝不默认放行，避免忘配一次就全员对话史外泄。
+    本地 QA：先 `export ACP_ADMIN_TOKEN=xxx` 再带 ?token=xxx 访问。
     """
     required = os.environ.get("ACP_ADMIN_TOKEN")
-    if required and token != required:
+    if not required or not hmac.compare_digest(token or "", required):
         raise HTTPException(403, "forbidden")
     sessions = (db.query(TutorSession).filter_by(student_id=student_id)
                 .order_by(TutorSession.created_at.desc()).all())
@@ -451,7 +453,8 @@ if (_DIST / "index.html").is_file():
         if full_path.startswith("api/") or full_path == "api":
             from fastapi.responses import JSONResponse
             return JSONResponse({"detail": "Not Found"}, status_code=404)
-        candidate = _DIST / full_path
-        if full_path and candidate.is_file():
+        # 安全：解析真实路径并校验仍在 dist 内，挡 ../ 路径穿越（否则 ../../backend/.env 可读到密钥）
+        candidate = (_DIST / full_path).resolve()
+        if full_path and candidate.is_file() and candidate.is_relative_to(_DIST.resolve()):
             return FileResponse(candidate)
         return FileResponse(_DIST / "index.html")

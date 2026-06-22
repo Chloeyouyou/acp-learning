@@ -19,6 +19,7 @@ from . import event_engine, mine_engine, profile
 client = OpenAI(
     api_key=os.getenv("DEEPSEEK_API_KEY"),
     base_url=DEEPSEEK_BASE_URL,
+    timeout=30.0,   # 防 DeepSeek 抖动时一个请求挂满 SDK 默认 600s、占死同步 worker
 )
 
 
