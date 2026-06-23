@@ -4,8 +4,10 @@ LLM后端：DeepSeek（OpenAI兼容接口）。DeepSeek的json_object模式不�
 所以输出格式写进system prompt，返回后用Pydantic校验，校验失败重试一次。
 """
 
+import hashlib
 import os
 import re
+from collections import OrderedDict
 from typing import Literal, Optional
 
 from openai import OpenAI
@@ -14,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..config import DEEPSEEK_BASE_URL, HINT_LEVELS, STAGES, TUTOR_MODEL
 from ..models import Event, TutorSession
-from . import event_engine, mine_engine, profile
+from . import event_engine, mine_engine, profile, sandbox
 
 client = OpenAI(
     api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -353,6 +355,22 @@ def inject_run_note(history: list, note: str) -> list:
     return kept + [{"role": "user", "content": note}]
 
 
+def run_and_inject(db: Session, session, code: str, *, knowledge_points: list, mode: str) -> dict:
+    """跑沙箱 → 记执行事实 → 真实结果注入对话 → 返回 {stdout, stderr, timed_out, hint}。
+    闯关 run 端点与 coop.run 共用这套机械逻辑；差异只有 knowledge_points / mode 两个参数。"""
+    r = sandbox.run_code(code)
+    kind = "HANG" if r.timed_out else ("RE" if r.has_error else "OK")
+    event_engine.log_execution(
+        db, student_id=session.student_id, session_id=session.id, pattern_id=session.pattern_id,
+        source="run", kind=kind, stderr=r.stderr, knowledge_points=knowledge_points, mode=mode)
+    # 真实运行结果接进对话：知返据此引导、杜绝臆断；只留最新一条，仅 active 会话
+    if session.status == "active":
+        session.history = inject_run_note(session.history, run_result_note(kind, r.stdout, r.stderr))
+        db.commit()
+    return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out,
+            "hint": explain_error(kind, r.stderr)}
+
+
 # ④修复阶段常驻注入：学生自己提思路、自己改代码；失败反馈针对诊断引导，不复读「测试失败」。
 REPAIR_LAYER_TEMPLATE = """
 
@@ -580,8 +598,10 @@ def _call_llm(system: str, history: list[dict]) -> TutorTurn:
     raise RuntimeError(f"导师输出格式校验失败: {last_err}")
 
 
-# 逐行讲解：把一道题的代码用大白话讲给零基础，故意不点破 bug（留给学生发现）。按 pattern+档位 缓存。
-_WALKTHROUGH_CACHE: dict[str, str] = {}
+# 逐行讲解：把一段代码用大白话讲给零基础，故意不点破 bug。统一一份按 code 内容缓存的实现，
+# explain_code（闯关有 pattern）和 walkthrough_for_code（coop 无 pattern）都委托它——同段 code 跨题也命中。
+_WALK_CACHE: "OrderedDict[str, str]" = OrderedDict()   # LRU，上限 _WALK_CACHE_MAX
+_WALK_CACHE_MAX = 256
 
 WALKTHROUGH_SYSTEM = """你是编程启蒙老师，面对一个完全没学过编程的初学者（连函数、括号都没见过）。
 把下面这段代码逐行用最朴素的大白话讲一遍，让他能读懂"每行在做什么"。
@@ -596,39 +616,12 @@ WALKTHROUGH_DEEP = """
 这个学生基础特别弱，请讲得更细：每行可以用 2~3 句话，把这行里出现的每一个词、每一个符号都掰开解释一遍，多用身边的小例子和比方，假设他什么都不懂。仍然不要剧透 bug。"""
 
 
-def explain_code(pattern_id: str, deep: bool = False) -> str:
-    """LLM 逐行讲解某题代码（大白话、不剧透 bug）。deep=更详细。按 pattern+档位 缓存。"""
-    key = f"{pattern_id}:{'deep' if deep else 'std'}"
-    if key in _WALKTHROUGH_CACHE:
-        return _WALKTHROUGH_CACHE[key]
-    code = mine_engine.get_pattern(pattern_id)["buggy_code"]
-    system = WALKTHROUGH_SYSTEM + (WALKTHROUGH_DEEP if deep else "")
-    try:
-        resp = client.chat.completions.create(
-            model=TUTOR_MODEL,
-            messages=[{"role": "system", "content": system},
-                      {"role": "user", "content": code}],
-            temperature=0.2,
-            max_tokens=2000 if deep else 1200,
-        )
-        text = (resp.choices[0].message.content or "").strip()
-    except Exception:
-        text = ""
-    if not text:
-        text = "暂时讲不了这段代码（导师有点忙），你可以把看不懂的那一行直接发给导师问。"
-    _WALKTHROUGH_CACHE[key] = text
-    return text
-
-
-_CODE_WALK_CACHE: dict[str, str] = {}
-
-
-def walkthrough_for_code(code: str, deep: bool = False) -> str:
-    """逐行讲解任意单文件代码（coop 用：样本/学生自带代码无 pattern_id，按 code 内容讲+缓存）。"""
-    import hashlib
+def _walkthrough(code: str, deep: bool = False) -> str:
+    """逐行讲解任意单文件代码（大白话、不剧透）。按 code 内容缓存（LRU 上限）；失败不缓存、下次可重试。"""
     key = hashlib.md5((("deep:" if deep else "") + (code or "")).encode("utf-8")).hexdigest()
-    if key in _CODE_WALK_CACHE:
-        return _CODE_WALK_CACHE[key]
+    if key in _WALK_CACHE:
+        _WALK_CACHE.move_to_end(key)
+        return _WALK_CACHE[key]
     system = WALKTHROUGH_SYSTEM + (WALKTHROUGH_DEEP if deep else "")
     try:
         resp = client.chat.completions.create(
@@ -641,9 +634,23 @@ def walkthrough_for_code(code: str, deep: bool = False) -> str:
     except Exception:
         text = ""
     if not text:
-        text = "暂时讲不了这段代码（知返有点忙），你可以把看不懂的那一行直接发给知返问。"
-    _CODE_WALK_CACHE[key] = text
+        # 失败不写缓存：否则同一段代码此后永远返回失败文案、不再重试
+        return "暂时讲不了这段代码（知返有点忙），你可以把看不懂的那一行直接发给知返问。"
+    _WALK_CACHE[key] = text
+    _WALK_CACHE.move_to_end(key)
+    if len(_WALK_CACHE) > _WALK_CACHE_MAX:
+        _WALK_CACHE.popitem(last=False)
     return text
+
+
+def explain_code(pattern_id: str, deep: bool = False) -> str:
+    """LLM 逐行讲解某题代码（大白话、不剧透 bug）。deep=更详细。"""
+    return _walkthrough(mine_engine.get_pattern(pattern_id)["buggy_code"], deep)
+
+
+def walkthrough_for_code(code: str, deep: bool = False) -> str:
+    """逐行讲解任意单文件代码（coop 用：样本/学生自带代码无 pattern_id）。"""
+    return _walkthrough(code, deep)
 
 
 def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:

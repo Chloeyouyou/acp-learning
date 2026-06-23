@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from ..config import TUTOR_MODEL
 from ..models import ExecutionEvent, TutorSession, now
-from . import event_engine, sandbox, tutor
+from . import tutor
 
 # ---- 预置样本：单文件 Python，有 bug，「帮我看看这段哪儿不对」口吻 ----
 # 样本自带 buggy code；无 expected_output / 无 fix_check（不判题）。
@@ -205,11 +205,13 @@ def get(db: Session, session_id: str) -> dict | None:
     if s is None:
         return None
     manifest = s.manifest or {}
+    # 自带代码从 manifest 取 title/code；预置样本从 SAMPLES 取。首条求助 ask 已在 history[0]，
+    # 渲染时自然带出，无需单独返回。
     if manifest.get("custom"):
-        # 自带代码：title/code 从 manifest 取（无预置样本可回退）
-        sample = {"title": manifest.get("title", "我的代码"), "code": manifest.get("code", ""), "ask": ""}
+        title, code = manifest.get("title", "我的代码"), manifest.get("code", "")
     else:
         sample = SAMPLES.get(manifest.get("sample_id"), {})
+        title, code = sample.get("title", ""), sample.get("code", "")
     # 渲染消息：运行结果注入消息（以"（系统·运行结果）"开头）不在聊天区重复显示（终端已展示）
     messages = []
     for m in s.history:
@@ -219,33 +221,21 @@ def get(db: Session, session_id: str) -> dict | None:
         messages.append({"role": role, "text": m["content"]})
     return {
         "session_id": s.id,
-        "sample_id": (s.manifest or {}).get("sample_id"),
-        "title": sample.get("title", ""),
-        "ask": sample.get("ask", ""),
-        "code": sample.get("code", ""),
+        "sample_id": manifest.get("sample_id"),
+        "title": title,
+        "code": code,
         "messages": messages,
         "status": s.status,
     }
 
 
 def run(db: Session, session_id: str, code: str) -> dict | None:
-    """coop 专用运行：不查 pattern（伪 id 会崩），自己调沙箱 + 注入真实结果。"""
+    """coop 专用运行：不查 pattern（伪 id 会崩），跑沙箱 + 注入真实结果。
+    knowledge_points=[]、mode=coop → 对画像/轨迹天然隐形。"""
     s = _coop_session(db, session_id)
     if s is None:
         return None
-    r = sandbox.run_code(code)
-    kind = "HANG" if r.timed_out else ("RE" if r.has_error else "OK")
-    # 事实日志：mode=coop、knowledge_points=[] → 对画像/轨迹天然隐形。不查 pattern。
-    event_engine.log_execution(
-        db, student_id=s.student_id, session_id=s.id, pattern_id=s.pattern_id,
-        source="run", kind=kind, stderr=r.stderr, knowledge_points=[], mode="coop")
-    # 真实运行结果注入对话，喂给 coop 导师（复用闯关同一机制 + 只留最新一条）
-    if s.status == "active":
-        note = tutor.run_result_note(kind, r.stdout, r.stderr)
-        s.history = tutor.inject_run_note(s.history, note)
-        db.commit()
-    return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out,
-            "hint": tutor.explain_error(kind, r.stderr)}   # 报错翻译成人话（零基础友好）
+    return tutor.run_and_inject(db, s, code, knowledge_points=[], mode="coop")
 
 
 def message(db: Session, session_id: str, content: str) -> dict | None:

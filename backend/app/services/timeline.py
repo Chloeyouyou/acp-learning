@@ -192,9 +192,9 @@ def build_timeline(db: Session, student_id: str) -> dict:
     sessions = (db.query(TutorSession)
                 .filter_by(student_id=student_id)
                 .order_by(TutorSession.created_at.asc()).all())
-    # 防污染：AI 共脑调试（mode=coop）是独立玩法，不进成长轨迹（设计 09）。一处过滤，
+    # 防污染：AI 共脑调试（mode=coop）是独立玩法，不进成长轨迹（设计 09）。在此一处过滤，
     # 下游 executions/events 都按这批 session id 取，故 coop 的执行事件也一并排除。
-    sessions = [s for s in sessions if (s.manifest or {}).get("mode") != "coop"]
+    sessions = [s for s in sessions if not s.is_coop]
     if not sessions:
         return {"episodes": [], "persona": _persona([]),
                 "thinking_patterns": aggregate_thinking_patterns([])}

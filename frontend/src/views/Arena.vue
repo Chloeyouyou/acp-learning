@@ -80,14 +80,14 @@ watch(() => session.code, () => { runResult.value = null })
 // 两道节流：①跨题——每天至多飘一次（绝不每道题都弹）②门槛——重复点同一份报错不算，
 // 必须"改了再运行还错"才算一次真挣扎。纯前端、读人不追问、给选择不诊断；不动知返、不碰判题。
 const LINGXI_DAY_KEY = 'lingxi_last_shown'
-const consecutiveStruggles = ref(0)   // 「改了代码却还报错」的连续次数
+let consecutiveStruggles = 0   // 「改了代码却还报错」的连续次数（非响应式，只在 watch 读写）
 const lingxiBubble = ref('')
 let lastErrorCode = null              // 上次报错时的代码，用来识别"重复点同一份"
-function resetLingxi() { consecutiveStruggles.value = 0; lastErrorCode = null; lingxiBubble.value = '' }
+function resetLingxi() { consecutiveStruggles = 0; lastErrorCode = null; lingxiBubble.value = '' }
 function maybeShowLingxi() {
   // 门槛=3：报错→改→还错→再改→还错（改了两次都没成）才算真卡住。对零基础，
   // "改一次还错"太正常，不该当挫败；等真的反复试都没成，才轻轻递一句。
-  if (consecutiveStruggles.value < 3) return
+  if (consecutiveStruggles < 3) return
   const today = new Date().toISOString().slice(0, 10)
   if (localStorage.getItem(LINGXI_DAY_KEY) === today) return   // 今天已飘过 → 安静一整天
   lingxiBubble.value = '接连改了又没过也没关系，挺正常的~ 把报错发给知返一起看，或者先歇口气，不急。'
@@ -98,11 +98,11 @@ watch(runResult, (r) => {
   if (!r) return                                        // 改代码清空结果时不计
   if (r.stderr || r.timed_out) {
     if (session.code !== lastErrorCode) {               // 改了代码还报错=一次真挣扎；重复点同一份不算
-      consecutiveStruggles.value++
+      consecutiveStruggles++
       lastErrorCode = session.code
     }
   } else {
-    consecutiveStruggles.value = 0                      // 跑通了，挣扎清零
+    consecutiveStruggles = 0                      // 跑通了，挣扎清零
     lastErrorCode = null
   }
   maybeShowLingxi()

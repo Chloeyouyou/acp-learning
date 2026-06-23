@@ -31,6 +31,11 @@ class TutorSession(Base):
     status: Mapped[str] = mapped_column(String, default="active")  # active/completed
     created_at: Mapped[str] = mapped_column(String, default=now)
 
+    @property
+    def is_coop(self) -> bool:
+        """AI 共脑调试会话（mode=coop）——独立玩法，不进闯关大厅/成长轨迹/画像。"""
+        return (self.manifest or {}).get("mode") == "coop"
+
 
 class Event(Base):
     """能力事件（04文档 §3）。append-only，唯一事实源。"""

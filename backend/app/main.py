@@ -17,7 +17,7 @@ from .config import STAGES
 from .db import get_db, init_db
 from .models import ExecutionEvent, TutorSession
 from .services import (
-    coop, event_engine, mine_engine, presence, profile, question_training, review, sandbox, timeline,
+    coop, event_engine, mine_engine, presence, profile, question_training, review, timeline,
     tutor,
 )
 
@@ -154,22 +154,9 @@ def get_session(session_id: str, db: Session = Depends(get_db)):
 def run_code_endpoint(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
     """运行按钮：真跑一遍学生当前代码，返回真实输出/报错。纯观察，不判分、不改阶段。"""
     session = _get_session(db, session_id)
-    r = sandbox.run_code(req.code)
-    # 观测层：记一条执行事实（Debug Timeline）。run 无期望对比，kind 仅 RE/HANG/OK
-    kind = "HANG" if r.timed_out else ("RE" if r.has_error else "OK")
-    event_engine.log_execution(
-        db, student_id=session.student_id, session_id=session.id,
-        pattern_id=session.pattern_id, source="run", kind=kind, stderr=r.stderr,
-        knowledge_points=mine_engine.get_pattern(session.pattern_id).get("knowledge_points", []),
-        mode=(session.manifest or {}).get("mode", "debug"))
-    # 把真实运行结果接进对话：知返下一轮据此引导，杜绝臆断输出（信任底线）。
-    # 只保留最新一条，旧结果剔除——防上下文污染、防拿旧结果答新问。仅 active 会话。
-    if session.status == "active":
-        note = tutor.run_result_note(kind, r.stdout, r.stderr)
-        session.history = tutor.inject_run_note(session.history, note)
-        db.commit()
-    return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out,
-            "hint": tutor.explain_error(kind, r.stderr)}   # 报错翻译成人话（零基础友好）
+    kps = mine_engine.get_pattern(session.pattern_id).get("knowledge_points", [])
+    return tutor.run_and_inject(db, session, req.code, knowledge_points=kps,
+                                mode=(session.manifest or {}).get("mode", "debug"))
 
 
 @app.post("/api/sessions/{session_id}/messages")
@@ -312,7 +299,7 @@ def get_active_sessions(student_id: str, db: Session = Depends(get_db)):
     last_active_at = 该会话最新 ExecutionEvent 时间（无则 created_at），按之倒序——真按活跃度。"""
     sessions = db.query(TutorSession).filter_by(student_id=student_id, status="active").all()
     # coop（AI 共脑调试）会话不串进闯关大厅「接着做」（设计 09 防污染）
-    sessions = [s for s in sessions if (s.manifest or {}).get("mode") != "coop"]
+    sessions = [s for s in sessions if not s.is_coop]
     out = []
     for s in sessions:
         last_ev = (db.query(ExecutionEvent.timestamp).filter_by(session_id=s.id)
