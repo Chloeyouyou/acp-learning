@@ -123,6 +123,21 @@ async function startCustom() {
   }
 }
 
+// 降低空白恐惧：一键填个有 bug 的小例子，零基础不知道贴什么时可直接用它体验
+function fillExample() {
+  customCode.value = [
+    'def biggest(nums):',
+    '    big = 0',
+    '    for n in nums:',
+    '        if n > big:',
+    '            big = n',
+    '    return big',
+    '',
+    'print(biggest([-3, -1, -7]))',
+  ].join('\n')
+  customProblem.value = '想找出最大的数，但这组全是负数，结果好像不对'
+}
+
 async function runCode() {
   if (busy.value || !session.id) return
   running.value = true
@@ -201,7 +216,10 @@ const termBad = computed(() => !!(runResult.value && (runResult.value.stderr || 
     <div v-if="loadingSamples" class="coop-loading">加载中…</div>
     <div v-else class="sample-grid">
       <button v-for="s in samples" :key="s.sample_id" class="sample-card" @click="start(s.sample_id)">
-        <span class="sample-title">{{ s.title }}</span>
+        <span class="sample-main">
+          <span class="sample-title">{{ s.title }}</span>
+          <span v-if="s.kind_label" class="sample-kind" :class="s.kind">{{ s.kind_label }}</span>
+        </span>
         <span class="sample-go">一起看看 →</span>
       </button>
     </div>
@@ -214,7 +232,10 @@ const termBad = computed(() => !!(runResult.value && (runResult.value.stderr || 
       <div v-else class="custom-form">
         <div class="custom-head">
           <b>贴上你自己的代码</b>
-          <button class="custom-x" @click="customOpen = false" aria-label="收起">×</button>
+          <span class="custom-head-r">
+            <button class="custom-example" @click="fillExample">不知道贴什么？填个示例</button>
+            <button class="custom-x" @click="customOpen = false" aria-label="收起">×</button>
+          </span>
         </div>
         <textarea v-model="customCode" class="custom-code" spellcheck="false"
                   placeholder="把你的 Python 代码粘到这里（单个文件就行）…" />
@@ -316,8 +337,13 @@ const termBad = computed(() => !!(runResult.value && (runResult.value.stderr || 
   transition: border-color 0.15s, transform 0.1s;
 }
 .sample-card:hover { border-color: var(--primary); transform: translateY(-1px); }
+.sample-main { display: flex; flex-direction: column; gap: 5px; }
 .sample-title { font-size: 16px; color: var(--text); font-weight: 600; }
-.sample-go { font-size: 13.5px; color: var(--primary); }
+.sample-kind { font-size: 12px; color: var(--muted); }
+.sample-kind.crash { color: #b5683f; }
+.sample-kind.wrong { color: #9a7b3f; }
+.sample-kind.hang { color: #6f6a86; }
+.sample-go { font-size: 13.5px; color: var(--primary); flex-shrink: 0; }
 
 .custom-zone { margin-top: 18px; }
 .custom-trigger {
@@ -329,6 +355,9 @@ const termBad = computed(() => !!(runResult.value && (runResult.value.stderr || 
 .custom-form { border: 1px solid var(--border); border-radius: 14px; padding: 18px; background: var(--panel); }
 .custom-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .custom-head b { font-size: 15px; color: var(--text); }
+.custom-head-r { display: inline-flex; align-items: center; gap: 12px; }
+.custom-example { border: none; background: none; font-size: 12.5px; color: var(--primary); cursor: pointer; font-family: inherit; }
+.custom-example:hover { text-decoration: underline; }
 .custom-x { border: none; background: none; font-size: 22px; color: var(--muted); cursor: pointer; line-height: 1; }
 .custom-code {
   width: 100%; min-height: 160px; resize: vertical; box-sizing: border-box;

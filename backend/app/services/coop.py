@@ -25,6 +25,7 @@ from . import tutor
 # B0 系统其实"知道"哪错，但导师按「只引导不给答案」走，绝不注入任何答案信息。
 SAMPLES = {
     "off_by_one": {
+        "kind": "wrong",
         "title": "求和结果好像少了一个",
         # ask = 学生口吻的首条求助，进会话即作为第一条消息
         "ask": "我想把一个列表里的数字全加起来，但算出来的结果好像不对，你能帮我看看这段哪儿不对吗？",
@@ -39,6 +40,7 @@ SAMPLES = {
         ),
     },
     "none_deref": {
+        "kind": "crash",
         "title": "程序报错说什么 None",
         "ask": "我写了个函数找列表里第一个偶数，但运行就报错了，提到 None，我看不懂，帮我看看？",
         "code": (
@@ -53,6 +55,7 @@ SAMPLES = {
         ),
     },
     "infinite_loop": {
+        "kind": "hang",
         "title": "程序跑不完、像卡住了",
         "ask": "我想从 5 一直数到 1 打印出来，但程序一运行就卡住不动了，帮我看看是怎么回事？",
         "code": (
@@ -64,6 +67,7 @@ SAMPLES = {
         ),
     },
     "key_error": {
+        "kind": "crash",
         "title": "查价格时程序报错了",
         "ask": "我做了个价格表想查橙子多少钱，但一运行就报错，说什么 KeyError，帮我看看哪儿不对？",
         "code": (
@@ -73,6 +77,7 @@ SAMPLES = {
         ),
     },
     "name_typo": {
+        "kind": "crash",
         "title": "说找不到名字，可我明明写了",
         "ask": "我定义了变量想拼一句话打印，但程序说找不到名字，我看着明明都写了呀，帮我看看？",
         "code": (
@@ -82,6 +87,7 @@ SAMPLES = {
         ),
     },
     "type_concat": {
+        "kind": "crash",
         "title": "拼一句话却报类型错误",
         "ask": "我想拼一句带价格的话，但程序报错说 str 和 int 不能放一起，我不懂这是啥意思，帮我看看？",
         "code": (
@@ -92,6 +98,7 @@ SAMPLES = {
         ),
     },
     "int_divide": {
+        "kind": "wrong",
         "title": "算平均分，结果好像差一点",
         "ask": "我想算几个分数的平均，但算出来的数好像不太对，帮我看看哪儿有问题？",
         "code": (
@@ -104,9 +111,18 @@ SAMPLES = {
 }
 
 
+# 样本现象标签（给零基础选题时一点引导，不泄答案）：报错的 / 不报错但结果不对 / 卡住
+KIND_LABEL = {"crash": "⚠️ 会报错", "wrong": "🤔 不报错但结果不对", "hang": "⏳ 跑不完 / 卡住"}
+
+
 def list_samples() -> list[dict]:
-    """大厅/页面列出可选样本（不含答案信息）。"""
-    return [{"sample_id": sid, "title": s["title"]} for sid, s in SAMPLES.items()]
+    """大厅/页面列出可选样本（不含答案信息）。带现象标签 kind/kind_label。"""
+    out = []
+    for sid, s in SAMPLES.items():
+        kind = s.get("kind", "")
+        out.append({"sample_id": sid, "title": s["title"],
+                    "kind": kind, "kind_label": KIND_LABEL.get(kind, "")})
+    return out
 
 
 # ---- coop 轻量导师系统提示（独立，不碰 tutor.run_turn / 不注入 Ground Truth）----
