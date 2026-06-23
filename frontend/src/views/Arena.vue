@@ -76,6 +76,24 @@ const runResult = ref(null)          // {stdout, stderr, timed_out}
 // 代码一改，旧的运行结果就作废——否则会出现"删了代码却还显示上次成功输出"的错觉
 watch(() => session.code, () => { runResult.value = null })
 
+// 灵犀挫败台阶（设计 11）：连续报错 2 次，飘一句软提示，5 秒自退；每题最多一次、不缠人。
+// 纯前端、读人不追问、给选择不诊断；不动知返、不碰判题。
+const consecutiveErrors = ref(0)
+const lingxiBubble = ref('')
+const lingxiShown = ref(false)   // 本题是否已飘过（每题至多一次）
+function resetLingxi() { consecutiveErrors.value = 0; lingxiBubble.value = ''; lingxiShown.value = false }
+function maybeShowLingxi() {
+  if (lingxiShown.value || consecutiveErrors.value < 2) return
+  lingxiBubble.value = '接连两次没过也没关系，挺正常的~ 把报错发给知返一起看，或者先歇口气，不急。'
+  lingxiShown.value = true
+  setTimeout(() => { lingxiBubble.value = '' }, 5500)   // 停 5.5 秒，自己淡出
+}
+watch(runResult, (r) => {
+  if (!r) return                                        // 改代码清空结果时不计
+  consecutiveErrors.value = (r.stderr || r.timed_out) ? consecutiveErrors.value + 1 : 0
+  maybeShowLingxi()
+})
+
 async function runCurrentCode() {
   if (running.value || !session.id) return
   running.value = true
@@ -290,6 +308,7 @@ async function resume(sessionId) {
     session.internalizeQuestions = d.internalize_questions || []
     session.variant = null
     observationDone.value = true   // 续做：已在进行中，不再弹观察卡
+    resetLingxi()
     messages.value = d.messages
     messages.value.push({ role: 'system', text: '已回到这道题，接着来吧。' })
   } catch (e) {
@@ -334,6 +353,7 @@ async function start(patternId, mode = 'debug') {
     thoughtOpen.value = true
     runResult.value = null
     resetObservation()
+    resetLingxi()
     session.code = data.code
     originalCode.value = data.code
     session.task = data.task
@@ -616,6 +636,14 @@ function quit() {
       <span class="wt-id">{{ studentId }}</span>
       <button class="wt-quit" @click="quit">退出关卡</button>
     </div>
+
+    <!-- 灵犀挫败台阶：连续报错时飘一句软提示，几秒自退（设计 11） -->
+    <transition name="lingxi-fade">
+      <div v-if="lingxiBubble" class="lingxi-bubble">
+        <span class="lingxi-emoji">💭</span>
+        <span class="lingxi-text">{{ lingxiBubble }}</span>
+      </div>
+    </transition>
 
     <div class="wb">
       <div class="wl">
@@ -999,6 +1027,23 @@ function quit() {
   background: rgba(193, 95, 60, 0.05);
   font-size: 14.5px; color: var(--text); line-height: 1.7;
 }
+
+/* 灵犀挫败台阶气泡：右下角飘出，几秒自退，不挡操作（设计 11） */
+.lingxi-bubble {
+  position: fixed; right: 24px; bottom: 24px; z-index: 60;
+  display: flex; align-items: flex-start; gap: 9px; max-width: 320px;
+  padding: 13px 16px; border-radius: 14px;
+  background: rgba(252, 248, 241, 0.97); border: 1px solid #e6d6c4;
+  box-shadow: 0 14px 38px -12px rgba(43, 41, 36, 0.4);
+  font-size: 14px; line-height: 1.65; color: var(--text);
+  backdrop-filter: blur(6px);
+}
+.lingxi-emoji { font-size: 17px; line-height: 1.4; flex-shrink: 0; }
+.lingxi-text { flex: 1; }
+.lingxi-fade-enter-active { transition: opacity 0.4s ease, transform 0.4s ease; }
+.lingxi-fade-leave-active { transition: opacity 0.9s ease, transform 0.9s ease; }
+.lingxi-fade-enter-from { opacity: 0; transform: translateY(12px); }
+.lingxi-fade-leave-to { opacity: 0; transform: translateY(8px); }
 
 /* 智能开一题：系统按画像帮你挑最该补的 */
 .smart-open {
