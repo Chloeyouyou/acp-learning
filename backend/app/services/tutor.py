@@ -620,6 +620,32 @@ def explain_code(pattern_id: str, deep: bool = False) -> str:
     return text
 
 
+_CODE_WALK_CACHE: dict[str, str] = {}
+
+
+def walkthrough_for_code(code: str, deep: bool = False) -> str:
+    """逐行讲解任意单文件代码（coop 用：样本/学生自带代码无 pattern_id，按 code 内容讲+缓存）。"""
+    import hashlib
+    key = hashlib.md5((("deep:" if deep else "") + (code or "")).encode("utf-8")).hexdigest()
+    if key in _CODE_WALK_CACHE:
+        return _CODE_WALK_CACHE[key]
+    system = WALKTHROUGH_SYSTEM + (WALKTHROUGH_DEEP if deep else "")
+    try:
+        resp = client.chat.completions.create(
+            model=TUTOR_MODEL,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user", "content": code or ""}],
+            temperature=0.2, max_tokens=2000 if deep else 1200,
+        )
+        text = (resp.choices[0].message.content or "").strip()
+    except Exception:
+        text = ""
+    if not text:
+        text = "暂时讲不了这段代码（知返有点忙），你可以把看不懂的那一行直接发给知返问。"
+    _CODE_WALK_CACHE[key] = text
+    return text
+
+
 def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
     """一轮对话：调LLM → 应用状态跃迁 → 落库LLM事件与规则事件。"""
     history = list(session.history) + [{"role": "user", "content": student_message}]

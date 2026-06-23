@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, computed, nextTick } from 'vue'
+import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { api } from '../api'
 
 // ── AI 共脑调试（结对调试）· B0 预置样本 ──
@@ -23,6 +23,49 @@ const runResult = ref(null)          // {stdout, stderr, timed_out}
 const error = ref('')
 const chatBox = ref(null)
 const done = computed(() => session.status === 'completed')
+
+// 点行号看讲解（从闯关页搬来）：逐行讲解当前代码，点哪行滑出哪行的大白话。
+const taEl = ref(null)
+const gutterEl = ref(null)
+const selectedLine = ref(null)
+const walkthrough = ref('')
+const walkLoading = ref(false)
+const codeLineCount = computed(() => (session.code || '').split('\n').length)
+const walkRows = computed(() => {
+  if (!walkthrough.value) return []
+  return walkthrough.value.split('\n').map((l) => l.trim()).filter(Boolean).map((line) => {
+    const m = line.match(/[—–]+/)
+    if (!m) return { code: '', explain: line }
+    return { code: line.slice(0, m.index).trim(), explain: line.slice(m.index + m[0].length).trim() }
+  })
+})
+const lineNote = computed(() => {
+  if (!selectedLine.value) return ''
+  if (walkLoading.value) return '知返正在逐行讲解…'
+  const r = (walkRows.value || [])[selectedLine.value - 1]
+  return r?.explain || '这一行还没讲解——点「运行」看真实结果，或在右边问知返。'
+})
+async function loadWalkthrough() {
+  if (walkLoading.value || !session.code) return
+  walkLoading.value = true
+  try {
+    walkthrough.value = (await api.coopWalkthrough(session.code)).walkthrough || ''
+  } catch (e) {
+    walkthrough.value = '讲解生成失败，把看不懂的那行发给知返问。'
+  } finally {
+    walkLoading.value = false
+  }
+}
+function clickLine(n) {
+  if (selectedLine.value === n) { selectedLine.value = null; return }
+  selectedLine.value = n
+  if (!walkthrough.value && !walkLoading.value) loadWalkthrough()
+}
+function syncScroll() {
+  if (gutterEl.value && taEl.value) gutterEl.value.scrollTop = taEl.value.scrollTop
+}
+// 代码改了旧讲解作废（按当前代码讲，改动后再点行号会重载）
+watch(() => session.code, () => { walkthrough.value = ''; selectedLine.value = null })
 
 async function loadSamples() {
   try {
@@ -200,7 +243,19 @@ const termBad = computed(() => !!(runResult.value && (runResult.value.stderr || 
               {{ running ? '运行中…' : '▶ 运行' }}
             </button>
           </div>
-          <textarea v-model="session.code" class="cc-ta" spellcheck="false" :disabled="done" />
+          <div class="cc-edit">
+            <div ref="gutterEl" class="cc-gutter">
+              <div v-for="n in codeLineCount" :key="n" :class="{ on: selectedLine === n }" @click="clickLine(n)">{{ n }}</div>
+            </div>
+            <textarea ref="taEl" v-model="session.code" class="cc-ta" spellcheck="false" :disabled="done" @scroll="syncScroll" />
+          </div>
+          <div v-if="selectedLine" class="cc-note">
+            <div class="cc-note-head">
+              <span class="cc-note-line">第 {{ selectedLine }} 行</span>
+              <button class="cc-note-x" @click="selectedLine = null" aria-label="收起">×</button>
+            </div>
+            <div class="cc-note-body">{{ lineNote }}</div>
+          </div>
           <div class="cc-term">
             <div class="cc-term-bar">
               <span class="cc-dots"><i /><i /><i /></span>
@@ -314,8 +369,22 @@ const termBad = computed(() => !!(runResult.value && (runResult.value.stderr || 
   padding: 5px 14px; border-radius: 8px; cursor: pointer; font-family: inherit;
 }
 .cc-run:disabled { opacity: 0.5; cursor: not-allowed; }
+.cc-edit { display: flex; align-items: stretch; }
+.cc-gutter {
+  flex-shrink: 0; padding: 14px 0; text-align: right; user-select: none; overflow: hidden;
+  background: #f3ece1; color: #b3a692; font-family: ui-monospace, monospace;
+  font-size: 13.5px; line-height: 1.9; max-height: 340px;
+}
+.cc-gutter div { padding: 0 10px; cursor: pointer; }
+.cc-gutter div:hover { color: var(--primary); background: rgba(193, 95, 60, 0.08); }
+.cc-gutter div.on { color: var(--primary); background: rgba(193, 95, 60, 0.14); font-weight: 600; }
+.cc-note { margin: 0 14px 12px; padding: 10px 13px; border-radius: 10px; background: rgba(193, 95, 60, 0.06); border: 1px solid #e6d6c4; }
+.cc-note-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+.cc-note-line { font-size: 12.5px; color: var(--primary); font-weight: 600; }
+.cc-note-x { border: none; background: none; font-size: 18px; color: var(--muted); cursor: pointer; line-height: 1; }
+.cc-note-body { font-size: 13.5px; color: var(--text); line-height: 1.7; }
 .cc-ta {
-  width: 100%; min-height: 200px; border: none; outline: none; resize: vertical;
+  flex: 1; min-width: 0; min-height: 200px; border: none; outline: none; resize: vertical;
   padding: 14px 16px; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 13.5px;
   line-height: 1.9; color: var(--text); background: transparent; box-sizing: border-box;
 }

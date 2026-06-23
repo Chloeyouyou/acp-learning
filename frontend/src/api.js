@@ -93,4 +93,5 @@ export const api = {
   coopRun: (sessionId, code) => request('POST', `/coop/${sessionId}/run`, { code }),
   coopMessage: (sessionId, content) => request('POST', `/coop/${sessionId}/message`, { content }),
   coopResolve: (sessionId) => request('POST', `/coop/${sessionId}/resolve`),
+  coopWalkthrough: (code, deep = false) => request('POST', '/coop/walkthrough', { code, deep }),
 }

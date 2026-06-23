@@ -446,6 +446,11 @@ class CoopStartCustomReq(BaseModel):
     problem: str = ""
 
 
+class CoopWalkReq(BaseModel):
+    code: str
+    deep: bool = False
+
+
 @app.get("/api/coop/samples")
 def coop_samples():
     """列出可选的结对调试样本（不含答案信息）。"""
@@ -498,6 +503,12 @@ def coop_resolve(session_id: str, db: Session = Depends(get_db)):
     if out is None:
         raise HTTPException(404, "coop session not found")
     return out
+
+
+@app.post("/api/coop/walkthrough")
+def coop_walkthrough(req: CoopWalkReq):
+    """逐行讲解 coop 当前代码（样本/自带代码无 pattern_id，按 code 内容讲）。"""
+    return {"walkthrough": tutor.walkthrough_for_code(req.code, req.deep)}
 
 
 @app.get("/api/health")
