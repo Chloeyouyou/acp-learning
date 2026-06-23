@@ -1,0 +1,38 @@
+id: BP-ARITH-001
+name: 整数除法丢小数（平均值偏小）
+category: arithmetic
+language: python
+knowledge_points: [除法, 数据类型]
+capability_dims: [Root_Cause_Reasoning, Independent_Debug]
+difficulty: L1
+symptom: WA
+symptom_sample: |
+  程序能正常跑完，但平均分算出来比手算的小——结果是 87 而不是 87.67
+buggy_code: |
+  def average(scores):
+      # 想算平均分
+      return sum(scores) // len(scores)
+
+  print("平均分：", average([90, 85, 88]))
+mine_location:
+  file: main.py
+  line: 3
+trigger_input: "[90, 85, 88]"
+root_cause: "用了整除 // ，它会把结果向下取整丢掉小数部分；263 // 3 得到 87 而不是 87.666…"
+cognitive_root: "以为 // 和 / 一样都是除法——其实 // 是整除会丢小数，普通除法要用 /"  # 认知漏洞（Timeline 🧠根因用）
+thinking_pattern: control_semantics  # 跨题思维默认值归簇（聚合用）
+expected_fix: "sum(scores) / len(scores)"
+fix_check: 'sum\(scores\)\s*/\s*len\(scores\)'
+expected_output: |
+  平均分： 87.66666666666667
+internalize_questions:
+  - "为什么 // 算出来的平均分偏小？它对小数做了什么？"
+  - "// 和 / 有什么区别？什么时候该用哪一个？"
+hint_ladder:
+  L0: "运行一下，把它算出的平均分和你自己手算的比一比，差在哪里？"
+  L1: "263 除以 3 应该是 87.67 左右，但程序给的是 87。小数部分去哪了？"
+  L2: "问题在第3行那个除法。你觉得是：A. sum 加错了  B. 除号的写法  C. len 数错了？"
+  L3: "Python 里有两种除法：一种保留小数，一种只取整数部分。代码里用的是哪一种？"
+  L4: "看第3行的 // 。说说它和普通除法 / 有什么不一样，为什么会让结果偏小？"
+  L5: "讲解思路：// 是整除，会把小数部分直接丢掉；要保留小数得用另一个除号。想想是哪个（自己改，不要抄）。"
+variant_pool: []
