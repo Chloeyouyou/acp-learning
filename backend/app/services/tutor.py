@@ -119,10 +119,15 @@ def explain_error(kind: str, stderr: str = "") -> str | None:
     """把真实运行结果翻译成给零基础看的一句中文人话（复用 ERROR_PLAYBOOK 的错误家族解释）。
     识别不了就返回 None——前端只显示原始报错，不硬塞看不懂的话。"""
     if kind == "HANG":
-        return "程序跑不完、停不下来——多半是循环结束不了（条件一直成立，俗称死循环）。"
+        return ("程序跑不完、停不下来——多半是循环结束不了（条件一直成立，俗称死循环）。"
+                "下一步可以看看：循环靠什么条件停？那个条件有没有机会变成「不成立」？")
     hit = detect_error_signature(stderr or "")
     if hit:
-        return hit[1]["meaning"]
+        pb = hit[1]
+        msg = pb["meaning"]
+        if pb.get("probe"):
+            msg += f"。下一步可以看看：{pb['probe']}"   # 从"看懂报错"推进到"会查"
+        return msg
     return None
 
 

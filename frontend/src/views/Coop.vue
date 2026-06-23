@@ -213,10 +213,11 @@ const termBad = computed(() => !!(runResult.value && (runResult.value.stderr || 
             <div v-if="runResult && runResult.hint" class="cc-term-hint">💡 {{ runResult.hint }}</div>
           </div>
         </div>
-        <button class="coop-solved" :disabled="busy || done" @click="resolve">
-          {{ done ? '✓ 已解决' : '✓ 我搞定了，解决了' }}
+        <button v-if="!done" class="coop-solved" :disabled="busy" @click="resolve">
+          ✓ 我搞定了，解决了
         </button>
-        <p class="coop-solved-hint">改代码、点运行看结果、和知返聊——你觉得搞定了，就点「解决了」。</p>
+        <button v-else class="coop-next" @click="quit">换一道 / 回大厅 →</button>
+        <p v-if="!done" class="coop-solved-hint">改代码、点运行看结果、和知返聊——你觉得搞定了，就点「解决了」。</p>
       </div>
 
       <!-- 右：结对对话 -->
@@ -338,6 +339,13 @@ const termBad = computed(() => !!(runResult.value && (runResult.value.stderr || 
   background: var(--primary); color: #fff; font-family: var(--serif); font-size: 15px; font-weight: 600;
 }
 .coop-solved:disabled { opacity: 0.55; cursor: not-allowed; }
+.coop-next {
+  width: 100%; margin-top: 14px; padding: 12px; border: 1px solid var(--primary);
+  border-radius: 12px; cursor: pointer; background: var(--accent-soft);
+  color: var(--primary); font-family: var(--serif); font-size: 15px; font-weight: 600;
+  transition: background 0.15s, color 0.15s;
+}
+.coop-next:hover { background: var(--primary); color: #fff; }
 .coop-solved-hint { font-size: 12.5px; color: var(--muted); text-align: center; margin: 8px 0 0; line-height: 1.6; }
 
 .coop-rt-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 14px; color: var(--text); }

@@ -1172,7 +1172,7 @@ def 报错翻译_各错误返回中文_无报错返回None():
     from app.services import tutor
     assert "死循环" in (tutor.explain_error("HANG", "") or "")
     assert tutor.explain_error("RE", "IndexError: list index out of range")
-    assert tutor.explain_error("RE", "KeyError: 'x'")
+    assert "下一步" in tutor.explain_error("RE", "KeyError: 'x'")   # 翻译含"怎么查"方向
     assert tutor.explain_error("OK", "") is None                 # 没报错不硬塞
     assert tutor.explain_error("RE", "完全不认识的乱码") is None   # 识别不了返回 None
 
