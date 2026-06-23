@@ -1155,6 +1155,18 @@ def 止损_受挫时提示级别升一格():
         mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
 
 
+@test
+def coop_样本库七道且每道可建会话():
+    from app.services import coop
+    assert len(coop.SAMPLES) == 7, len(coop.SAMPLES)
+    assert len(coop.list_samples()) == 7
+    db = TestSession()
+    for sid in coop.SAMPLES:
+        out = coop.start(db, "samp", sid)
+        assert out["sample_id"] == sid and out["code"] and out["title"] and out["ask"], sid
+    db.close()
+
+
 def main():
     passed = failed = 0
     for fn in _tests:

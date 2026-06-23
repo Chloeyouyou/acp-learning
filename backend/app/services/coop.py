@@ -63,6 +63,44 @@ SAMPLES = {
             "    n = n\n"
         ),
     },
+    "key_error": {
+        "title": "查价格时程序报错了",
+        "ask": "我做了个价格表想查橙子多少钱，但一运行就报错，说什么 KeyError，帮我看看哪儿不对？",
+        "code": (
+            "prices = {\"苹果\": 3, \"香蕉\": 2}\n"
+            "want = \"橙子\"\n"
+            "print(want + \" 的价格是 \" + str(prices[want]) + \" 元\")\n"
+        ),
+    },
+    "name_typo": {
+        "title": "说找不到名字，可我明明写了",
+        "ask": "我定义了变量想拼一句话打印，但程序说找不到名字，我看着明明都写了呀，帮我看看？",
+        "code": (
+            "greeting = \"早上好\"\n"
+            "name = \"小明\"\n"
+            "print(greeting + \"，\" + naem)\n"
+        ),
+    },
+    "type_concat": {
+        "title": "拼一句话却报类型错误",
+        "ask": "我想拼一句带价格的话，但程序报错说 str 和 int 不能放一起，我不懂这是啥意思，帮我看看？",
+        "code": (
+            "def receipt(item, price):\n"
+            "    return item + \" 共 \" + price + \" 元\"\n"
+            "\n"
+            "print(receipt(\"咖啡\", 18))\n"
+        ),
+    },
+    "int_divide": {
+        "title": "算平均分，结果好像差一点",
+        "ask": "我想算几个分数的平均，但算出来的数好像不太对，帮我看看哪儿有问题？",
+        "code": (
+            "def average(xs):\n"
+            "    return sum(xs) // len(xs)\n"
+            "\n"
+            "print(\"平均分：\", average([90, 85, 88]))\n"
+        ),
+    },
 }
 
 
