@@ -1,0 +1,41 @@
+id: BP-ARITH-003
+name: 累加初始值设错（多算了一份）
+category: arithmetic
+language: python
+knowledge_points: [累加器, 初始值]
+capability_dims: [Root_Cause_Reasoning, Independent_Debug]
+difficulty: L1
+symptom: WA
+symptom_sample: |
+  程序能跑完，但算出来的总和比手加的多了 10
+buggy_code: |
+  def total_price(prices):
+      # 把所有商品价格加起来
+      s = 10
+      for p in prices:
+          s += p
+      return s
+
+  print("总价：", total_price([20, 30, 50]))
+mine_location:
+  file: main.py
+  line: 3
+trigger_input: "[20, 30, 50]"
+root_cause: "累加器 s 的初始值被设成了 10 而不是 0，于是结果凭空多出 10——20+30+50 应是 100，却得到 110"
+cognitive_root: "没意识到累加要从 0 起步——初始值设成别的数，等于先白加了一份"  # 认知漏洞（Timeline 🧠根因用）
+thinking_pattern: assume_valid  # 跨题思维默认值归簇（聚合用）
+expected_fix: "s = 0"
+fix_check: 's\s*=\s*0\b'
+expected_output: |
+  总价： 100
+internalize_questions:
+  - "总和为什么正好多了 10？这个 10 是从哪来的？"
+  - "用循环累加时，初始值应该设成几？为什么？"
+hint_ladder:
+  L0: "运行一下，把它算的总价和你自己手加的比一比，差多少？"
+  L1: "20+30+50 应该是 100，但程序给了 110，正好多 10。这个 10 你在代码里见过吗？"
+  L2: "问题在累加上。你觉得是：A. s 的初始值  B. 循环范围  C. += 写错了？"
+  L3: "s 从循环开始前就有值了。它一开始是几？把这个值和『多出来的 10』对一下。"
+  L4: "看第3行 s = 10。说说为什么从 10 开始累加，结果会比正确答案多 10？"
+  L5: "讲解思路：累加器要从 0 开始，每次加上一项。初始值设成 10 等于先白加了 10。该改成几？（自己改，不要抄）"
+variant_pool: []
