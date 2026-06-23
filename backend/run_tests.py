@@ -1027,6 +1027,46 @@ def coop_get不能拿到闯关会话():
 
 
 @test
+def coopB2_埋点_resolve记协作信号且不进画像():
+    from app.services import coop
+    from app.models import ExecutionEvent, CapabilityScore, Event
+    db = TestSession()
+    out = coop.start(db, "b2a", "off_by_one")
+    coop.run(db, out["session_id"], "print(1)")      # 真实动手运行一次
+    coop.resolve(db, out["session_id"])
+    sig = db.query(ExecutionEvent).filter_by(session_id=out["session_id"], source="coop_resolve").all()
+    assert len(sig) == 1 and sig[0].kind == "COLLAB"
+    assert sig[0].meta["collab"]["runs"] == 1
+    assert sig[0].knowledge_points == []
+    # 埋点不计分：无能力分、无能力事件
+    assert db.query(CapabilityScore).filter_by(student_id="b2a").count() == 0
+    assert db.query(Event).filter_by(student_id="b2a").count() == 0
+    db.close()
+
+
+@test
+def coopB2_埋点_没动手运行不记():
+    from app.services import coop
+    from app.models import ExecutionEvent
+    db = TestSession()
+    out = coop.start(db, "b2b", "off_by_one")
+    coop.resolve(db, out["session_id"])    # 没点过运行 → 不算有效协作
+    assert db.query(ExecutionEvent).filter_by(session_id=out["session_id"], source="coop_resolve").count() == 0
+    db.close()
+
+
+@test
+def coopB2_埋点_不进成长轨迹():
+    from app.services import coop, timeline
+    db = TestSession()
+    out = coop.start(db, "b2c", "off_by_one")
+    coop.run(db, out["session_id"], "print(1)")
+    coop.resolve(db, out["session_id"])
+    assert timeline.build_timeline(db, "b2c")["episodes"] == []
+    db.close()
+
+
+@test
 def 画像_维度带覆盖度trained_total():
     from app.services import event_engine, profile
     db = TestSession()

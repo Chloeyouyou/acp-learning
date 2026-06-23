@@ -17,7 +17,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 from ..config import TUTOR_MODEL
-from ..models import TutorSession
+from ..models import ExecutionEvent, TutorSession, now
 from . import event_engine, sandbox, tutor
 
 # ---- 预置样本：单文件 Python，有 bug，「帮我看看这段哪儿不对」口吻 ----
@@ -242,5 +242,26 @@ def resolve(db: Session, session_id: str) -> dict | None:
         return None
     if s.status == "active":
         s.status = "completed"
+        _log_collab_signal(db, s)   # B2 埋点：记结构化协作信号（不进画像，攒数据待将来开分）
         db.commit()
     return {"status": s.status}
+
+
+def _log_collab_signal(db: Session, s: TutorSession) -> None:
+    """B2 埋点（先记录、不计分，用户拍板）：会话完成时，若学生真在「结对+动手验证」，
+    记一条协作事实日志。纯 ExecutionEvent——append-only、knowledge_points=[]、mode=coop，
+    绝不碰 capability_scores / 画像 / 成长轨迹。将来 B2 开分时，calculator 读它即可一行开启。"""
+    runs = db.query(ExecutionEvent).filter_by(session_id=s.id, source="run").count()
+    turns = sum(1 for m in (s.history or [])
+                if m.get("role") == "user" and not m["content"].startswith(tutor.RUN_RESULT_PREFIX))
+    if runs < 1:
+        return   # 没动手运行验证过 → 不算一次有效的 AI 协作调试，不埋点
+    db.add(ExecutionEvent(
+        id=f"ex_{uuid.uuid4().hex[:16]}", version="v1",
+        student_id=s.student_id, session_id=s.id, pattern_id=s.pattern_id,
+        source="coop_resolve", kind="COLLAB", error_family=None, knowledge_points=[],
+        meta={"mode": "coop", "collab": {"runs": runs, "turns": turns},
+              "ontology_tags": [], "trace_snapshot_id": None,
+              "stderr_summary": None, "stdout_summary": None},
+        timestamp=now(),
+    ))
