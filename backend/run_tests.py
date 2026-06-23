@@ -864,6 +864,113 @@ def 掌握度_状态映射与薄弱判定():
     db.close()
 
 
+# ════════ AI 共脑调试 coop（B0，不连 LLM 的部分）════════
+
+@test
+def coop_建会话_mode为coop且伪pattern_id():
+    from app.services import coop
+    db = TestSession()
+    out = coop.start(db, "co1", "off_by_one")
+    assert out["sample_id"] == "off_by_one" and out["code"]
+    s = db.get(TutorSession, out["session_id"])
+    assert (s.manifest or {}).get("mode") == "coop"
+    assert s.pattern_id == "coop_off_by_one"
+    assert s.history and s.history[0]["role"] == "user"   # 首条=样本求助
+    db.close()
+
+
+@test
+def coop_非法样本回退第一个():
+    from app.services import coop
+    db = TestSession()
+    out = coop.start(db, "co2", "不存在的样本")
+    assert out["sample_id"] in coop.SAMPLES
+    db.close()
+
+
+@test
+def coop_run落ExecutionEvent_mode_coop且不查pattern():
+    from app.services import coop
+    from app.models import ExecutionEvent
+    db = TestSession()
+    out = coop.start(db, "co3", "off_by_one")
+    # 跑一段真代码（不依赖任何 pattern，伪 id 不会崩）
+    r = coop.run(db, out["session_id"], "print(1+1)")
+    assert r["stdout"].strip() == "2"
+    ev = db.query(ExecutionEvent).filter_by(session_id=out["session_id"]).one()
+    assert ev.knowledge_points == []                 # 对画像天然隐形
+    assert (ev.meta or {}).get("mode") == "coop"
+    db.close()
+
+
+@test
+def coop_run把真实结果注入对话():
+    from app.services import coop, tutor
+    db = TestSession()
+    out = coop.start(db, "co4", "off_by_one")
+    coop.run(db, out["session_id"], "print(42)")
+    s = db.get(TutorSession, out["session_id"])
+    notes = [m for m in s.history if m["content"].startswith(tutor.RUN_RESULT_PREFIX)]
+    assert len(notes) == 1 and "42" in notes[0]["content"]
+    db.close()
+
+
+@test
+def coop_resolve标completed():
+    from app.services import coop
+    db = TestSession()
+    out = coop.start(db, "co5", "off_by_one")
+    assert coop.resolve(db, out["session_id"])["status"] == "completed"
+    s = db.get(TutorSession, out["session_id"])
+    assert s.status == "completed"
+    db.close()
+
+
+@test
+def coop_防污染_不进成长轨迹():
+    from app.services import coop, timeline
+    db = TestSession()
+    out = coop.start(db, "co6", "off_by_one")
+    coop.run(db, out["session_id"], "print(1)")
+    tl = timeline.build_timeline(db, "co6")
+    assert tl["episodes"] == []        # coop 会话被 build_timeline 排除
+    db.close()
+
+
+@test
+def coop_防污染_不抬高知识点掌握度():
+    from app.services import coop, profile
+    db = TestSession()
+    out = coop.start(db, "co7", "off_by_one")
+    coop.run(db, out["session_id"], "print(1)")
+    # coop 的 ExecutionEvent knowledge_points=[] → 不产生任何 kp 掌握度
+    assert profile.knowledge_mastery(db, "co7") == []
+    db.close()
+
+
+@test
+def coop_错误session_id返回None():
+    from app.services import coop
+    db = TestSession()
+    assert coop.get(db, "不存在") is None
+    assert coop.run(db, "不存在", "print(1)") is None
+    assert coop.message(db, "不存在", "hi") is None
+    assert coop.resolve(db, "不存在") is None
+    db.close()
+
+
+@test
+def coop_get不能拿到闯关会话():
+    """coop 的 get 只认 mode=coop 会话，普通闯关 session 一律 None（隔离）。"""
+    from app.services import coop
+    db = TestSession()
+    s = TutorSession(id="normal_sess", student_id="co8", pattern_id="BP-X",
+                     manifest={"mode": "debug", "mines": [{}]}, history=[])
+    db.add(s); db.commit()
+    assert coop.get(db, "normal_sess") is None
+    db.close()
+
+
 def main():
     passed = failed = 0
     for fn in _tests:

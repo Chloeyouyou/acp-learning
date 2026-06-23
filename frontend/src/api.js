@@ -82,4 +82,12 @@ export const api = {
     request('POST', '/question-training/diagnose', { scenario_id: scenarioId, prompt, student_id: getStudentId() }),
   getQuestionWeakness: () =>
     request('GET', `/students/${getStudentId()}/question-training/weakness`),
+  // AI 共脑调试（结对调试）
+  coopSamples: () => request('GET', '/coop/samples'),
+  coopStart: (sampleId) =>
+    request('POST', '/coop/start', { student_id: getStudentId(), sample_id: sampleId }),
+  coopGet: (sessionId) => request('GET', `/coop/${sessionId}`),
+  coopRun: (sessionId, code) => request('POST', `/coop/${sessionId}/run`, { code }),
+  coopMessage: (sessionId, content) => request('POST', `/coop/${sessionId}/message`, { content }),
+  coopResolve: (sessionId) => request('POST', `/coop/${sessionId}/resolve`),
 }

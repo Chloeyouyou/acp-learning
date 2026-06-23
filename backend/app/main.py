@@ -17,7 +17,7 @@ from .config import STAGES
 from .db import get_db, init_db
 from .models import ExecutionEvent, TutorSession
 from .services import (
-    event_engine, mine_engine, profile, question_training, review, sandbox, timeline, tutor,
+    coop, event_engine, mine_engine, profile, question_training, review, sandbox, timeline, tutor,
 )
 
 @asynccontextmanager
@@ -302,6 +302,8 @@ def get_active_sessions(student_id: str, db: Session = Depends(get_db)):
     """未完成关卡列表（最近 5 个 active 会话摘要），供大厅续做。纯只读、不写库。
     last_active_at = 该会话最新 ExecutionEvent 时间（无则 created_at），按之倒序——真按活跃度。"""
     sessions = db.query(TutorSession).filter_by(student_id=student_id, status="active").all()
+    # coop（AI 共脑调试）会话不串进闯关大厅「接着做」（设计 09 防污染）
+    sessions = [s for s in sessions if (s.manifest or {}).get("mode") != "coop"]
     out = []
     for s in sessions:
         last_ev = (db.query(ExecutionEvent.timestamp).filter_by(session_id=s.id)
@@ -421,6 +423,58 @@ def diagnose_question(req: DiagnoseReq, db: Session = Depends(get_db)):
 def question_weakness(student_id: str, db: Session = Depends(get_db)):
     """回放该生 qt_diagnose 资产，返回最近最常漏的要素（短板个性化）；样本不足返回 null。"""
     return {"weakness": question_training.weakness_summary(db, student_id)}
+
+
+# ---- AI 共脑调试（结对调试）· B0 预置样本（设计 09，与闯关端点隔离）----
+
+class CoopStartReq(BaseModel):
+    student_id: str
+    sample_id: str | None = None
+
+
+@app.get("/api/coop/samples")
+def coop_samples():
+    """列出可选的结对调试样本（不含答案信息）。"""
+    return {"samples": coop.list_samples()}
+
+
+@app.post("/api/coop/start")
+def coop_start(req: CoopStartReq, db: Session = Depends(get_db)):
+    return coop.start(db, req.student_id, req.sample_id)
+
+
+@app.get("/api/coop/{session_id}")
+def coop_get(session_id: str, db: Session = Depends(get_db)):
+    out = coop.get(db, session_id)
+    if out is None:
+        raise HTTPException(404, "coop session not found")
+    return out
+
+
+@app.post("/api/coop/{session_id}/run")
+def coop_run(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
+    """coop 运行：真跑学生当前代码，真实结果注入对话。不查 pattern、不判题。"""
+    out = coop.run(db, session_id, req.code)
+    if out is None:
+        raise HTTPException(404, "coop session not found")
+    return out
+
+
+@app.post("/api/coop/{session_id}/message")
+def coop_message(session_id: str, req: MessageReq, db: Session = Depends(get_db)):
+    out = coop.message(db, session_id, req.content)
+    if out is None:
+        raise HTTPException(404, "coop session not found")
+    return out
+
+
+@app.post("/api/coop/{session_id}/resolve")
+def coop_resolve(session_id: str, db: Session = Depends(get_db)):
+    """学生点「解决了」——结对调试唯一完成门控。"""
+    out = coop.resolve(db, session_id)
+    if out is None:
+        raise HTTPException(404, "coop session not found")
+    return out
 
 
 @app.get("/api/health")
