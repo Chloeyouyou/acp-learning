@@ -547,6 +547,7 @@ async function submit() {
         else if (ex.error_family) {
           resultText = `提交测试运行报错：${ex.error_family}${ex.bug_type ? ` · ${ex.bug_type}` : ''}`
         }
+        if (ex.hint) resultText += `。💡 ${ex.hint}`   // 报错翻译成人话
         messages.value.push({ role: 'system', text: resultText })
       }
       // 失败反馈来自导师（针对提交代码的具体引导），按导师气泡展示

@@ -205,6 +205,7 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
         "error_family": execution.error_family,
         "bug_type": (execution.meta or {}).get("bug_type"),
         "concept_tags": (execution.meta or {}).get("concept_tags", []),
+        "hint": tutor.explain_error(execution.kind, result.get("stderr", "")),   # 报错翻译成人话
     }
     if not result["passed"]:
         diagnosis = tutor.judge_feedback(result)  # 真实运行结果（报错/输出差异/超时），非正则猜测
