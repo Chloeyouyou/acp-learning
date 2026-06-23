@@ -129,12 +129,49 @@ def start(db: Session, student_id: str, sample_id: str | None = None) -> dict:
     }
 
 
+# B1 自带代码：单文件 Python 文本上限（防超大输入；沙箱仍 subprocess + 4s 超时兜底）
+MAX_CODE_LEN = 10000
+
+
+def start_custom(db: Session, student_id: str, code: str, problem: str = "") -> dict | None:
+    """B1：学生粘贴自己的单文件 Python 代码 + （可选）问题描述，建 custom coop 会话。
+    code 存进 manifest 以便刷新/续做恢复（custom 没有预置样本可回退取）。"""
+    code = (code or "").strip()
+    if not code:
+        return None
+    code = code[:MAX_CODE_LEN]
+    problem = (problem or "").strip()
+    # 首条求助：有描述用描述，没有给一句默认（红线会让导师主动问出预期，不强制学生先填）
+    ask = problem or "这是我自己写的代码，运行起来好像不太对，你能陪我一起看看哪儿有问题吗？"
+    session = TutorSession(
+        id=f"coop_{uuid.uuid4().hex[:12]}",
+        student_id=student_id,
+        pattern_id="coop_custom",   # 自带代码哨兵 id（不指向任何真 pattern）
+        manifest={"mode": "coop", "custom": True, "code": code, "title": "我的代码"},
+        history=[{"role": "user", "content": ask}],
+    )
+    db.add(session)
+    db.commit()
+    return {
+        "session_id": session.id,
+        "sample_id": None,
+        "title": "我的代码",
+        "ask": ask,
+        "code": code,
+    }
+
+
 def get(db: Session, session_id: str) -> dict | None:
     """续做/刷新恢复：返回会话当前状态。"""
     s = _coop_session(db, session_id)
     if s is None:
         return None
-    sample = SAMPLES.get((s.manifest or {}).get("sample_id"), {})
+    manifest = s.manifest or {}
+    if manifest.get("custom"):
+        # 自带代码：title/code 从 manifest 取（无预置样本可回退）
+        sample = {"title": manifest.get("title", "我的代码"), "code": manifest.get("code", ""), "ask": ""}
+    else:
+        sample = SAMPLES.get(manifest.get("sample_id"), {})
     # 渲染消息：运行结果注入消息（以"（系统·运行结果）"开头）不在聊天区重复显示（终端已展示）
     messages = []
     for m in s.history:

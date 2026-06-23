@@ -86,6 +86,8 @@ export const api = {
   coopSamples: () => request('GET', '/coop/samples'),
   coopStart: (sampleId) =>
     request('POST', '/coop/start', { student_id: getStudentId(), sample_id: sampleId }),
+  coopStartCustom: (code, problem) =>
+    request('POST', '/coop/start-custom', { student_id: getStudentId(), code, problem }),
   coopGet: (sessionId) => request('GET', `/coop/${sessionId}`),
   coopRun: (sessionId, code) => request('POST', `/coop/${sessionId}/run`, { code }),
   coopMessage: (sessionId, content) => request('POST', `/coop/${sessionId}/message`, { content }),

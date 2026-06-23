@@ -432,6 +432,12 @@ class CoopStartReq(BaseModel):
     sample_id: str | None = None
 
 
+class CoopStartCustomReq(BaseModel):
+    student_id: str
+    code: str
+    problem: str = ""
+
+
 @app.get("/api/coop/samples")
 def coop_samples():
     """列出可选的结对调试样本（不含答案信息）。"""
@@ -441,6 +447,15 @@ def coop_samples():
 @app.post("/api/coop/start")
 def coop_start(req: CoopStartReq, db: Session = Depends(get_db)):
     return coop.start(db, req.student_id, req.sample_id)
+
+
+@app.post("/api/coop/start-custom")
+def coop_start_custom(req: CoopStartCustomReq, db: Session = Depends(get_db)):
+    """B1：学生粘贴自己的单文件 Python 代码（+可选问题描述），结对调试。"""
+    out = coop.start_custom(db, req.student_id, req.code, req.problem)
+    if out is None:
+        raise HTTPException(400, "code 不能为空")
+    return out
 
 
 @app.get("/api/coop/{session_id}")

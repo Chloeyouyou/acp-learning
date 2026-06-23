@@ -960,6 +960,61 @@ def coop_错误session_id返回None():
 
 
 @test
+def coop_自带代码_建custom会话且存code():
+    from app.services import coop
+    db = TestSession()
+    out = coop.start_custom(db, "cc1", "print('hi')\n", "它不输出东西")
+    assert out["sample_id"] is None and out["title"] == "我的代码"
+    s = db.get(TutorSession, out["session_id"])
+    assert (s.manifest or {}).get("custom") is True
+    assert s.pattern_id == "coop_custom"
+    assert s.manifest["code"] == "print('hi')"       # code 存进 manifest，刷新可恢复
+    assert s.history[0]["content"] == "它不输出东西"   # 描述作首条求助
+    db.close()
+
+
+@test
+def coop_自带代码_空代码返回None_超长截断():
+    from app.services import coop
+    db = TestSession()
+    assert coop.start_custom(db, "cc2", "   ") is None       # 空代码不建会话
+    big = "x = 1\n" * 5000                                   # 远超上限
+    out = coop.start_custom(db, "cc2", big)
+    s = db.get(TutorSession, out["session_id"])
+    assert len(s.manifest["code"]) == coop.MAX_CODE_LEN      # 截断到上限
+    db.close()
+
+
+@test
+def coop_自带代码_无描述给默认求助():
+    from app.services import coop
+    db = TestSession()
+    out = coop.start_custom(db, "cc3", "print(1)")
+    assert "看看" in out["ask"]    # 没填描述 → 默认一句求助（导师仍会主动问预期）
+    db.close()
+
+
+@test
+def coop_自带代码_get恢复manifest里的code():
+    from app.services import coop
+    db = TestSession()
+    out = coop.start_custom(db, "cc4", "a = 42\nprint(a)")
+    got = coop.get(db, out["session_id"])
+    assert got["code"] == "a = 42\nprint(a)" and got["title"] == "我的代码"
+    db.close()
+
+
+@test
+def coop_自带代码_防污染不进轨迹():
+    from app.services import coop, timeline
+    db = TestSession()
+    out = coop.start_custom(db, "cc5", "print(1)")
+    coop.run(db, out["session_id"], "print(1)")
+    assert timeline.build_timeline(db, "cc5")["episodes"] == []
+    db.close()
+
+
+@test
 def coop_get不能拿到闯关会话():
     """coop 的 get 只认 mode=coop 会话，普通闯关 session 一律 None（隔离）。"""
     from app.services import coop

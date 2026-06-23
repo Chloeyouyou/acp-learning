@@ -8,6 +8,10 @@ import { api } from '../api'
 
 const samples = ref([])              // 可选样本列表 {sample_id, title}
 const loadingSamples = ref(true)
+const customOpen = ref(false)        // 「贴我自己的代码」表单是否展开
+const customCode = ref('')
+const customProblem = ref('')
+const startingCustom = ref(false)
 const session = reactive({ id: null, sampleId: null, title: '', code: '', status: 'active' })
 const messages = ref([])             // {role:'student'|'coop'|'system', text}
 const draft = ref('')
@@ -37,21 +41,42 @@ async function scrollChat() {
   if (chatBox.value) chatBox.value.scrollTop = chatBox.value.scrollHeight
 }
 
+function enterSession(d) {
+  session.id = d.session_id
+  session.sampleId = d.sample_id
+  session.title = d.title
+  session.code = d.code
+  session.status = 'active'
+  // 首条 = 求助（学生口吻），作为对话起点
+  messages.value = [{ role: 'student', text: d.ask }]
+  runResult.value = null
+  scrollChat()
+}
+
 async function start(sampleId) {
   error.value = ''
   runResult.value = null
   try {
-    const d = await api.coopStart(sampleId)
-    session.id = d.session_id
-    session.sampleId = d.sample_id
-    session.title = d.title
-    session.code = d.code
-    session.status = 'active'
-    // 首条 = 样本的求助（学生口吻），作为对话起点
-    messages.value = [{ role: 'student', text: d.ask }]
-    scrollChat()
+    enterSession(await api.coopStart(sampleId))
   } catch (e) {
     error.value = '无法开始：' + e.message
+  }
+}
+
+async function startCustom() {
+  const code = customCode.value.trim()
+  if (!code || startingCustom.value) return
+  startingCustom.value = true
+  error.value = ''
+  try {
+    enterSession(await api.coopStartCustom(code, customProblem.value.trim()))
+    customOpen.value = false
+    customCode.value = ''
+    customProblem.value = ''
+  } catch (e) {
+    error.value = '无法开始：' + e.message
+  } finally {
+    startingCustom.value = false
   }
 }
 
@@ -137,6 +162,26 @@ const termBad = computed(() => !!(runResult.value && (runResult.value.stderr || 
         <span class="sample-go">一起看看 →</span>
       </button>
     </div>
+
+    <!-- 贴我自己的代码（B1） -->
+    <div v-if="!loadingSamples" class="custom-zone">
+      <button v-if="!customOpen" class="custom-trigger" @click="customOpen = true">
+        ✍️ 贴我自己的代码 · 让知返陪我一起看
+      </button>
+      <div v-else class="custom-form">
+        <div class="custom-head">
+          <b>贴上你自己的代码</b>
+          <button class="custom-x" @click="customOpen = false" aria-label="收起">×</button>
+        </div>
+        <textarea v-model="customCode" class="custom-code" spellcheck="false"
+                  placeholder="把你的 Python 代码粘到这里（单个文件就行）…" />
+        <input v-model="customProblem" class="custom-problem"
+               placeholder="它现在哪儿不对 / 你希望它怎样？（可不填，知返会问你）" />
+        <button class="custom-go" :disabled="!customCode.trim() || startingCustom" @click="startCustom">
+          {{ startingCustom ? '准备中…' : '开始一起调试 →' }}
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- 结对调试工作台 -->
@@ -216,6 +261,36 @@ const termBad = computed(() => !!(runResult.value && (runResult.value.stderr || 
 .sample-card:hover { border-color: var(--primary); transform: translateY(-1px); }
 .sample-title { font-size: 16px; color: var(--text); font-weight: 600; }
 .sample-go { font-size: 13.5px; color: var(--primary); }
+
+.custom-zone { margin-top: 18px; }
+.custom-trigger {
+  width: 100%; padding: 16px 22px; border: 1px dashed #cdbba8; border-radius: 14px;
+  background: transparent; color: var(--muted); cursor: pointer; font-family: inherit; font-size: 14.5px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.custom-trigger:hover { border-color: var(--primary); color: var(--primary); }
+.custom-form { border: 1px solid var(--border); border-radius: 14px; padding: 18px; background: var(--panel); }
+.custom-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.custom-head b { font-size: 15px; color: var(--text); }
+.custom-x { border: none; background: none; font-size: 22px; color: var(--muted); cursor: pointer; line-height: 1; }
+.custom-code {
+  width: 100%; min-height: 160px; resize: vertical; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: #fbf7f0;
+  font-family: ui-monospace, "Cascadia Code", monospace; font-size: 13.5px; line-height: 1.8;
+  color: var(--text); outline: none;
+}
+.custom-code:focus { border-color: var(--primary); }
+.custom-problem {
+  width: 100%; box-sizing: border-box; margin-top: 10px; border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 14px; font-family: inherit; font-size: 14px; color: var(--text);
+  background: #fff; outline: none;
+}
+.custom-problem:focus { border-color: var(--primary); }
+.custom-go {
+  margin-top: 12px; padding: 10px 20px; border: none; border-radius: 10px; cursor: pointer;
+  background: var(--primary); color: #fff; font-family: var(--serif); font-size: 14.5px; font-weight: 600;
+}
+.custom-go:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .coop-wb { max-width: 1120px; margin: 0 auto; }
 .coop-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
