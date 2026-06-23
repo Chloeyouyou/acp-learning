@@ -76,21 +76,33 @@ const runResult = ref(null)          // {stdout, stderr, timed_out}
 // 代码一改，旧的运行结果就作废——否则会出现"删了代码却还显示上次成功输出"的错觉
 watch(() => session.code, () => { runResult.value = null })
 
-// 灵犀挫败台阶（设计 11）：连续报错 2 次，飘一句软提示，5 秒自退；每题最多一次、不缠人。
-// 纯前端、读人不追问、给选择不诊断；不动知返、不碰判题。
-const consecutiveErrors = ref(0)
+// 灵犀挫败台阶（设计 11）：做题里「改了代码还连续报错」时飘一句软提示、几秒自退。
+// 两道节流：①跨题——每天至多飘一次（绝不每道题都弹）②门槛——重复点同一份报错不算，
+// 必须"改了再运行还错"才算一次真挣扎。纯前端、读人不追问、给选择不诊断；不动知返、不碰判题。
+const LINGXI_DAY_KEY = 'lingxi_last_shown'
+const consecutiveStruggles = ref(0)   // 「改了代码却还报错」的连续次数
 const lingxiBubble = ref('')
-const lingxiShown = ref(false)   // 本题是否已飘过（每题至多一次）
-function resetLingxi() { consecutiveErrors.value = 0; lingxiBubble.value = ''; lingxiShown.value = false }
+let lastErrorCode = null              // 上次报错时的代码，用来识别"重复点同一份"
+function resetLingxi() { consecutiveStruggles.value = 0; lastErrorCode = null; lingxiBubble.value = '' }
 function maybeShowLingxi() {
-  if (lingxiShown.value || consecutiveErrors.value < 2) return
-  lingxiBubble.value = '接连两次没过也没关系，挺正常的~ 把报错发给知返一起看，或者先歇口气，不急。'
-  lingxiShown.value = true
+  if (consecutiveStruggles.value < 2) return
+  const today = new Date().toISOString().slice(0, 10)
+  if (localStorage.getItem(LINGXI_DAY_KEY) === today) return   // 今天已飘过 → 安静一整天
+  lingxiBubble.value = '接连改了又没过也没关系，挺正常的~ 把报错发给知返一起看，或者先歇口气，不急。'
+  localStorage.setItem(LINGXI_DAY_KEY, today)
   setTimeout(() => { lingxiBubble.value = '' }, 5500)   // 停 5.5 秒，自己淡出
 }
 watch(runResult, (r) => {
   if (!r) return                                        // 改代码清空结果时不计
-  consecutiveErrors.value = (r.stderr || r.timed_out) ? consecutiveErrors.value + 1 : 0
+  if (r.stderr || r.timed_out) {
+    if (session.code !== lastErrorCode) {               // 改了代码还报错=一次真挣扎；重复点同一份不算
+      consecutiveStruggles.value++
+      lastErrorCode = session.code
+    }
+  } else {
+    consecutiveStruggles.value = 0                      // 跑通了，挣扎清零
+    lastErrorCode = null
+  }
   maybeShowLingxi()
 })
 
