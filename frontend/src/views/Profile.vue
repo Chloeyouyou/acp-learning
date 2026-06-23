@@ -169,6 +169,10 @@ const radarDims = computed(() => RADAR_CAPS.map((cap) => {
   const v = profile.value?.vector?.[cap]
   return { name: ZH[cap] || cap, score: v && v.score != null ? Math.round(v.score) : null, confidence: v?.confidence }
 }))
+
+// 覆盖度（治 #18 虚高）：给维度分一个语境——「这一维你练了几项里的几项」。
+// 单个子能力就能把维度分顶高，所以必须把覆盖度亮出来，分数才诚实。
+const coverage = computed(() => (profile.value?.dimensions || []).filter((d) => d.total))
 </script>
 
 <template>
@@ -210,6 +214,9 @@ const radarDims = computed(() => RADAR_CAPS.map((cap) => {
       <div class="panel radar-panel">
         <h3>能力雷达</h3>
         <RadarChart :dimensions="radarDims" />
+        <div v-if="coverage.length" class="coverage">
+          <span v-for="d in coverage" :key="d.name" class="cov-item">{{ d.name }} · 练了 <b>{{ d.trained }}/{{ d.total }}</b> 项</span>
+        </div>
         <div class="legend"><span class="dot low" /> 灰色=数据还少（事件&lt;5），多练会更准</div>
         <details v-for="d in unevaluatedDims" :key="d.name" class="dim-hint">
           <summary><b>「{{ d.name }}」还未评估</b></summary>
@@ -443,6 +450,9 @@ h3 { margin-top: 0; font-size: 17px; }
 .radar-panel { display: flex; flex-direction: column; align-items: center; }
 .radar-panel h3 { align-self: flex-start; }
 .legend { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.coverage { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; }
+.cov-item { font-size: 12.5px; color: var(--muted); }
+.cov-item b { color: var(--primary); font-weight: 600; }
 .dim-hint {
   font-size: 12.5px; color: var(--muted); line-height: 1.65; margin-top: 10px;
   background: var(--bg); border-radius: 8px; padding: 9px 11px;

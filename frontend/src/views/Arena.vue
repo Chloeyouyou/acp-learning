@@ -26,10 +26,18 @@ const session = reactive({
 const originalCode = ref('')
 const codeChanged = computed(() => session.code !== originalCode.value)
 // 灵犀感知层（设计 11）：从现成信号推一句「读过你」的招呼，至多一条；无信号返回 null。
-// 纯派生、只读、不追问、不诊断、给选择留出口。第一版只用大厅已有的 activeSessions。
+// 纯派生、只读、不追问、不诊断、给选择留出口。给出选择、不下判断。
+const presence = ref(null)   // 后端最近活跃时间 {has_history, days_since}
 const presenceHint = computed(() => {
   const list = activeSessions.value
-  if (!list.length) return null   // 久别回来（无未完成）需后端最近活跃时间，第一版不做
+  if (!list.length) {
+    // 无未完成关卡：用最近活跃时间，温柔接住「久别回来 / 新朋友」（补全 doc11 缺口）
+    const p = presence.value
+    if (!p) return null
+    if (!p.has_history) return '欢迎，第一次来——点上面「智能开一题」，我陪你从一道轻松的开始。'
+    if (p.days_since != null && p.days_since >= 7) return '好久不见，不急，今天可以先从一道轻一点的开始。'
+    return null   // 最近来过、又没有未完成题：不硬塞（灵犀铁律：不命中则不出）
+  }
   const top = list[0]
   const gapDays = Math.floor((Date.now() - new Date(top.last_active_at).getTime()) / 86400000)
   if (Number.isNaN(gapDays)) return '我还记得你上次停在这里，但要不要继续，由你决定。'
@@ -230,6 +238,7 @@ onMounted(async () => {
   // 接着做：列出所有未完成关卡让用户自选，不再静默自动跳（设计 08）。
   // 后端 active-sessions 是唯一真相；localStorage 单会话恢复机制已退役。
   loadActiveSessions()
+  loadPresence()
 })
 
 async function loadActiveSessions() {
@@ -239,6 +248,12 @@ async function loadActiveSessions() {
   } catch (e) {
     activeSessions.value = []   // 拿不到就不显示「接着做」，不阻塞大厅
   }
+}
+
+async function loadPresence() {
+  try {
+    presence.value = await api.getPresence()
+  } catch (e) { /* 拿不到就不出久别招呼，不阻塞大厅 */ }
 }
 
 // 「接着做」卡上的活跃时间：刚刚 / N 分钟前 / N 小时前 / N 天前

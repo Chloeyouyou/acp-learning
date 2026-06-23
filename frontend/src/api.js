@@ -71,6 +71,7 @@ export const api = {
   getWalkthrough: (patternId, deep = false) =>
     request('GET', `/patterns/${patternId}/walkthrough${deep ? '?deep=true' : ''}`),
   getProfile: () => request('GET', `/students/${getStudentId()}/profile`),
+  getPresence: () => request('GET', `/students/${getStudentId()}/presence`),
   getTimeline: () => request('GET', `/students/${getStudentId()}/timeline`),
   getReviewQueue: () => request('GET', `/students/${getStudentId()}/review-queue`),
   getActiveSessions: () => request('GET', `/students/${getStudentId()}/active-sessions`),

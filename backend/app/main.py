@@ -17,7 +17,8 @@ from .config import STAGES
 from .db import get_db, init_db
 from .models import ExecutionEvent, TutorSession
 from .services import (
-    coop, event_engine, mine_engine, profile, question_training, review, sandbox, timeline, tutor,
+    coop, event_engine, mine_engine, presence, profile, question_training, review, sandbox, timeline,
+    tutor,
 )
 
 @asynccontextmanager
@@ -283,6 +284,12 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db)):
 @app.get("/api/students/{student_id}/profile")
 def get_profile(student_id: str, db: Session = Depends(get_db)):
     return profile.get_profile(db, student_id)
+
+
+@app.get("/api/students/{student_id}/presence")
+def get_presence(student_id: str, db: Session = Depends(get_db)):
+    """灵犀感知层（设计 11）：该生最近活跃时间，供大厅「久别回来/新朋友」招呼。纯只读派生。"""
+    return presence.presence_signals(db, student_id)
 
 
 @app.get("/api/students/{student_id}/timeline")

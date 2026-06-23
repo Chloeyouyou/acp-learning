@@ -1026,6 +1026,34 @@ def coop_get不能拿到闯关会话():
     db.close()
 
 
+@test
+def 画像_维度带覆盖度trained_total():
+    from app.services import event_engine, profile
+    db = TestSession()
+    # 只练 1 个 Debug 子能力（共 5 个）→ trained=1 total=5，治 #18 虚高的语境
+    for _ in range(3):
+        event_engine.emit(db, student_id="cov1", session_id="x", capability="Independent_Debug",
+                          delta=3, producer="rule", evidence={"summary": "fix"})
+    deb = [d for d in profile.get_profile(db, "cov1")["dimensions"] if d["name"] == "Debug能力"][0]
+    assert deb["trained"] == 1 and deb["total"] == 5, deb
+    ai = [d for d in profile.get_profile(db, "cov1")["dimensions"] if d["name"] == "AI协作能力"][0]
+    assert ai["trained"] == 0 and ai["total"] == 3, ai
+    db.close()
+
+
+@test
+def 灵犀_新用户无历史_有活动后有天数():
+    from app.services import coop, presence
+    db = TestSession()
+    assert presence.presence_signals(db, "ling1") == {
+        "has_history": False, "last_active_at": None, "days_since": None}
+    # 建个 coop 会话（产生 TutorSession）→ 算"来过"
+    coop.start(db, "ling1", "off_by_one")
+    p = presence.presence_signals(db, "ling1")
+    assert p["has_history"] is True and p["days_since"] == 0   # 刚活动 → 0 天
+    db.close()
+
+
 def main():
     passed = failed = 0
     for fn in _tests:

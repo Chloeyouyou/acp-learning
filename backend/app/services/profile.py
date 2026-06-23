@@ -52,15 +52,22 @@ def get_profile(db: Session, student_id: str) -> dict:
 
     dimensions = []
     for dim in ["Debug能力", "AI协作能力"]:
-        total_w, acc, n = 0.0, 0.0, 0
+        total_w, acc, n, trained, total_caps = 0.0, 0.0, 0, 0, 0
         for cap, meta in CAPABILITY_REGISTRY.items():
-            if meta["dimension"] == dim and cap in vector:
+            if meta["dimension"] != dim:
+                continue
+            total_caps += 1                         # 该维度的子能力总数
+            if cap in vector:
                 acc += vector[cap]["score"] * meta["weight"]
                 total_w += meta["weight"]
                 n += vector[cap]["events_count"]
+                trained += 1                        # 其中有证据（练过）的子能力数
         score = round(acc / total_w, 1) if total_w > 0 else None
+        # trained/total = 覆盖度（治 #18 虚高）：维度分只对练过的子能力求平均，
+        # 单个子能力能把整维度顶高，所以必须把"练了几项里的几项"亮给学生看，分数才有语境。
         dimensions.append({"name": dim, "score": score,
-                           "confidence": "low" if n < 5 else "normal"})
+                           "confidence": "low" if n < 5 else "normal",
+                           "trained": trained, "total": total_caps})
 
     states = db.query(KnowledgeState).filter_by(student_id=student_id).all()
     mastery = knowledge_mastery(db, student_id)        # B0：知识点掌握度（纯画像）
