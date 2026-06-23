@@ -701,6 +701,7 @@ function quit() {
               <pre v-if="runResult.stdout" class="console-out">{{ runResult.stdout }}</pre>
               <pre v-if="runResult.stderr" class="console-err">{{ runResult.stderr }}</pre>
               <div v-if="!runResult.stdout && !runResult.stderr && !runResult.timed_out" class="console-muted">（程序没有任何输出）</div>
+              <div v-if="runResult.hint" class="console-hint">💡 {{ runResult.hint }}</div>
             </div>
           </div>
         </div>
@@ -979,6 +980,7 @@ function quit() {
 .cc-term-body .console-out { color: #c5cdd6; font-size: 13px; margin: 0; white-space: pre-wrap; }
 .cc-term-body .console-err { color: #ff9d8c; font-size: 13px; margin: 0; white-space: pre-wrap; }
 .cc-term-body .console-muted { color: #6b7480; font-size: 12.5px; }
+.cc-term-body .console-hint { color: #f0c27b; font-size: 12.5px; line-height: 1.6; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #3a352f; }
 
 /* 看不懂代码 + explain（浅色）*/
 .wl .tool-trigger { background: #fcfbf7; border: 1px solid #e7e2d6; border-radius: 11px; color: #6f695d; }

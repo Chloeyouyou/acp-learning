@@ -244,7 +244,8 @@ def run(db: Session, session_id: str, code: str) -> dict | None:
         note = tutor.run_result_note(kind, r.stdout, r.stderr)
         s.history = tutor.inject_run_note(s.history, note)
         db.commit()
-    return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out}
+    return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out,
+            "hint": tutor.explain_error(kind, r.stderr)}   # 报错翻译成人话（零基础友好）
 
 
 def message(db: Session, session_id: str, content: str) -> dict | None:

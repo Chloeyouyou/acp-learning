@@ -115,6 +115,17 @@ def detect_error_signature(text: str):
     return None
 
 
+def explain_error(kind: str, stderr: str = "") -> str | None:
+    """把真实运行结果翻译成给零基础看的一句中文人话（复用 ERROR_PLAYBOOK 的错误家族解释）。
+    识别不了就返回 None——前端只显示原始报错，不硬塞看不懂的话。"""
+    if kind == "HANG":
+        return "程序跑不完、停不下来——多半是循环结束不了（条件一直成立，俗称死循环）。"
+    hit = detect_error_signature(stderr or "")
+    if hit:
+        return hit[1]["meaning"]
+    return None
+
+
 # 规则跃迁当轮注入：导师人格层（Mentor Personality Layer）。
 # 不靠禁令堆砌，靠固定的「承接→解读→提问」三步结构让重复询问现象自然失去位置。
 MENTOR_LAYER_TEMPLATE = """

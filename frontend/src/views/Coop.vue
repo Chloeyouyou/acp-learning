@@ -210,6 +210,7 @@ const termBad = computed(() => !!(runResult.value && (runResult.value.stderr || 
               </span>
             </div>
             <pre v-if="runResult" class="cc-term-body" :class="{ err: termBad }">{{ termText }}</pre>
+            <div v-if="runResult && runResult.hint" class="cc-term-hint">💡 {{ runResult.hint }}</div>
           </div>
         </div>
         <button class="coop-solved" :disabled="busy || done" @click="resolve">
@@ -330,6 +331,7 @@ const termBad = computed(() => !!(runResult.value && (runResult.value.stderr || 
   line-height: 1.7; color: #d8d2c8; white-space: pre-wrap; word-break: break-word; max-height: 180px; overflow: auto;
 }
 .cc-term-body.err { color: #f0b48a; }
+.cc-term-hint { padding: 8px 14px 12px; color: #f0c27b; font-size: 12.5px; line-height: 1.6; border-top: 1px dashed #3a352f; }
 
 .coop-solved {
   width: 100%; margin-top: 14px; padding: 12px; border: none; border-radius: 12px; cursor: pointer;

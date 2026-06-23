@@ -168,7 +168,8 @@ def run_code_endpoint(session_id: str, req: SubmitReq, db: Session = Depends(get
         note = tutor.run_result_note(kind, r.stdout, r.stderr)
         session.history = tutor.inject_run_note(session.history, note)
         db.commit()
-    return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out}
+    return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out,
+            "hint": tutor.explain_error(kind, r.stderr)}   # 报错翻译成人话（零基础友好）
 
 
 @app.post("/api/sessions/{session_id}/messages")
