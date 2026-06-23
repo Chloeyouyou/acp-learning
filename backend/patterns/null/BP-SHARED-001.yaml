@@ -1,0 +1,43 @@
+id: BP-SHARED-001
+name: 列表赋值是别名不是复制（改一个另一个也变）
+category: "null"
+language: python
+knowledge_points: [列表, 引用与复制]
+capability_dims: [Root_Cause_Reasoning, Independent_Debug]
+difficulty: L2
+symptom: WA
+symptom_sample: |
+  程序能跑完，但原始清单也被改了——本想保留原件、改副本，结果两个一起变
+buggy_code: |
+  def add_bonus(scores):
+      # 想在副本上加一个附加分，不动原始 scores
+      backup = scores
+      backup.append(100)
+      return backup
+
+  original = [80, 90]
+  new_list = add_bonus(original)
+  print("原始清单：", original)
+mine_location:
+  file: main.py
+  line: 3
+trigger_input: "[80, 90]"
+root_cause: "backup = scores 不是复制，而是给同一个列表起了第二个名字（别名）；改 backup 等于改 scores，所以原始清单也多了 100"
+cognitive_root: "以为 backup = scores 把列表复制了一份——其实只是同一个列表的另一个名字，动一个就动了两个"  # 认知漏洞（Timeline 🧠根因用）
+thinking_pattern: shared_state  # 跨题思维默认值归簇（聚合用）
+expected_fix: "backup = scores[:]"
+fix_check: 'backup\s*=\s*(scores\[:\]|list\(scores\)|scores\.copy\(\))'
+expected_output: |
+  原始清单： [80, 90]
+internalize_questions:
+  - "为什么改 backup，original 也跟着变了？这两个名字指向的是几个列表？"
+  - "想真正复制一份列表、互不影响，可以怎么写？"
+hint_ladder:
+  L0: "运行一下。你只想改副本，但原始清单 original 变了吗？打印出来看看。"
+  L1: "原始清单本该是 [80, 90]，却变成了 [80, 90, 100]。你在哪一步『以为』复制了它？"
+  L2: "问题在第3行 backup = scores。你觉得是：A. append 用错  B. 这个赋值没真复制  C. return 写错？"
+  L3: "在 Python 里，backup = scores 只是给同一个列表起了第二个名字。改其中一个，另一个会怎样？"
+  L4: "看第3行。说说为什么 backup.append(100) 会让 original 也多出 100？"
+  L5: "讲解思路：要真正复制列表，得用切片或 copy，让两个名字指向不同的列表。想想怎么写（自己改，不要抄）。"
+# 变式题：同为「改了被共享的东西」，遍历中修改集合
+variant_pool: [BP-LOOP-005]

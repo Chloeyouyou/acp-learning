@@ -1,0 +1,41 @@
+id: BP-LOOP-006
+name: 递归忘了终止条件（无限递归）
+category: loop
+language: python
+knowledge_points: [递归, 终止条件]
+capability_dims: [Root_Cause_Reasoning, Log_Reading]
+difficulty: L2
+symptom: RE
+symptom_sample: |
+  RecursionError: maximum recursion depth exceeded
+buggy_code: |
+  def countdown(n):
+      print(n)
+      # 想从 n 一直数到 1
+      countdown(n - 1)
+
+  countdown(3)
+mine_location:
+  file: main.py
+  line: 4
+trigger_input: "countdown(3)"
+root_cause: "countdown 每次都调用自己、却没有任何停下来的条件，n 一路减成负数也不停，无限递归直到超出最大深度报错"
+cognitive_root: "以为数到 1 就会自己停——其实递归必须显式写出『什么时候不再继续』，否则永远调用自己"  # 认知漏洞（Timeline 🧠根因用）
+thinking_pattern: loop_progress  # 跨题思维默认值归簇（聚合用）
+expected_fix: "if n <= 0: return"
+fix_check: 'if\s+n\s*(<=\s*0|<\s*1|==\s*0)\s*:\s*return'
+expected_output: |
+  3
+  2
+  1
+internalize_questions:
+  - "这个函数为什么停不下来？它在什么时候应该不再调用自己？"
+  - "RecursionError 报在最后一层，但真正缺的东西在哪里？"
+hint_ladder:
+  L0: "运行一下，读读报错。RecursionError 是说函数一直在自己调自己、停不下来。"
+  L1: "报错说递归太深了——也就是 countdown 没完没了地调用自己。它本该在什么时候停？"
+  L2: "问题在第4行附近。你觉得是：A. print 写错  B. 缺一个『停下来』的判断  C. n-1 算错？"
+  L3: "递归和循环一样，必须有个出口。现在 n 减到 0、减到负数都还在继续。哪个值之后就不该再调自己了？"
+  L4: "说说：countdown 在 n 等于几的时候就该 return、不再往下递归？现在缺的就是这一句。"
+  L5: "讲解思路：递归要有终止条件——n 小到某个值就 return 不再调用自己。想想加在哪、判什么（自己写，不要抄）。"
+variant_pool: []
