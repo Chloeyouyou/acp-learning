@@ -748,7 +748,7 @@ def _arena_session(tutor, mine_engine, *, stage, mine_status="planted"):
     mine_engine.load_patterns = lambda: {pat["id"]: pat}
     from app.models import TutorSession
     db = TestSession()
-    sess = TutorSession(id=f"s_{stage}", student_id="rt1", pattern_id=pat["id"],
+    sess = TutorSession(id=f"s_{stage}_{__import__('uuid').uuid4().hex[:6]}", student_id="rt1", pattern_id=pat["id"],
                         manifest=mine_engine.build_manifest("rt1", pat), history=[],
                         stage=stage, mine_status=mine_status)
     db.add(sess); db.commit()
@@ -1092,6 +1092,67 @@ def 灵犀_新用户无历史_有活动后有天数():
     p = presence.presence_signals(db, "ling1")
     assert p["has_history"] is True and p["days_since"] == 0   # 刚活动 → 0 天
     db.close()
+
+
+# ════════ judge_fix 剩余分支（WA 答案错 / HANG 死循环）════════
+
+@test
+def judge_跑通但输出不符判WA():
+    from app.services import mine_engine
+    pat = _good_candidate()   # expected_output = "2"
+    orig = mine_engine.get_pattern
+    try:
+        mine_engine.get_pattern = lambda pid: {pat["id"]: pat}[pid]
+        # 能跑通、不报错，但输出 1 ≠ 期望 2 → WA
+        r = mine_engine.judge_fix(pat["id"], "def f(a):\n    return a[0]\nprint(f([1, 2]))\n")
+        assert r["kind"] == "WA" and r["passed"] is False, r
+    finally:
+        mine_engine.get_pattern = orig
+
+
+@test
+def judge_死循环判HANG():
+    from app.services import mine_engine
+    pat = _good_candidate()
+    orig = mine_engine.get_pattern
+    try:
+        mine_engine.get_pattern = lambda pid: {pat["id"]: pat}[pid]
+        r = mine_engine.judge_fix(pat["id"], "while True:\n    pass\n")   # 超时（真跑约 4s）
+        assert r["kind"] == "HANG" and r["passed"] is False, r
+    finally:
+        mine_engine.get_pattern = orig
+
+
+# ════════ run_turn 状态机剩余分支（③归因步进 / 止损降档）════════
+
+@test
+def 跃迁_归因步进_变量追踪到规则对照():
+    from app.services import mine_engine, tutor
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        # 学生答对当前步（variable_trace）且有进展 → 步进到 rule_compare
+        tutor._call_llm = _stub_turn(tutor, attribution_step="variable_trace", student_progressed=True)
+        db, sess, pat = _arena_session(tutor, mine_engine, stage="③归因")
+        tutor.run_turn(db, sess, "len 是 3，i 会取到 0,1,2,3")
+        assert sess.attribution_step == "rule_compare", sess.attribution_step
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
+
+
+@test
+def 止损_受挫时提示级别升一格():
+    from app.services import mine_engine, tutor
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        tutor._call_llm = _stub_turn(tutor, hint_level_used="L0", student_progressed=False)
+        db, sess, pat = _arena_session(tutor, mine_engine, stage="②定位")
+        assert sess.hint_level == "L0"
+        tutor.run_turn(db, sess, "我不会，完全没思路")   # 受挫 → 止损共情层升一格
+        assert sess.hint_level == "L1", sess.hint_level
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
 
 
 def main():
