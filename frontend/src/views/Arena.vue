@@ -85,7 +85,9 @@ const lingxiBubble = ref('')
 let lastErrorCode = null              // 上次报错时的代码，用来识别"重复点同一份"
 function resetLingxi() { consecutiveStruggles.value = 0; lastErrorCode = null; lingxiBubble.value = '' }
 function maybeShowLingxi() {
-  if (consecutiveStruggles.value < 2) return
+  // 门槛=3：报错→改→还错→再改→还错（改了两次都没成）才算真卡住。对零基础，
+  // "改一次还错"太正常，不该当挫败；等真的反复试都没成，才轻轻递一句。
+  if (consecutiveStruggles.value < 3) return
   const today = new Date().toISOString().slice(0, 10)
   if (localStorage.getItem(LINGXI_DAY_KEY) === today) return   // 今天已飘过 → 安静一整天
   lingxiBubble.value = '接连改了又没过也没关系，挺正常的~ 把报错发给知返一起看，或者先歇口气，不急。'
