@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from .concurrency import session_turn
 from .config import STAGES
 from .db import get_db, init_db
 from .models import ExecutionEvent, Student, TutorSession
@@ -24,9 +25,16 @@ from .services import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动：建表 + 预载题库（替代已废弃的 @app.on_event("startup")，审计 #6）
+    # 启动：迁移到最新 + 预载题库（替代已废弃的 @app.on_event("startup")，审计 #6）
     init_db()
     mine_engine.load_patterns()
+    # 抬高同步端点线程池上限：一次 LLM 对话最长占一个线程 ~30s，默认 40 令牌在满班时
+    # 会被对话请求占满、拖慢查画像/运行等快端点。64 够一个班 + 余量，又不至于让 SQLite 写抖动。
+    try:
+        import anyio
+        anyio.to_thread.current_default_thread_limiter().total_tokens = 64
+    except Exception:
+        pass
     yield
 
 
@@ -62,6 +70,13 @@ def require_self(path_student_id: str, me: str) -> None:
     """越权门：路径里的学号必须等于 token 学号，否则 403。挡「改 URL 看别人数据」（IDOR）。"""
     if path_student_id != me:
         raise HTTPException(403, "无权访问他人数据")
+
+
+def turn_lock(session_id: str):
+    """会话回合锁依赖：进端点前独占本会话、出端点后释放。加在会写会话的端点上，
+    串行化同会话并发请求——防丢消息 + 堵 submit TOCTOU（审计 #12）。见 concurrency.py。"""
+    with session_turn(session_id):
+        yield
 
 
 @app.post("/api/auth/login")
@@ -197,7 +212,7 @@ def get_session(session_id: str, db: Session = Depends(get_db),
 
 @app.post("/api/sessions/{session_id}/run")
 def run_code_endpoint(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
-                      me: str = Depends(current_student)):
+                      me: str = Depends(current_student), _lock: None = Depends(turn_lock)):
     """运行按钮：真跑一遍学生当前代码，返回真实输出/报错。纯观察，不判分、不改阶段。"""
     session = _get_session(db, session_id, me)
     kps = mine_engine.get_pattern(session.pattern_id).get("knowledge_points", [])
@@ -207,7 +222,7 @@ def run_code_endpoint(session_id: str, req: SubmitReq, db: Session = Depends(get
 
 @app.post("/api/sessions/{session_id}/messages")
 def send_message(session_id: str, req: MessageReq, db: Session = Depends(get_db),
-                 me: str = Depends(current_student)):
+                 me: str = Depends(current_student), _lock: None = Depends(turn_lock)):
     session = _get_session(db, session_id, me)
     if session.status != "active":
         raise HTTPException(409, "session already completed")
@@ -216,7 +231,7 @@ def send_message(session_id: str, req: MessageReq, db: Session = Depends(get_db)
 
 @app.post("/api/sessions/{session_id}/submit")
 def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
-               me: str = Depends(current_student)):
+               me: str = Depends(current_student), _lock: None = Depends(turn_lock)):
     """④修复的判定走规则引擎，不走LLM（04文档：规则能判的绝不交给LLM）。
     失败的提交回流到导师对话做针对性引导；通过则进⑤验证，会话保持活跃。"""
     session = _get_session(db, session_id, me)
@@ -381,7 +396,7 @@ def get_active_sessions(student_id: str, db: Session = Depends(get_db),
 
 @app.post("/api/sessions/{session_id}/abandon")
 def abandon_session(session_id: str, db: Session = Depends(get_db),
-                    me: str = Depends(current_student)):
+                    me: str = Depends(current_student), _lock: None = Depends(turn_lock)):
     """显式放弃一道未完成关卡：只把 status 置 abandoned，**不删 history / 事件**。
     放弃后不再出现在 active-sessions 列表里，但历史与事件流完整保留。"""
     session = _get_session(db, session_id, me)
@@ -542,7 +557,7 @@ def coop_get(session_id: str, db: Session = Depends(get_db),
 
 @app.post("/api/coop/{session_id}/run")
 def coop_run(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
-             me: str = Depends(current_student)):
+             me: str = Depends(current_student), _lock: None = Depends(turn_lock)):
     """coop 运行：真跑学生当前代码，真实结果注入对话。不查 pattern、不判题。"""
     _own_coop(db, session_id, me)
     out = coop.run(db, session_id, req.code)
@@ -553,7 +568,7 @@ def coop_run(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
 
 @app.post("/api/coop/{session_id}/message")
 def coop_message(session_id: str, req: MessageReq, db: Session = Depends(get_db),
-                 me: str = Depends(current_student)):
+                 me: str = Depends(current_student), _lock: None = Depends(turn_lock)):
     _own_coop(db, session_id, me)
     out = coop.message(db, session_id, req.content)
     if out is None:
@@ -563,7 +578,7 @@ def coop_message(session_id: str, req: MessageReq, db: Session = Depends(get_db)
 
 @app.post("/api/coop/{session_id}/resolve")
 def coop_resolve(session_id: str, db: Session = Depends(get_db),
-                 me: str = Depends(current_student)):
+                 me: str = Depends(current_student), _lock: None = Depends(turn_lock)):
     """学生点「解决了」——结对调试唯一完成门控。"""
     _own_coop(db, session_id, me)
     out = coop.resolve(db, session_id)

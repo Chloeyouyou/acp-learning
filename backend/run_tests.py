@@ -1229,6 +1229,37 @@ def 越权_操作他人会话403():
     db.close()
 
 
+# ---- 会话回合锁（M1 D4-5）：串行化同会话并发，防丢写 + 堵 TOCTOU ----
+
+@test
+def 会话锁_同会话串行无丢写():
+    import threading
+    import time
+    from app.concurrency import session_turn
+    # 模拟 history 的「读整块→改→写整块」竞态：无锁时并发会互相覆盖、丢元素
+    shared = {"list": []}
+
+    def worker(val):
+        with session_turn("sessX"):
+            cur = list(shared["list"])   # 读
+            time.sleep(0.02)             # 放大竞态窗口
+            shared["list"] = cur + [val]  # 整块写回
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(shared["list"]) == 5, f"同会话应串行、无丢写，实际 {shared['list']}"
+
+
+@test
+def 会话锁_不同会话用不同锁():
+    from app.concurrency import _lock_for
+    assert _lock_for("a") is _lock_for("a")   # 同 id 复用同一把锁
+    assert _lock_for("a") is not _lock_for("b")  # 不同 id 不互相阻塞
+
+
 # ---- 沙箱隔离测试组（M1 D1）：显式打 docker 后端，验证学生代码逃不出容器。
 # docker 不可用时整组跳过——本地无 docker 的开发机照样能跑主套件。----
 
