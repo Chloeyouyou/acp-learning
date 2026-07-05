@@ -366,6 +366,7 @@ def run_and_inject(db: Session, session, code: str, *, knowledge_points: list, m
     # 真实运行结果接进对话：知返据此引导、杜绝臆断；只留最新一条，仅 active 会话
     if session.status == "active":
         session.history = inject_run_note(session.history, run_result_note(kind, r.stdout, r.stderr))
+        session.touch()
         db.commit()
     return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out,
             "hint": explain_error(kind, r.stderr)}
@@ -743,6 +744,7 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
 
     # 状态更新
     session.history = history + [{"role": "assistant", "content": turn.reply}]
+    session.touch()   # 本轮有对话活动，刷新最近活跃时间（大厅续做排序用）
     session.stalled_turns = 0 if turn.student_progressed else session.stalled_turns + 1
     if HINT_LEVELS.index(turn.hint_level_used) > HINT_LEVELS.index(session.hint_level):
         session.hint_level = turn.hint_level_used

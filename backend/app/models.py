@@ -10,6 +10,18 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+class Student(Base):
+    """轻量身份（M1 D2-3）。学号即主键；无密码——token 由 HMAC 签发（见 security.py）。
+    name/class_id 供显示与将来教师分班（M4）。首次 login 时 upsert。"""
+
+    __tablename__ = "students"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, default="")
+    class_id: Mapped[str] = mapped_column(String, default="", index=True)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+
+
 class TutorSession(Base):
     """一次「学生×雷」的共脑调试会话。manifest 即 01 文档的 MineManifest。"""
 
@@ -30,6 +42,12 @@ class TutorSession(Base):
     stalled_turns: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String, default="active")  # active/completed
     created_at: Mapped[str] = mapped_column(String, default=now)
+    # 最近活动时间：每次对话/运行/提交刷新。active-sessions 大厅按它排序，省去每会话回查 ExecutionEvent。
+    updated_at: Mapped[str] = mapped_column(String, default=now, index=True)
+
+    def touch(self):
+        """标记本会话刚有活动（更新 updated_at）。在任何会话状态变更处调用。"""
+        self.updated_at = now()
 
     @property
     def is_coop(self) -> bool:

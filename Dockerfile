@@ -10,6 +10,10 @@ RUN npm run build        # 产物在 /web/dist
 FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8 PIP_NO_CACHE_DIR=1
 WORKDIR /app/backend
+# 沙箱 docker 后端需要容器内能调宿主 docker（挂 /var/run/docker.sock 起一次性隔离容器跑学生代码）。
+# 只装 CLI（几 MB），daemon 用宿主的。宿主未挂 socket 时 sandbox 自动降级 subprocess。
+RUN apt-get update && apt-get install -y --no-install-recommends docker.io \
+    && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.txt ./
 RUN pip install -r requirements.txt
 COPY backend/ /app/backend/

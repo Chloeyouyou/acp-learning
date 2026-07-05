@@ -44,6 +44,13 @@ docker build -t acp-learning .
 # 第一次会下载/编译，几分钟。出现 "naming to ... acp-learning" 就是成功
 ```
 
+## 4.5 预拉沙箱镜像（学生代码在隔离容器里跑，一次性）
+学生每次点「运行」，系统会起一个一次性隔离容器（无网络、只读、限内存）跑他的代码——
+读不到数据库、出不了网、炸不了 VPS。这需要一个 Python 镜像，先拉好省得首次运行现拉：
+```bash
+docker pull python:3.12-slim
+```
+
 ## 5. 启动
 ```bash
 docker run -d \
@@ -52,19 +59,27 @@ docker run -d \
   -p 8000:8000 \
   -e DEEPSEEK_API_KEY="<你的key>" \
   -e DATABASE_URL="sqlite:////data/acp.db" \
+  -e ACP_SANDBOX="docker" \
   -v /root/acp-data:/data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   acp-learning
 ```
 说明：
 - `--restart unless-stopped`：VPS 重启后自动把它拉起来。
 - `-v /root/acp-data:/data` + `DATABASE_URL=.../data/acp.db`：数据库存进 `/root/acp-data`，**容器删了/重建都还在**。
 - `-p 8000:8000`：对外开 8000 端口。
+- `-e ACP_SANDBOX="docker"` + `-v /var/run/docker.sock:/var/run/docker.sock`：**开启沙箱真隔离**。
+  让容器能调宿主 docker 起一次性子容器跑学生代码。**公开给学生前这两行必须有**——
+  否则学生代码在主容器里裸跑，能读全班数据库。不挂 socket 时系统会自动降级成不隔离的
+  subprocess 模式（仅适合你自己单机测），`/api/health` 会显示 `"sandbox":"subprocess"` 提醒你。
 
 检查：
 ```bash
 docker logs acp --tail 20     # 看启动日志
-curl http://localhost:8000/api/health   # 返回 {"status":"ok"} 就成功
+curl http://localhost:8000/api/health   # 返回 {"status":"ok","sandbox":"docker"} 才算隔离生效
 ```
+> 若 `sandbox` 显示 `subprocess`，说明 socket 没挂上或宿主 docker 没起——学生代码此时**未隔离**，
+> 先别对外放学生，排查 `-v /var/run/docker.sock` 和 `docker info` 是否正常。
 
 浏览器打开 `http://<你的VPS_IP>:8000` —— 能看到首页就跑起来了。
 

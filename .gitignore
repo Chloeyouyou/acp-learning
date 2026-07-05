@@ -5,6 +5,11 @@ __pycache__/
 venv/
 .env
 *.db
+*.db-wal
+*.db-shm
+
+# 身份 token 签名密钥（首次启动自动生成并持久化，绝不入库）
+.auth_secret
 
 # Node
 node_modules/
