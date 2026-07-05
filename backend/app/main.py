@@ -19,8 +19,8 @@ from .db import get_db, init_db
 from .models import ExecutionEvent, Student, TutorSession
 from .security import sign_token, verify_token
 from .services import (
-    coop, event_engine, mine_engine, presence, profile, question_training, review, timeline,
-    tutor,
+    coop, event_engine, mine_engine, presence, process, profile, question_training, review,
+    timeline, tutor,
 )
 
 @asynccontextmanager
@@ -250,6 +250,11 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
         kind=kind_map.get(result["kind"], result["kind"]), stderr=result.get("stderr", ""),
         knowledge_points=mine.get("knowledge_points", []),
         mode=(session.manifest or {}).get("mode", "debug"))
+    # 过程化：记提交时的代码快照，链到本次执行事实（submit 的代码链）
+    snap = process.record_snapshot(db, session, req.code, execution.id)
+    process.record_message(db, session.id, "student",
+                           f"（提交修复：{'通过' if result['passed'] else '未通过'}）", "submit")
+    db.commit()
     execution_summary = {
         "kind": execution.kind,
         "error_family": execution.error_family,
@@ -259,7 +264,10 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
     }
     if not result["passed"]:
         diagnosis = tutor.judge_feedback(result)  # 真实运行结果（报错/输出差异/超时），非正则猜测
+        change_note = process.diff_summary(snap.diff_stats)  # 改动分析：盲改 vs 定向改
         fail_msg = (f"{tutor.FIX_FAILED_PREFIX}\n我提交的代码：\n{req.code}\n\n[真实运行结果] {diagnosis}")
+        if change_note:
+            fail_msg += f"\n[改动分析] {change_note}"
         try:
             feedback = tutor.run_turn(db, session, fail_msg)
             return {"passed": False, "stage": feedback["stage"], "message": feedback["reply"],
@@ -291,6 +299,7 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
     session.history = list(session.history) + [
         {"role": "user", "content": "（系统：我提交的修复已通过测试）"},
         {"role": "assistant", "content": tutor_opening}]
+    process.record_message(db, session.id, "tutor", tutor_opening, "tutor_opening")  # 时间线（写新）
     # 复习模式：老题重解不再发能力增益事件，否则反复复习同一题会刷高 Debug 能力分、污染数字孪生。
     # 执行事实（ExecutionEvent，已带 meta.mode=review）照常记——驱动间隔升档，留存信号留待将来单独消费。
     is_review = (session.manifest or {}).get("mode") == "review"

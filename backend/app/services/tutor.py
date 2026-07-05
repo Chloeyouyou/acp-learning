@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..config import DEEPSEEK_BASE_URL, HINT_LEVELS, STAGES, TUTOR_MODEL
 from ..models import Event, TutorSession
-from . import event_engine, mine_engine, profile, sandbox
+from . import event_engine, mine_engine, process, profile, sandbox
 
 client = OpenAI(
     api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -360,14 +360,18 @@ def run_and_inject(db: Session, session, code: str, *, knowledge_points: list, m
     闯关 run 端点与 coop.run 共用这套机械逻辑；差异只有 knowledge_points / mode 两个参数。"""
     r = sandbox.run_code(code)
     kind = "HANG" if r.timed_out else ("RE" if r.has_error else "OK")
-    event_engine.log_execution(
+    ev = event_engine.log_execution(
         db, student_id=session.student_id, session_id=session.id, pattern_id=session.pattern_id,
         source="run", kind=kind, stderr=r.stderr, knowledge_points=knowledge_points, mode=mode)
+    # 过程化：记一条代码快照，链到本次执行事实（run 的代码链，闯关 + coop 都留）
+    process.record_snapshot(db, session, code, ev.id)
+    note = run_result_note(kind, r.stdout, r.stderr)
+    process.record_message(db, session.id, "system", note, "run_result")  # 时间线（写新）：保留每次运行
     # 真实运行结果接进对话：知返据此引导、杜绝臆断；只留最新一条，仅 active 会话
     if session.status == "active":
-        session.history = inject_run_note(session.history, run_result_note(kind, r.stdout, r.stderr))
+        session.history = inject_run_note(session.history, note)
         session.touch()
-        db.commit()
+    db.commit()   # 提交快照（+ active 时的对话/活跃时间）
     return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out,
             "hint": explain_error(kind, r.stderr)}
 
@@ -390,7 +394,10 @@ REPAIR_LAYER_TEMPLATE = """
    - **输出与期望不符** → 让他把「实际输出」和「期望输出」逐行对照，代入③用过的具体输入，重新追踪变量值，看差在哪。
    - **运行超时** → 往「循环为什么停不下来 / 条件何时才为假」方向问。
 4. **若他连续提交、这一版的错误类型和上一版不同**（比如上次是缺参数报错、这次变成结果不对）：直接承接「你这版改完，现在变成了 X」，按**当前这一版的真实结果**继续引导，不要延续上一版的话、不要自相矛盾。
-5. 仍不说出应该改成什么——即使他此前说对了思路，也只提醒「对照你自己说过的思路，看看实际改动差在哪」，让他自己发现。能用 L3 以下的提问解决就不用 L4/L5 直给。"""
+5. **[改动分析] 是系统给你的旁白（学生看不到），据它调整引导方向，但绝不把它当学生的话、也不要照念**：
+   - 「没落在真正出问题的那一行上」（学生在别处盲改）→ 别顺着他改的地方评论对错，温和把他拉回②定位到的那一行：「先回到我们一起找到的那处，你这次动的是它吗？」
+   - 「改到了关键那一行、但结果仍不对」（方向对、改法不对）→ 先肯定他改对了地方，再回到③他自己说的根因，让他对照根因看具体改法差在哪，仍不给写法。
+6. 仍不说出应该改成什么——即使他此前说对了思路，也只提醒「对照你自己说过的思路，看看实际改动差在哪」，让他自己发现。能用 L3 以下的提问解决就不用 L4/L5 直给。"""
 
 
 # ⑤验证：按Bug模式类型推荐边界测试方向（02文档：训练边界测试意识）
@@ -863,6 +870,11 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
             )
         except event_engine.EventRejected:
             pass  # 不合规事件静默丢弃，不阻断对话
+
+    # 过程化时间线（写新）：记真实学生发言 + 导师回复。系统回流/提交动作在别处按语义记，此处跳过。
+    if not student_message.startswith((FIX_FAILED_PREFIX, RUN_RESULT_PREFIX, "（系统", "(系统")):
+        process.record_message(db, session.id, "student", student_message, "chat")
+    process.record_message(db, session.id, "tutor", turn.reply, "chat")
 
     db.commit()
     return {

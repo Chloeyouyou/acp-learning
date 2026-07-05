@@ -23,8 +23,10 @@ from sqlalchemy.orm import sessionmaker
 
 from app import models  # noqa: F401  注册表到 Base.metadata
 from app.db import Base
-from app.models import Event, ExecutionEvent, KnowledgeState, TutorSession
-from app.services import event_engine, mine_engine, pattern_validator, profile, review, sandbox, timeline
+from app.models import CodeSnapshot, Event, ExecutionEvent, KnowledgeState, SessionMessage, TutorSession
+from app.services import (
+    event_engine, mine_engine, pattern_validator, process, profile, review, sandbox, timeline,
+)
 
 _engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
 Base.metadata.create_all(_engine)
@@ -1226,6 +1228,85 @@ def 越权_操作他人会话403():
     except HTTPException as e:
         assert e.status_code == 403
     assert _get_session(db, "sess_X", "owner_X").id == "sess_X"  # 本人放行
+    db.close()
+
+
+# ---- 代码快照（M2）：diff_stats 计算 + run/submit 双写 ----
+
+@test
+def 快照_diff计算_首版与增量():
+    # 首版（无上一版）：非空行全算改动
+    d0 = process.compute_diff_stats(None, "a = 1\n\nb = 2\n")
+    assert d0["lines_changed"] == 2, d0
+    # 增量：改 1 行
+    d1 = process.compute_diff_stats("a = 1\nb = 2\n", "a = 1\nb = 3\n")
+    assert d1["lines_changed"] == 1, d1
+
+
+@test
+def 快照_touched雷行判定():
+    pat = mine_engine.get_pattern("BP-BOUNDARY-001")
+    buggy = pat["buggy_code"]
+    line = pat["mine_location"]["line"]
+    # 原样带雷码 → 没动雷行
+    d_same = process.compute_diff_stats(None, buggy, buggy, line)
+    assert d_same["touched_mine_line"] is False, d_same
+    # 把雷行 range(len(arr)+1) 改掉 → 动过雷行
+    fixed = buggy.replace("range(len(arr) + 1)", "range(len(arr))")
+    d_fix = process.compute_diff_stats(None, fixed, buggy, line)
+    assert d_fix["touched_mine_line"] is True, d_fix
+    # 无 pattern 信息（coop）→ None
+    d_none = process.compute_diff_stats(None, "print(1)")
+    assert d_none["touched_mine_line"] is None, d_none
+
+
+@test
+def 快照_diff摘要_盲改与定向改():
+    # 没动雷行 → 盲改提示
+    s_blind = process.diff_summary({"lines_changed": 1, "touched_mine_line": False})
+    assert "没落在" in s_blind, s_blind
+    # 动了雷行仍不对 → 定向改提示
+    s_aim = process.diff_summary({"lines_changed": 1, "touched_mine_line": True})
+    assert "关键" in s_aim and "方向对" in s_aim, s_aim
+    # 大面积改动附注
+    assert "多处试探" in process.diff_summary({"lines_changed": 8, "touched_mine_line": False})
+    # coop / 无雷信息 → 空串（不打扰）
+    assert process.diff_summary({"lines_changed": 3, "touched_mine_line": None}) == ""
+
+
+@test
+def 快照_record_seq递增且落库():
+    db = TestSession()
+    s = TutorSession(id="snap_s1", student_id="u", pattern_id="BP-BOUNDARY-001",
+                     manifest={}, history=[], status="active")
+    db.add(s)
+    db.commit()
+    process.record_snapshot(db, s, "print(1)", "ex_1")
+    process.record_snapshot(db, s, "print(2)", "ex_2")
+    db.commit()
+    snaps = (db.query(CodeSnapshot).filter_by(session_id="snap_s1")
+             .order_by(CodeSnapshot.seq).all())
+    assert [x.seq for x in snaps] == [1, 2], "seq 应从 1 递增"
+    assert snaps[0].code == "print(1)" and snaps[1].code == "print(2)"
+    assert snaps[1].execution_event_id == "ex_2"
+    db.close()
+
+
+@test
+def 消息时间线_record_seq递增且落库():
+    db = TestSession()
+    s = TutorSession(id="msg_s1", student_id="u", pattern_id="BP-BOUNDARY-001",
+                     manifest={}, history=[], status="active")
+    db.add(s); db.commit()
+    process.record_message(db, "msg_s1", "student", "我觉得循环错了", "chat")
+    process.record_message(db, "msg_s1", "tutor", "为什么这么认为？", "chat")
+    process.record_message(db, "msg_s1", "system", "（系统·运行结果）报错", "run_result")
+    db.commit()
+    msgs = (db.query(SessionMessage).filter_by(session_id="msg_s1")
+            .order_by(SessionMessage.seq).all())
+    assert [m.seq for m in msgs] == [1, 2, 3], "seq 应从 1 递增"
+    assert [m.role for m in msgs] == ["student", "tutor", "system"]
+    assert msgs[2].kind == "run_result"
     db.close()
 
 
