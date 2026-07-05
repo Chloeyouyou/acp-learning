@@ -1261,6 +1261,20 @@ def 快照_touched雷行判定():
 
 
 @test
+def 快照_diff摘要_盲改与定向改():
+    # 没动雷行 → 盲改提示
+    s_blind = process.diff_summary({"lines_changed": 1, "touched_mine_line": False})
+    assert "没落在" in s_blind, s_blind
+    # 动了雷行仍不对 → 定向改提示
+    s_aim = process.diff_summary({"lines_changed": 1, "touched_mine_line": True})
+    assert "关键" in s_aim and "方向对" in s_aim, s_aim
+    # 大面积改动附注
+    assert "多处试探" in process.diff_summary({"lines_changed": 8, "touched_mine_line": False})
+    # coop / 无雷信息 → 空串（不打扰）
+    assert process.diff_summary({"lines_changed": 3, "touched_mine_line": None}) == ""
+
+
+@test
 def 快照_record_seq递增且落库():
     db = TestSession()
     s = TutorSession(id="snap_s1", student_id="u", pattern_id="BP-BOUNDARY-001",

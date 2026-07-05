@@ -50,6 +50,19 @@ def compute_diff_stats(prev_code: str | None, cur_code: str,
     }
 
 
+def diff_summary(diff_stats: dict) -> str:
+    """把一次提交的 diff_stats 转成给导师看的「改动分析」——区分盲改 vs 定向改。
+    只给导师做引导上下文，不直接给学生。touched_mine_line=None（coop/无雷信息）时返回空串。"""
+    touched = (diff_stats or {}).get("touched_mine_line")
+    if touched is None:
+        return ""
+    lines = (diff_stats or {}).get("lines_changed", 0)
+    spread = "（而且一次改了较多行，像在多处试探）" if lines and lines >= 5 else ""
+    if touched:
+        return f"学生这次改到了关键的那一行，但结果仍不对——方向对了、具体改法还没对{spread}。"
+    return f"学生这次的改动没落在真正出问题的那一行上，还在别处改{spread}。"
+
+
 def record_snapshot(db: Session, session, code: str, execution_event_id: str | None = None) -> CodeSnapshot:
     """记一条代码快照（append-only）。seq 会话内递增；diff_stats 相对上一快照 + 相对原始带雷码。
     不 commit——由调用方随本次 run/submit 的事务一起提交。"""

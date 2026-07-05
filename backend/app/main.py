@@ -251,7 +251,7 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
         knowledge_points=mine.get("knowledge_points", []),
         mode=(session.manifest or {}).get("mode", "debug"))
     # 过程化：记提交时的代码快照，链到本次执行事实（submit 的代码链）
-    process.record_snapshot(db, session, req.code, execution.id)
+    snap = process.record_snapshot(db, session, req.code, execution.id)
     db.commit()
     execution_summary = {
         "kind": execution.kind,
@@ -262,7 +262,10 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
     }
     if not result["passed"]:
         diagnosis = tutor.judge_feedback(result)  # 真实运行结果（报错/输出差异/超时），非正则猜测
+        change_note = process.diff_summary(snap.diff_stats)  # 改动分析：盲改 vs 定向改
         fail_msg = (f"{tutor.FIX_FAILED_PREFIX}\n我提交的代码：\n{req.code}\n\n[真实运行结果] {diagnosis}")
+        if change_note:
+            fail_msg += f"\n[改动分析] {change_note}"
         try:
             feedback = tutor.run_turn(db, session, fail_msg)
             return {"passed": False, "stage": feedback["stage"], "message": feedback["reply"],
