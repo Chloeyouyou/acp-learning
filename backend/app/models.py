@@ -43,7 +43,8 @@ class TutorSession(Base):
     status: Mapped[str] = mapped_column(String, default="active")  # active/completed
     created_at: Mapped[str] = mapped_column(String, default=now)
     # 最近活动时间：每次对话/运行/提交刷新。active-sessions 大厅按它排序，省去每会话回查 ExecutionEvent。
-    updated_at: Mapped[str] = mapped_column(String, default=now, index=True)
+    # nullable（DB 层）：SQLite 无法给已有行的 NOT NULL 新列加约束；值始终由 default/touch 填，实际不为空。
+    updated_at: Mapped[str | None] = mapped_column(String, default=now, index=True, nullable=True)
 
     def touch(self):
         """标记本会话刚有活动（更新 updated_at）。在任何会话状态变更处调用。"""
@@ -93,6 +94,28 @@ class ExecutionEvent(Base):
     error_family: Mapped[str | None] = mapped_column(String, nullable=True)  # IndexError/Timeout/WrongAnswer…
     knowledge_points: Mapped[list] = mapped_column(JSON, default=list)
     meta: Mapped[dict] = mapped_column(JSON, default=dict)  # 预留：ontology_tags/trace_snapshot_id/std*_summary
+    timestamp: Mapped[str] = mapped_column(String, default=now)
+
+
+class CodeSnapshot(Base):
+    """代码快照（M2 · 过程化核心）。学生每次 run/submit 时的代码原文，一行一条。
+
+    这是「过程化」补上的最核心一块事实：事件流只记了每次执行的结果（RE/WA/OK），
+    快照记下当时的**代码本身**——把「结果链」补成「代码链」，让解题过程可逐版回放、可做
+    diff 分析（盲改 vs 定向改）。与 ExecutionEvent 一一对应（execution_event_id 关联）。
+    **铁律：append-only——只 INSERT，永不 UPDATE/DELETE。**
+    """
+
+    __tablename__ = "code_snapshots"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, index=True)
+    execution_event_id: Mapped[str | None] = mapped_column(String, nullable=True)  # 关联的执行事实
+    seq: Mapped[int] = mapped_column(Integer)   # 会话内第几次快照（1 起，回放步进用）
+    code: Mapped[str] = mapped_column(Text)
+    # 相对上一快照的变化：{lines_changed:int, touched_mine_line:bool|None}。touched_mine_line
+    # 为 None 表示无从判断（coop 无 pattern，或首次快照）。
+    diff_stats: Mapped[dict] = mapped_column(JSON, default=dict)
     timestamp: Mapped[str] = mapped_column(String, default=now)
 
 

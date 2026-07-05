@@ -19,8 +19,8 @@ from .db import get_db, init_db
 from .models import ExecutionEvent, Student, TutorSession
 from .security import sign_token, verify_token
 from .services import (
-    coop, event_engine, mine_engine, presence, profile, question_training, review, timeline,
-    tutor,
+    coop, event_engine, mine_engine, presence, process, profile, question_training, review,
+    timeline, tutor,
 )
 
 @asynccontextmanager
@@ -250,6 +250,9 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
         kind=kind_map.get(result["kind"], result["kind"]), stderr=result.get("stderr", ""),
         knowledge_points=mine.get("knowledge_points", []),
         mode=(session.manifest or {}).get("mode", "debug"))
+    # 过程化：记提交时的代码快照，链到本次执行事实（submit 的代码链）
+    process.record_snapshot(db, session, req.code, execution.id)
+    db.commit()
     execution_summary = {
         "kind": execution.kind,
         "error_family": execution.error_family,

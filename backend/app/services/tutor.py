@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..config import DEEPSEEK_BASE_URL, HINT_LEVELS, STAGES, TUTOR_MODEL
 from ..models import Event, TutorSession
-from . import event_engine, mine_engine, profile, sandbox
+from . import event_engine, mine_engine, process, profile, sandbox
 
 client = OpenAI(
     api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -360,14 +360,16 @@ def run_and_inject(db: Session, session, code: str, *, knowledge_points: list, m
     闯关 run 端点与 coop.run 共用这套机械逻辑；差异只有 knowledge_points / mode 两个参数。"""
     r = sandbox.run_code(code)
     kind = "HANG" if r.timed_out else ("RE" if r.has_error else "OK")
-    event_engine.log_execution(
+    ev = event_engine.log_execution(
         db, student_id=session.student_id, session_id=session.id, pattern_id=session.pattern_id,
         source="run", kind=kind, stderr=r.stderr, knowledge_points=knowledge_points, mode=mode)
+    # 过程化：记一条代码快照，链到本次执行事实（run 的代码链，闯关 + coop 都留）
+    process.record_snapshot(db, session, code, ev.id)
     # 真实运行结果接进对话：知返据此引导、杜绝臆断；只留最新一条，仅 active 会话
     if session.status == "active":
         session.history = inject_run_note(session.history, run_result_note(kind, r.stdout, r.stderr))
         session.touch()
-        db.commit()
+    db.commit()   # 提交快照（+ active 时的对话/活跃时间）
     return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out,
             "hint": explain_error(kind, r.stderr)}
 
