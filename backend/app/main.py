@@ -252,6 +252,7 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
         except Exception:
             # LLM不可用时降级：失败记录仍进对话历史，下次对话导师能看到
             session.history = list(session.history) + [{"role": "user", "content": fail_msg}]
+            session.touch()
             db.commit()
             return {"passed": False, "stage": session.stage,
                     "message": f"测试未通过。{diagnosis}\n回到对话里和导师继续分析。",
@@ -263,6 +264,7 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
 
     session.mine_status = "fixed"
     session.stage = "⑤验证"
+    session.touch()   # 提交通过是一次活动，刷新最近活跃时间
     # 导师主动开场：提交通过后直接抛出⑤验证的第一个问题，学生顺着答即可，不用自己猜该说什么。
     # 确定性生成（按题型的边界测试建议），不走 LLM——稳、零延迟。
     _cat = mine_engine.get_pattern(session.pattern_id)["category"]
@@ -353,15 +355,15 @@ def get_review_queue(student_id: str, db: Session = Depends(get_db),
 def get_active_sessions(student_id: str, db: Session = Depends(get_db),
                         me: str = Depends(current_student)):
     """未完成关卡列表（最近 5 个 active 会话摘要），供大厅续做。纯只读、不写库。
-    last_active_at = 该会话最新 ExecutionEvent 时间（无则 created_at），按之倒序——真按活跃度。"""
+    按 updated_at（每次对话/运行/提交刷新）倒序——真按活跃度，不再每会话回查 ExecutionEvent。"""
     require_self(student_id, me)
-    sessions = db.query(TutorSession).filter_by(student_id=student_id, status="active").all()
+    sessions = (db.query(TutorSession)
+                .filter_by(student_id=student_id, status="active")
+                .order_by(TutorSession.updated_at.desc()).all())
     # coop（AI 共脑调试）会话不串进闯关大厅「接着做」（设计 09 防污染）
-    sessions = [s for s in sessions if not s.is_coop]
+    sessions = [s for s in sessions if not s.is_coop][:5]
     out = []
     for s in sessions:
-        last_ev = (db.query(ExecutionEvent.timestamp).filter_by(session_id=s.id)
-                   .order_by(ExecutionEvent.timestamp.desc()).first())
         try:
             name = mine_engine.get_pattern(s.pattern_id).get("name", s.pattern_id)
         except KeyError:
@@ -372,10 +374,9 @@ def get_active_sessions(student_id: str, db: Session = Depends(get_db),
             "name": name,
             "stage": s.stage,
             "mine_status": s.mine_status,
-            "last_active_at": last_ev[0] if last_ev else s.created_at,
+            "last_active_at": s.updated_at or s.created_at,
         })
-    out.sort(key=lambda x: x["last_active_at"], reverse=True)
-    return {"sessions": out[:5]}
+    return {"sessions": out}
 
 
 @app.post("/api/sessions/{session_id}/abandon")

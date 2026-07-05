@@ -277,10 +277,15 @@ from app.main import _cleanup_abandoned, abandon_session, get_active_sessions
 
 _AS_PID = "BP-BOUNDARY-001"  # 用真实题，name 能填上
 
-def _mk_active(db, sid, ssid, *, history=None, mine_status="planted", events_at=None):
-    """造一个 active 会话 + 可选的若干 ExecutionEvent（timestamp 为 ISO 串）。"""
-    db.add(TutorSession(id=ssid, student_id=sid, pattern_id=_AS_PID, manifest={},
-                        mine_status=mine_status, history=history or [], status="active"))
+def _mk_active(db, sid, ssid, *, history=None, mine_status="planted", events_at=None,
+               updated_at=None):
+    """造一个 active 会话 + 可选的若干 ExecutionEvent（timestamp 为 ISO 串）。
+    updated_at 给定则设为该值——active-sessions 现按 updated_at 排序（不再回查事件表）。"""
+    sess = TutorSession(id=ssid, student_id=sid, pattern_id=_AS_PID, manifest={},
+                        mine_status=mine_status, history=history or [], status="active")
+    if updated_at:
+        sess.updated_at = updated_at
+    db.add(sess)
     for ts in (events_at or []):
         db.add(ExecutionEvent(
             id=f"ex_{_uuid.uuid4().hex[:12]}", version="v1", student_id=sid,
@@ -318,9 +323,9 @@ def active_sessions_按活跃倒序且上限5():
     db = TestSession()
     sid = "as_1"
     base = _dt.now()
-    for i in range(6):  # 6 个；event 时间各异，i 越大越老
+    for i in range(6):  # 6 个；updated_at 各异，i 越大越老
         _mk_active(db, sid, f"s{i}", history=[{"role": "user", "content": "x"}],
-                   events_at=[(base - _td(days=i)).isoformat()])
+                   updated_at=(base - _td(days=i)).isoformat())
     sessions = get_active_sessions(sid, db=db, me=sid)["sessions"]
     assert len(sessions) == 5, f"上限 5，实际 {len(sessions)}"
     assert sessions[0]["session_id"] == "s0", f"最近活跃应置顶，实际 {sessions[0]['session_id']}"

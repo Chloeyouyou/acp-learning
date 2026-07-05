@@ -276,6 +276,7 @@ def message(db: Session, session_id: str, content: str) -> dict | None:
         # 降级：不臆断、不崩，引导学生先跑一下把真实结果带回来
         reply = "我这会儿有点没接住——你先点一下「运行」，把真实结果跑出来，再把它发我，我们一起看。"
     s.history = history + [{"role": "assistant", "content": reply}]
+    s.touch()
     db.commit()
     return {"reply": reply}
 
@@ -287,6 +288,7 @@ def resolve(db: Session, session_id: str) -> dict | None:
         return None
     if s.status == "active":
         s.status = "completed"
+        s.touch()
         _log_collab_signal(db, s)   # B2 埋点：记结构化协作信号（不进画像，攒数据待将来开分）
         db.commit()
     return {"status": s.status}

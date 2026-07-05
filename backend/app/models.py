@@ -42,6 +42,12 @@ class TutorSession(Base):
     stalled_turns: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String, default="active")  # active/completed
     created_at: Mapped[str] = mapped_column(String, default=now)
+    # 最近活动时间：每次对话/运行/提交刷新。active-sessions 大厅按它排序，省去每会话回查 ExecutionEvent。
+    updated_at: Mapped[str] = mapped_column(String, default=now, index=True)
+
+    def touch(self):
+        """标记本会话刚有活动（更新 updated_at）。在任何会话状态变更处调用。"""
+        self.updated_at = now()
 
     @property
     def is_coop(self) -> bool:
