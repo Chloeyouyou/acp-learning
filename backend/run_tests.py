@@ -23,7 +23,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import models  # noqa: F401  注册表到 Base.metadata
 from app.db import Base
-from app.models import CodeSnapshot, Event, ExecutionEvent, KnowledgeState, TutorSession
+from app.models import CodeSnapshot, Event, ExecutionEvent, KnowledgeState, SessionMessage, TutorSession
 from app.services import (
     event_engine, mine_engine, pattern_validator, process, profile, review, sandbox, timeline,
 )
@@ -1289,6 +1289,24 @@ def 快照_record_seq递增且落库():
     assert [x.seq for x in snaps] == [1, 2], "seq 应从 1 递增"
     assert snaps[0].code == "print(1)" and snaps[1].code == "print(2)"
     assert snaps[1].execution_event_id == "ex_2"
+    db.close()
+
+
+@test
+def 消息时间线_record_seq递增且落库():
+    db = TestSession()
+    s = TutorSession(id="msg_s1", student_id="u", pattern_id="BP-BOUNDARY-001",
+                     manifest={}, history=[], status="active")
+    db.add(s); db.commit()
+    process.record_message(db, "msg_s1", "student", "我觉得循环错了", "chat")
+    process.record_message(db, "msg_s1", "tutor", "为什么这么认为？", "chat")
+    process.record_message(db, "msg_s1", "system", "（系统·运行结果）报错", "run_result")
+    db.commit()
+    msgs = (db.query(SessionMessage).filter_by(session_id="msg_s1")
+            .order_by(SessionMessage.seq).all())
+    assert [m.seq for m in msgs] == [1, 2, 3], "seq 应从 1 递增"
+    assert [m.role for m in msgs] == ["student", "tutor", "system"]
+    assert msgs[2].kind == "run_result"
     db.close()
 
 

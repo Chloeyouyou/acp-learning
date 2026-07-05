@@ -252,6 +252,8 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
         mode=(session.manifest or {}).get("mode", "debug"))
     # 过程化：记提交时的代码快照，链到本次执行事实（submit 的代码链）
     snap = process.record_snapshot(db, session, req.code, execution.id)
+    process.record_message(db, session.id, "student",
+                           f"（提交修复：{'通过' if result['passed'] else '未通过'}）", "submit")
     db.commit()
     execution_summary = {
         "kind": execution.kind,
@@ -297,6 +299,7 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
     session.history = list(session.history) + [
         {"role": "user", "content": "（系统：我提交的修复已通过测试）"},
         {"role": "assistant", "content": tutor_opening}]
+    process.record_message(db, session.id, "tutor", tutor_opening, "tutor_opening")  # 时间线（写新）
     # 复习模式：老题重解不再发能力增益事件，否则反复复习同一题会刷高 Debug 能力分、污染数字孪生。
     # 执行事实（ExecutionEvent，已带 meta.mode=review）照常记——驱动间隔升档，留存信号留待将来单独消费。
     is_review = (session.manifest or {}).get("mode") == "review"

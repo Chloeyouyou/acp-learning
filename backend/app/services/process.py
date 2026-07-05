@@ -12,7 +12,7 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from ..models import CodeSnapshot, now
+from ..models import CodeSnapshot, SessionMessage, now
 from . import mine_engine
 
 _norm = lambda s: re.sub(r"\s+", "", s or "")
@@ -87,3 +87,23 @@ def record_snapshot(db: Session, session, code: str, execution_event_id: str | N
     db.add(snap)
     db.flush()   # 立即入库（不提交）——同一事务内再记快照时 seq 能正确续上（会话 autoflush=False）
     return snap
+
+
+def record_message(db: Session, session_id: str, role: str, content: str,
+                   kind: str = "chat") -> SessionMessage:
+    """记一条会话消息到 append-only 时间线（供 M3 回放）。seq 会话内递增；不 commit。
+    与 history 并行的「写新」——history 读写不动，此表只增不删、保留发生过的每一步。"""
+    prev_seq = (db.query(SessionMessage.seq).filter_by(session_id=session_id)
+                .order_by(SessionMessage.seq.desc()).first())
+    msg = SessionMessage(
+        id=f"sm_{uuid.uuid4().hex[:16]}",
+        session_id=session_id,
+        seq=(prev_seq[0] + 1) if prev_seq else 1,
+        role=role,
+        kind=kind,
+        content=content,
+        created_at=now(),
+    )
+    db.add(msg)
+    db.flush()   # 同事务内连记多条时 seq 正确续上
+    return msg

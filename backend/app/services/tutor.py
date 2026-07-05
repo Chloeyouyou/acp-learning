@@ -365,9 +365,11 @@ def run_and_inject(db: Session, session, code: str, *, knowledge_points: list, m
         source="run", kind=kind, stderr=r.stderr, knowledge_points=knowledge_points, mode=mode)
     # 过程化：记一条代码快照，链到本次执行事实（run 的代码链，闯关 + coop 都留）
     process.record_snapshot(db, session, code, ev.id)
+    note = run_result_note(kind, r.stdout, r.stderr)
+    process.record_message(db, session.id, "system", note, "run_result")  # 时间线（写新）：保留每次运行
     # 真实运行结果接进对话：知返据此引导、杜绝臆断；只留最新一条，仅 active 会话
     if session.status == "active":
-        session.history = inject_run_note(session.history, run_result_note(kind, r.stdout, r.stderr))
+        session.history = inject_run_note(session.history, note)
         session.touch()
     db.commit()   # 提交快照（+ active 时的对话/活跃时间）
     return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out,
@@ -868,6 +870,11 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
             )
         except event_engine.EventRejected:
             pass  # 不合规事件静默丢弃，不阻断对话
+
+    # 过程化时间线（写新）：记真实学生发言 + 导师回复。系统回流/提交动作在别处按语义记，此处跳过。
+    if not student_message.startswith((FIX_FAILED_PREFIX, RUN_RESULT_PREFIX, "（系统", "(系统")):
+        process.record_message(db, session.id, "student", student_message, "chat")
+    process.record_message(db, session.id, "tutor", turn.reply, "chat")
 
     db.commit()
     return {

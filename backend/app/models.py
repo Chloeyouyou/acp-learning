@@ -119,6 +119,26 @@ class CodeSnapshot(Base):
     timestamp: Mapped[str] = mapped_column(String, default=now)
 
 
+class SessionMessage(Base):
+    """会话消息时间线（M2 · 过程化回放）。会话里真实发生过的每一步对话/运行/提交，一行一条。
+
+    与 `TutorSession.history`（LLM 工作副本，会删旧运行结果以免污染上下文）不同：本表是
+    **append-only 的真实动作时间线**，保留发生过的每一步——回放（M3）据它 + code_snapshots
+    按时间戳合并，还原「学生怎么一步步想通的」。
+    当前为写新读旧过渡：写入此表，读取仍走 history；将来读取端迁完可移除 history 列。
+    """
+
+    __tablename__ = "session_messages"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, index=True)
+    seq: Mapped[int] = mapped_column(Integer)   # 会话内递增（同表稳定排序）
+    role: Mapped[str] = mapped_column(String)   # student / tutor / system
+    kind: Mapped[str] = mapped_column(String)   # chat / run_result / submit / tutor_opening
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+
+
 class CapabilityScore(Base):
     """派生视图：能力向量（05文档 §2.2）。可由事件流重放重算。"""
 

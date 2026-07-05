@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from ..config import TUTOR_MODEL
 from ..models import ExecutionEvent, TutorSession, now
-from . import tutor
+from . import process, tutor
 
 # ---- 预置样本：单文件 Python，有 bug，「帮我看看这段哪儿不对」口吻 ----
 # 样本自带 buggy code；无 expected_output / 无 fix_check（不判题）。
@@ -277,6 +277,9 @@ def message(db: Session, session_id: str, content: str) -> dict | None:
         reply = "我这会儿有点没接住——你先点一下「运行」，把真实结果跑出来，再把它发我，我们一起看。"
     s.history = history + [{"role": "assistant", "content": reply}]
     s.touch()
+    # 过程化时间线（写新）：coop 对话也记，供回放
+    process.record_message(db, s.id, "student", content, "chat")
+    process.record_message(db, s.id, "tutor", reply, "chat")
     db.commit()
     return {"reply": reply}
 
