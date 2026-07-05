@@ -12,17 +12,34 @@ const legacyId = ref(getLegacyId())        // 本设备旧随机 id（迁移候�
 
 const formId = ref('')
 const formName = ref('')
+const submitting = ref(false)
+const loginError = ref('')
 
-function confirmIdentity() {
+async function confirmIdentity() {
   const id = formId.value.trim()
-  if (!id) return
-  setIdentity(id, formName.value.trim())
-  location.reload()  // 重载，让接着做/复习/画像等所有页面按新 student_id 重新取数
+  if (!id || submitting.value) return
+  submitting.value = true
+  loginError.value = ''
+  try {
+    await setIdentity(id, formName.value.trim())   // 登录换 token，成功才 reload
+    location.reload()  // 重载，让接着做/复习/画像等所有页面按新 student_id 重新取数
+  } catch (e) {
+    loginError.value = e.message || '进入失败，请重试'
+    submitting.value = false
+  }
 }
 
-function useLegacy() {
-  keepLegacyIdentity(formName.value.trim())
-  location.reload()
+async function useLegacy() {
+  if (submitting.value) return
+  submitting.value = true
+  loginError.value = ''
+  try {
+    await keepLegacyIdentity(formName.value.trim())
+    location.reload()
+  } catch (e) {
+    loginError.value = e.message || '沿用失败，请重试'
+    submitting.value = false
+  }
 }
 
 function switchIdentity() {
@@ -99,13 +116,16 @@ function switchIdentity() {
           <span>姓名 <small>（可选）</small></span>
           <input v-model="formName" placeholder="昵称也行" @keyup.enter="confirmIdentity" />
         </label>
-        <button class="identity-go" :disabled="!formId.trim()" @click="confirmIdentity">进入</button>
+        <button class="identity-go" :disabled="!formId.trim() || submitting" @click="confirmIdentity">
+          {{ submitting ? '进入中…' : '进入' }}
+        </button>
+        <p v-if="loginError" class="identity-error">{{ loginError }}</p>
         <div v-if="legacyId" class="identity-legacy">
           <p>这台设备上已有一份学习记录（{{ legacyId }}）。</p>
-          <button class="identity-legacy-btn" @click="useLegacy">继续沿用这份记录</button>
+          <button class="identity-legacy-btn" :disabled="submitting" @click="useLegacy">继续沿用这份记录</button>
         </div>
       </div>
-      <p class="identity-foot">无密码、无后端鉴权 · 学号只用来在本地找回你的学习轨迹</p>
+      <p class="identity-foot">无密码 · 学号即身份，用来找回你的学习轨迹</p>
     </div>
   </div>
 </template>
@@ -206,6 +226,8 @@ nav a.router-link-active { color: var(--primary); border-color: var(--primary); 
   font-size: 13.5px; font-family: inherit; padding: 8px 16px; border-radius: 999px;
 }
 .identity-legacy-btn:hover { border-color: var(--primary); color: var(--primary); }
+.identity-legacy-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.identity-error { color: var(--primary); font-size: 13px; margin: 10px 0 0; text-align: center; }
 
 /* 手机端：顶栏收紧、隐藏学号、内容留白变小 */
 @media (max-width: 640px) {

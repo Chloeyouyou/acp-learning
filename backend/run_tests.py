@@ -8,8 +8,13 @@
 用真沙箱跑代码，几秒内完成。
 """
 
+import os
 import sys
 import traceback
+
+# 主测试套件锁定 subprocess 后端：84 项用真沙箱，走 docker 会慢到几分钟。
+# 隔离性由文末「沙箱隔离」测试组单独打 docker 后端验证（docker 不可用则跳过）。
+os.environ.setdefault("ACP_SANDBOX", "subprocess")
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -316,7 +321,7 @@ def active_sessions_按活跃倒序且上限5():
     for i in range(6):  # 6 个；event 时间各异，i 越大越老
         _mk_active(db, sid, f"s{i}", history=[{"role": "user", "content": "x"}],
                    events_at=[(base - _td(days=i)).isoformat()])
-    sessions = get_active_sessions(sid, db=db)["sessions"]
+    sessions = get_active_sessions(sid, db=db, me=sid)["sessions"]
     assert len(sessions) == 5, f"上限 5，实际 {len(sessions)}"
     assert sessions[0]["session_id"] == "s0", f"最近活跃应置顶，实际 {sessions[0]['session_id']}"
     times = [s["last_active_at"] for s in sessions]
@@ -330,7 +335,7 @@ def active_sessions_无事件回退created_at():
     db = TestSession()
     sid = "as_2"
     _mk_active(db, sid, "no_ev", history=[{"role": "user", "content": "x"}])  # 无 ExecutionEvent
-    sessions = get_active_sessions(sid, db=db)["sessions"]
+    sessions = get_active_sessions(sid, db=db, me=sid)["sessions"]
     assert len(sessions) == 1 and sessions[0]["last_active_at"], "无事件应回退 created_at"
     db.close()
 
@@ -340,12 +345,12 @@ def abandon_置abandoned且不删历史与事件():
     sid = "ab_1"
     hist = [{"role": "user", "content": "我修了第 2 行"}]
     _mk_active(db, sid, "drop_me", history=hist, events_at=[_dt.now().isoformat()])
-    abandon_session("drop_me", db=db)
+    abandon_session("drop_me", db=db, me=sid)
     s = db.query(TutorSession).filter_by(id="drop_me").first()
     assert s.status == "abandoned", f"应置 abandoned，实际 {s.status}"
     assert s.history == hist, "history 不该被删"
     assert db.query(ExecutionEvent).filter_by(session_id="drop_me").count() == 1, "事件流不该被删"
-    assert not get_active_sessions(sid, db=db)["sessions"], "放弃后不该再在 active-sessions"
+    assert not get_active_sessions(sid, db=db, me=sid)["sessions"], "放弃后不该再在 active-sessions"
     db.close()
 
 
@@ -1177,18 +1182,122 @@ def 报错翻译_各错误返回中文_无报错返回None():
     assert tutor.explain_error("RE", "完全不认识的乱码") is None   # 识别不了返回 None
 
 
+# ---- 身份 / 越权（M1 D2-3）：token 签发可用、坏 token 拒绝、越权访问他人数据 403 ----
+
+@test
+def token_签发校验round_trip():
+    from app.security import sign_token, verify_token
+    t = sign_token("stu_A")
+    assert verify_token(t) == "stu_A"                     # 正常签发可解回
+    assert verify_token(t[:-1] + ("0" if t[-1] != "0" else "1")) is None  # 篡改签名 → 拒绝
+    assert verify_token("garbage") is None and verify_token(None) is None
+
+
+@test
+def 越权_看他人画像403():
+    from fastapi import HTTPException
+    from app.main import get_profile
+    db = TestSession()
+    try:
+        # 我是 stu_A，带自己的 token 去要 stu_B 的画像 → 必须 403
+        get_profile("stu_B", db=db, me="stu_A")
+        assert False, "越权访问他人画像未被拦截"
+    except HTTPException as e:
+        assert e.status_code == 403
+    # 要自己的画像 → 放行（返回结构正常）
+    assert get_profile("stu_A", db=db, me="stu_A")["student_id"] == "stu_A"
+    db.close()
+
+
+@test
+def 越权_操作他人会话403():
+    from fastapi import HTTPException
+    from app.main import _get_session
+    db = TestSession()
+    _mk_active(db, "owner_X", "sess_X", history=[{"role": "user", "content": "x"}])
+    try:
+        _get_session(db, "sess_X", "intruder_Y")   # 别人的会话
+        assert False, "越权操作他人会话未被拦截"
+    except HTTPException as e:
+        assert e.status_code == 403
+    assert _get_session(db, "sess_X", "owner_X").id == "sess_X"  # 本人放行
+    db.close()
+
+
+# ---- 沙箱隔离测试组（M1 D1）：显式打 docker 后端，验证学生代码逃不出容器。
+# docker 不可用时整组跳过——本地无 docker 的开发机照样能跑主套件。----
+
+class _SkipTest(Exception):
+    """docker 不可用：跳过该测试（不计失败）。"""
+
+
+def _docker_run(code, timeout=4.0):
+    """强制用 docker 后端跑一段代码；docker 不可用则抛 _SkipTest。"""
+    old = os.environ.get("ACP_SANDBOX")
+    os.environ["ACP_SANDBOX"] = "auto"
+    try:
+        if sandbox.active_backend() != "docker":
+            raise _SkipTest("docker 不可用")
+        os.environ["ACP_SANDBOX"] = "docker"
+        return sandbox.run_code(code, timeout)
+    finally:
+        if old is None:
+            os.environ.pop("ACP_SANDBOX", None)
+        else:
+            os.environ["ACP_SANDBOX"] = old
+
+
+@test
+def 沙箱docker_正常代码照跑():
+    r = _docker_run("print(sum([1,2,3]))")
+    assert r.stdout.strip() == "6" and not r.has_error
+
+
+@test
+def 沙箱docker_读不到宿主密钥():
+    r = _docker_run("import os; print(os.environ.get('DEEPSEEK_API_KEY'))")
+    assert r.stdout.strip() == "None"   # 容器环境里没有密钥
+
+
+@test
+def 沙箱docker_读不到宿主acp_db():
+    r = _docker_run("import os; print(os.path.exists('/data/acp.db'), os.path.exists('acp.db'))")
+    assert r.stdout.strip() == "False False"   # 宿主数据库不可见
+
+
+@test
+def 沙箱docker_无网络():
+    r = _docker_run("import socket; socket.create_connection(('1.1.1.1',53),2); print('CONNECTED')")
+    assert "CONNECTED" not in r.stdout and r.has_error   # 连不出去
+
+
+@test
+def 沙箱docker_根文件系统只读():
+    r = _docker_run("open('/evil.txt','w').write('x'); print('WROTE')")
+    assert "WROTE" not in r.stdout and r.has_error   # 根只读，写不进去
+
+
+@test
+def 沙箱docker_死循环超时():
+    r = _docker_run("while True: pass", timeout=3.0)
+    assert r.timed_out
+
+
 def main():
-    passed = failed = 0
+    passed = failed = skipped = 0
     for fn in _tests:
         try:
             fn()
             print(f"[PASS] {fn.__name__}")
             passed += 1
+        except _SkipTest as e:
+            print(f"[SKIP] {fn.__name__}: {e}")
+            skipped += 1
         except Exception as e:
             print(f"[FAIL] {fn.__name__}: {e}")
             traceback.print_exc()
             failed += 1
-    print(f"\n{passed} 过 / {failed} 败 / 共 {len(_tests)}")
+    print(f"\n{passed} 过 / {failed} 败 / {skipped} 跳过 / 共 {len(_tests)}")
     sys.exit(1 if failed else 0)
 
 

@@ -10,6 +10,18 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+class Student(Base):
+    """轻量身份（M1 D2-3）。学号即主键；无密码——token 由 HMAC 签发（见 security.py）。
+    name/class_id 供显示与将来教师分班（M4）。首次 login 时 upsert。"""
+
+    __tablename__ = "students"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, default="")
+    class_id: Mapped[str] = mapped_column(String, default="", index=True)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+
+
 class TutorSession(Base):
     """一次「学生×雷」的共脑调试会话。manifest 即 01 文档的 MineManifest。"""
 
