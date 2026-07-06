@@ -23,10 +23,12 @@ from sqlalchemy.orm import sessionmaker
 
 from app import models  # noqa: F401  注册表到 Base.metadata
 from app.db import Base
-from app.models import CodeSnapshot, Event, ExecutionEvent, KnowledgeState, SessionMessage, TutorSession
+from app.models import (
+    CodeSnapshot, Event, ExecutionEvent, KnowledgeState, SessionMessage, Student, TutorSession,
+)
 from app.services import (
     curriculum, event_engine, mine_engine, pattern_validator, process, profile, review, sandbox,
-    timeline,
+    teacher, timeline,
 )
 
 _engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
@@ -1290,6 +1292,31 @@ def 快照_record_seq递增且落库():
     assert [x.seq for x in snaps] == [1, 2], "seq 应从 1 递增"
     assert snaps[0].code == "print(1)" and snaps[1].code == "print(2)"
     assert snaps[1].execution_event_id == "ex_2"
+    db.close()
+
+
+@test
+def 教师总览_聚合进度与班级过滤():
+    db = TestSession()
+    # 两个学生，一个属 A 班、一个属 B 班；进度不同
+    db.add(Student(id="t_a", name="小A", class_id="classA"))
+    db.add(Student(id="t_b", name="小B", class_id="classB"))
+    db.add(KnowledgeState(student_id="t_a", pattern_id="BP-BOUNDARY-001",
+                          knowledge_points=[], state="已内化"))
+    db.add(KnowledgeState(student_id="t_a", pattern_id="BP-BOUNDARY-003",
+                          knowledge_points=[], state="已解决"))
+    db.add(KnowledgeState(student_id="t_b", pattern_id="BP-LOOP-001",
+                          knowledge_points=[], state="已接触"))
+    db.commit()
+    allv = teacher.build_class_overview(db)
+    assert allv["total"] == 2
+    a = next(r for r in allv["students"] if r["student_id"] == "t_a")
+    assert a["solved"] == 2 and a["internalized"] == 1 and a["name"] == "小A"
+    b = next(r for r in allv["students"] if r["student_id"] == "t_b")
+    assert b["solved"] == 0 and b["touched"] == 1
+    # 按班过滤
+    only_a = teacher.build_class_overview(db, class_id="classA")
+    assert only_a["total"] == 1 and only_a["students"][0]["student_id"] == "t_a"
     db.close()
 
 
