@@ -52,19 +52,20 @@ def get_profile(db: Session, student_id: str) -> dict:
 
     dimensions = []
     for dim in ["Debug能力", "AI协作能力"]:
-        total_w, acc, n, trained, total_caps = 0.0, 0.0, 0, 0, 0
+        full_w, acc, n, trained, total_caps = 0.0, 0.0, 0, 0, 0
         for cap, meta in CAPABILITY_REGISTRY.items():
             if meta["dimension"] != dim:
                 continue
             total_caps += 1                         # 该维度的子能力总数
+            full_w += meta["weight"]                # 全部子能力权重和（未练的也计入分母）
             if cap in vector:
                 acc += vector[cap]["score"] * meta["weight"]
-                total_w += meta["weight"]
                 n += vector[cap]["events_count"]
                 trained += 1                        # 其中有证据（练过）的子能力数
-        score = round(acc / total_w, 1) if total_w > 0 else None
-        # trained/total = 覆盖度（治 #18 虚高）：维度分只对练过的子能力求平均，
-        # 单个子能力能把整维度顶高，所以必须把"练了几项里的几项"亮给学生看，分数才有语境。
+        # #18 修法 A：维度分 = acc / 全部子能力权重和——**未练的子能力按 0 计入**。
+        # 单练一项刷满不再把整维度顶到 100（只练独立调试→Debug=25），分数直接反映"全面不全面"，
+        # 最诚实、不靠额外文字。trained/total 仍保留作覆盖度语境。有过任一证据才给分（否则 None）。
+        score = round(acc / full_w, 1) if trained > 0 else None
         dimensions.append({"name": dim, "score": score,
                            "confidence": "low" if n < 5 else "normal",
                            "trained": trained, "total": total_caps})

@@ -217,6 +217,7 @@ const coverage = computed(() => (profile.value?.dimensions || []).filter((d) => 
         <div v-if="coverage.length" class="coverage">
           <span v-for="d in coverage" :key="d.name" class="cov-item">{{ d.name }} · 练了 <b>{{ d.trained }}/{{ d.total }}</b> 项</span>
         </div>
+        <p v-if="coverage.length" class="cov-note">分数按整个维度算——还没练的子能力算 0，练得越全面分数越高。</p>
         <div class="legend"><span class="dot low" /> 灰色=数据还少（事件&lt;5），多练会更准</div>
         <details v-for="d in unevaluatedDims" :key="d.name" class="dim-hint">
           <summary><b>「{{ d.name }}」还未评估</b></summary>
@@ -453,6 +454,7 @@ h3 { margin-top: 0; font-size: 17px; }
 .coverage { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; }
 .cov-item { font-size: 12.5px; color: var(--muted); }
 .cov-item b { color: var(--primary); font-weight: 600; }
+.cov-note { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 8px 0 0; }
 .dim-hint {
   font-size: 12.5px; color: var(--muted); line-height: 1.65; margin-top: 10px;
   background: var(--bg); border-radius: 8px; padding: 9px 11px;

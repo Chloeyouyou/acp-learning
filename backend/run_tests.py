@@ -1093,6 +1093,22 @@ def 画像_维度带覆盖度trained_total():
     assert deb["trained"] == 1 and deb["total"] == 5, deb
     ai = [d for d in profile.get_profile(db, "cov1")["dimensions"] if d["name"] == "AI协作能力"][0]
     assert ai["trained"] == 0 and ai["total"] == 3, ai
+
+
+@test
+def 画像_18虚高修法A_单练不顶满维度():
+    from app.services import event_engine, profile
+    db = TestSession()
+    # 只练独立调试（权重 0.25）刷到封顶，其余 4 个 Debug 子能力零证据
+    for _ in range(30):
+        event_engine.emit(db, student_id="v18", session_id="x", capability="Independent_Debug",
+                          delta=3, producer="rule", evidence={"summary": "fix"})
+    deb = [d for d in profile.get_profile(db, "v18")["dimensions"] if d["name"] == "Debug能力"][0]
+    # 修法 A：Independent_Debug=100，全维度权重和=1.0 → 100*0.25/1.0=25，不再虚高到 100
+    assert deb["score"] is not None and deb["score"] <= 30, f"单练一项不该顶满维度，实际 {deb['score']}"
+    # 未练的维度仍是 None（无任何证据不给分）
+    ai = [d for d in profile.get_profile(db, "v18")["dimensions"] if d["name"] == "AI协作能力"][0]
+    assert ai["score"] is None, ai
     db.close()
 
 
