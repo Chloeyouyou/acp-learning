@@ -85,6 +85,7 @@ export function clearIdentityChoice() {
 
 export const api = {
   listPatterns: () => request('GET', '/patterns'),
+  getCurriculum: () => request('GET', '/curriculum'),
   createSession: (patternId, mode = 'debug') =>
     request('POST', '/sessions', { pattern_id: patternId, mode }),
   sendMessage: (sessionId, content) =>

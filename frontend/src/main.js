@@ -7,6 +7,7 @@ import Timeline from './views/Timeline.vue'
 import Profile from './views/Profile.vue'
 import QuestionTraining from './views/QuestionTraining.vue'
 import Replay from './views/Replay.vue'
+import Map from './views/Map.vue'
 import './style.css'
 
 const router = createRouter({
@@ -14,6 +15,7 @@ const router = createRouter({
   routes: [
     { path: '/', redirect: '/arena' },
     { path: '/arena', component: Arena },
+    { path: '/map', component: Map },
     { path: '/coop', component: Coop },
     { path: '/question', component: QuestionTraining },
     { path: '/timeline', component: Timeline },
