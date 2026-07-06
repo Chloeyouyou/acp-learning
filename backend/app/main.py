@@ -20,7 +20,7 @@ from .models import ExecutionEvent, Student, TutorSession
 from .security import sign_token, verify_token
 from .services import (
     coop, curriculum, event_engine, mine_engine, presence, process, profile, question_training,
-    review, timeline, tutor,
+    review, teacher, timeline, tutor,
 )
 
 @asynccontextmanager
@@ -77,6 +77,14 @@ def turn_lock(session_id: str):
     串行化同会话并发请求——防丢消息 + 堵 submit TOCTOU（审计 #12）。见 concurrency.py。"""
     with session_turn(session_id):
         yield
+
+
+def _check_admin(token: str | None) -> None:
+    """作者/教师侧只读端点的鉴权：必须设 ACP_ADMIN_TOKEN 且 ?token= 匹配（常量时间比较）。
+    未设一律 403——绝不默认放行，避免忘配一次就全员数据外泄。"""
+    required = os.environ.get("ACP_ADMIN_TOKEN")
+    if not required or not hmac.compare_digest(token or "", required):
+        raise HTTPException(403, "forbidden")
 
 
 @app.post("/api/auth/login")
@@ -432,9 +440,7 @@ def admin_list_sessions(student_id: str, token: str | None = None, db: Session =
     未设 ACP_ADMIN_TOKEN 一律 403——绝不默认放行，避免忘配一次就全员对话史外泄。
     本地 QA：先 `export ACP_ADMIN_TOKEN=xxx` 再带 ?token=xxx 访问。
     """
-    required = os.environ.get("ACP_ADMIN_TOKEN")
-    if not required or not hmac.compare_digest(token or "", required):
-        raise HTTPException(403, "forbidden")
+    _check_admin(token)
     sessions = (db.query(TutorSession).filter_by(student_id=student_id)
                 .order_by(TutorSession.created_at.desc()).all())
     return [
@@ -622,6 +628,15 @@ def health():
 def get_curriculum(db: Session = Depends(get_db), me: str = Depends(current_student)):
     """课程地图（M3b，纯派生只读）：单元 → 关卡 + 本人进度（身份取自 token）。"""
     return curriculum.build_curriculum(db, me)
+
+
+@app.get("/api/teacher/overview")
+def teacher_overview(token: str | None = None, class_id: str | None = None,
+                     db: Session = Depends(get_db)):
+    """【教师只读】全班总览（M4）：每人进度/最近活跃/正卡在哪。纯派生。
+    鉴权复用 ACP_ADMIN_TOKEN（?token=）；不传 class_id 看全体，传了按班过滤。"""
+    _check_admin(token)
+    return teacher.build_class_overview(db, class_id)
 
 
 @app.get("/api/patterns")
