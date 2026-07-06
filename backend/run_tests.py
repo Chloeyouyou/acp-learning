@@ -25,7 +25,8 @@ from app import models  # noqa: F401  注册表到 Base.metadata
 from app.db import Base
 from app.models import CodeSnapshot, Event, ExecutionEvent, KnowledgeState, SessionMessage, TutorSession
 from app.services import (
-    event_engine, mine_engine, pattern_validator, process, profile, review, sandbox, timeline,
+    curriculum, event_engine, mine_engine, pattern_validator, process, profile, review, sandbox,
+    timeline,
 )
 
 _engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
@@ -1289,6 +1290,42 @@ def 快照_record_seq递增且落库():
     assert [x.seq for x in snaps] == [1, 2], "seq 应从 1 递增"
     assert snaps[0].code == "print(1)" and snaps[1].code == "print(2)"
     assert snaps[1].execution_event_id == "ex_2"
+    db.close()
+
+
+@test
+def 课程配置_单元完整且题都真实存在():
+    units = curriculum.load_units()
+    assert len(units) == 4, f"应 4 个单元，实际 {len(units)}"
+    lib = mine_engine.load_patterns()
+    total = 0
+    for u in units:
+        assert u["patterns"], f"{u['id']} 无题"
+        for pid in u["patterns"]:
+            assert pid in lib, f"{u['id']} 配了不存在的题 {pid}"
+            total += 1
+    assert total == 21, f"单元覆盖题数应 21，实际 {total}"
+
+
+@test
+def 课程派生_进度反映知识状态():
+    db = TestSession()
+    sid = "cur_u"
+    # 一道题标已内化、一道已解决，其余未接触
+    db.add(KnowledgeState(student_id=sid, pattern_id="BP-BOUNDARY-001",
+                          knowledge_points=[], state="已内化"))
+    db.add(KnowledgeState(student_id=sid, pattern_id="BP-BOUNDARY-003",
+                          knowledge_points=[], state="已解决"))
+    db.commit()
+    cur = curriculum.build_curriculum(db, sid)
+    u1 = next(u for u in cur["units"] if u["id"] == "U1")
+    assert u1["internalized"] == 1 and u1["solved"] == 2, u1  # 已内化也计入 solved
+    by_pid = {lv["pattern_id"]: lv for lv in u1["levels"]}
+    assert by_pid["BP-BOUNDARY-001"]["state"] == "已内化"
+    assert by_pid["BP-BOUNDARY-003"]["state"] == "已解决"
+    assert by_pid["BP-BOUNDARY-002"]["state"] == "未接触"
+    # 单元顺序按 order
+    assert [u["id"] for u in cur["units"]] == ["U1", "U2", "U3", "U4"]
     db.close()
 
 

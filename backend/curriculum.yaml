@@ -1,0 +1,28 @@
+# 课程/单元定义（M3b）。静态配置（像题库一样），单元进度纯从 knowledge_states 派生——零新表。
+# 改单元/调顺序/加题只动这里。单元内 patterns 顺序 = 关卡顺序（按难度 L1→L3 递进）。
+# 只列已入库、已审的题；GEN 待审题不进单元。
+
+units:
+  - id: U1
+    name: 边界与差一
+    order: 1
+    description: 下标、长度、空集合——最常见的“差一”和越界
+    patterns: [BP-BOUNDARY-001, BP-BOUNDARY-003, BP-BOUNDARY-002, BP-BOUNDARY-004, BP-BOUNDARY-005]
+
+  - id: U2
+    name: 循环的陷阱
+    order: 2
+    description: 循环怎么停、控制流的语义——别让它多走一步或停不下来
+    patterns: [BP-LOOP-001, BP-LOOP-002, BP-LOOP-003, BP-LOOP-004, BP-LOOP-006, BP-LOOP-005]
+
+  - id: U3
+    name: 空值与共享
+    order: 3
+    description: None 防护、别名与共享状态——默认“它一定有值/只有我在用”会踩坑
+    patterns: [BP-NULL-001, BP-NULL-002, BP-NULL-003, BP-NULL-006, BP-SHARED-001, BP-NULL-004, BP-NULL-005]
+
+  - id: U4
+    name: 算术的坑
+    order: 4
+    description: 初值、取模、整除——算得出结果不代表算对
+    patterns: [BP-ARITH-003, BP-ARITH-002, BP-ARITH-001]

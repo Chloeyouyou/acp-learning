@@ -76,6 +76,7 @@ function switchIdentity() {
       </div>
       <nav>
         <RouterLink to="/arena">Bug闯关训练场</RouterLink>
+        <RouterLink to="/map">课程地图</RouterLink>
         <RouterLink to="/coop">AI共脑调试</RouterLink>
         <RouterLink to="/question">提问训练</RouterLink>
         <RouterLink to="/timeline">成长轨迹</RouterLink>
