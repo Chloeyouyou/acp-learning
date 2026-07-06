@@ -19,8 +19,8 @@ from .db import get_db, init_db
 from .models import ExecutionEvent, Student, TutorSession
 from .security import sign_token, verify_token
 from .services import (
-    coop, event_engine, mine_engine, presence, process, profile, question_training, review,
-    timeline, tutor,
+    coop, curriculum, event_engine, mine_engine, presence, process, profile, question_training,
+    review, timeline, tutor,
 )
 
 @asynccontextmanager
@@ -616,6 +616,12 @@ def health():
     线上应为 docker；若显示 subprocess 说明容器没能连到宿主 docker（学生代码未隔离），需排查。"""
     from .services import sandbox
     return {"status": "ok", "version": "0.1.0", "sandbox": sandbox.active_backend()}
+
+
+@app.get("/api/curriculum")
+def get_curriculum(db: Session = Depends(get_db), me: str = Depends(current_student)):
+    """课程地图（M3b，纯派生只读）：单元 → 关卡 + 本人进度（身份取自 token）。"""
+    return curriculum.build_curriculum(db, me)
 
 
 @app.get("/api/patterns")
