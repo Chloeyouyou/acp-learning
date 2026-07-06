@@ -281,6 +281,7 @@ def build_timeline(db: Session, student_id: str) -> dict:
 
         episodes.append({
             "pattern_id": pid,
+            "session_id": best.id,   # 回放入口：该题最有代表性的一局（状态最优）
             "pattern_name": pat.get("name", pid),
             "category": pat.get("category", ""),
             "cognitive_root": pat.get("cognitive_root", ""),

@@ -403,6 +403,14 @@ def get_active_sessions(student_id: str, db: Session = Depends(get_db),
     return {"sessions": out}
 
 
+@app.get("/api/sessions/{session_id}/replay")
+def get_replay(session_id: str, db: Session = Depends(get_db),
+               me: str = Depends(current_student)):
+    """过程回放：这道题的代码逐版 + 对话/运行/提交时间线（纯派生只读）。只能看自己的会话。"""
+    _get_session(db, session_id, me)   # 归属校验（404/403）
+    return process.build_replay(db, session_id)
+
+
 @app.post("/api/sessions/{session_id}/abandon")
 def abandon_session(session_id: str, db: Session = Depends(get_db),
                     me: str = Depends(current_student), _lock: None = Depends(turn_lock)):
