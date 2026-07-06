@@ -94,6 +94,7 @@ export const api = {
   runCode: (sessionId, code) =>
     request('POST', `/sessions/${sessionId}/run`, { code }),
   getSession: (sessionId) => request('GET', `/sessions/${sessionId}`),
+  getReplay: (sessionId) => request('GET', `/sessions/${sessionId}/replay`),
   getWalkthrough: (patternId, deep = false) =>
     request('GET', `/patterns/${patternId}/walkthrough${deep ? '?deep=true' : ''}`),
   getProfile: () => request('GET', `/students/${getStudentId()}/profile`),

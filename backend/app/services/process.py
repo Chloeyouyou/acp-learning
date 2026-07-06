@@ -12,7 +12,7 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from ..models import CodeSnapshot, SessionMessage, now
+from ..models import CodeSnapshot, ExecutionEvent, SessionMessage, TutorSession, now
 from . import mine_engine
 
 _norm = lambda s: re.sub(r"\s+", "", s or "")
@@ -87,6 +87,64 @@ def record_snapshot(db: Session, session, code: str, execution_event_id: str | N
     db.add(snap)
     db.flush()   # 立即入库（不提交）——同一事务内再记快照时 seq 能正确续上（会话 autoflush=False）
     return snap
+
+
+_RESULT_LABEL = {"OK": "通过", "RE": "报错", "WA": "结果不对", "HANG": "超时"}
+
+
+def build_replay(db: Session, session_id: str) -> dict | None:
+    """过程回放（M3）：把 code_snapshots + session_messages 按时间戳合并成一条可步进的时间线。
+
+    让学生/老师逐步回看「代码怎么一版版改、对话怎么推进、每次运行/提交什么结果」——
+    把不可见的解题过程变成可见的故事。纯派生只读。会话不存在返回 None。
+    """
+    session = db.get(TutorSession, session_id)
+    if session is None:
+        return None
+
+    snaps = (db.query(CodeSnapshot).filter_by(session_id=session_id)
+             .order_by(CodeSnapshot.seq).all())
+    msgs = (db.query(SessionMessage).filter_by(session_id=session_id)
+            .order_by(SessionMessage.seq).all())
+    ev_by_id = {e.id: e for e in
+                db.query(ExecutionEvent).filter_by(session_id=session_id).all()}
+
+    steps: list[dict] = []
+    for i, s in enumerate(snaps):
+        ev = ev_by_id.get(s.execution_event_id)
+        steps.append({
+            "kind": "code",
+            "at": s.timestamp,
+            "version": i + 1,                       # 第几版代码（回放步进用）
+            "code": s.code,
+            "diff_stats": s.diff_stats or {},
+            "source": ev.source if ev else None,    # run / submit
+            "result": ev.kind if ev else None,      # OK/RE/WA/HANG
+            "result_label": _RESULT_LABEL.get(ev.kind) if ev else None,
+        })
+    for m in msgs:
+        steps.append({
+            "kind": "msg",
+            "at": m.created_at,
+            "role": m.role,                          # student / tutor / system
+            "msg_kind": m.kind,                      # chat / run_result / submit / tutor_opening
+            "content": m.content,
+        })
+    steps.sort(key=lambda x: x["at"])
+
+    try:
+        pat = mine_engine.get_pattern(session.pattern_id)
+        pattern_name = pat.get("name", session.pattern_id)
+    except KeyError:
+        pattern_name = session.pattern_id   # coop / 伪 pattern
+    return {
+        "session_id": session_id,
+        "pattern_id": session.pattern_id,
+        "pattern_name": pattern_name,
+        "mine_status": session.mine_status,
+        "code_versions": len(snaps),
+        "steps": steps,
+    }
 
 
 def record_message(db: Session, session_id: str, role: str, content: str,

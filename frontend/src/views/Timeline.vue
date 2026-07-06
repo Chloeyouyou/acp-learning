@@ -176,6 +176,11 @@ function fmtDay(d) {
           <div v-for="(g, gi) in ep.gains" :key="gi" class="field">
             <span class="tag gain-tag">收获</span><span class="field-val">{{ g }}</span>
           </div>
+
+          <button v-if="ep.session_id" class="replay-link"
+                  @click="router.push(`/replay/${ep.session_id}`)">
+            ▶ 回看这道题的解题过程
+          </button>
         </div>
       </div>
     </div>
@@ -186,6 +191,11 @@ function fmtDay(d) {
 <style scoped>
 .error { border-color: var(--red); color: var(--red); }
 .note { color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.replay-link {
+  margin-top: 12px; background: none; border: 1px solid var(--border); color: var(--primary);
+  border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; font-family: inherit;
+}
+.replay-link:hover { border-color: var(--primary); background: var(--accent-soft); }
 .tl-wrap { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
 
 /* 安静上下文行：复习 + 思维默认值 并排（设计稿）*/

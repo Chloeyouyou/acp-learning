@@ -6,6 +6,7 @@ import Coop from './views/Coop.vue'
 import Timeline from './views/Timeline.vue'
 import Profile from './views/Profile.vue'
 import QuestionTraining from './views/QuestionTraining.vue'
+import Replay from './views/Replay.vue'
 import './style.css'
 
 const router = createRouter({
@@ -17,6 +18,7 @@ const router = createRouter({
     { path: '/question', component: QuestionTraining },
     { path: '/timeline', component: Timeline },
     { path: '/profile', component: Profile },
+    { path: '/replay/:sessionId', component: Replay },
   ],
 })
 

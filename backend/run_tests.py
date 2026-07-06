@@ -1293,6 +1293,33 @@ def 快照_record_seq递增且落库():
 
 
 @test
+def 回放_合并快照与消息按时间成步():
+    import time as _time
+    db = TestSession()
+    s = TutorSession(id="rp_s1", student_id="u", pattern_id="BP-BOUNDARY-001",
+                     manifest={}, history=[], status="active")
+    db.add(s); db.commit()
+    ev = event_engine.log_execution(db, student_id="u", session_id="rp_s1",
+                                    pattern_id="BP-BOUNDARY-001", source="run", kind="RE")
+    process.record_snapshot(db, s, "print(1)", ev.id)
+    process.record_message(db, "rp_s1", "system", "（系统·运行结果）报错", "run_result")
+    db.commit()
+    _time.sleep(0.01)
+    process.record_message(db, "rp_s1", "student", "我觉得是循环", "chat")
+    db.commit()
+    rp = process.build_replay(db, "rp_s1")
+    assert rp["code_versions"] == 1 and rp["pattern_name"]
+    kinds = [x["kind"] for x in rp["steps"]]
+    assert "code" in kinds and kinds.count("msg") == 2, kinds
+    code_step = next(x for x in rp["steps"] if x["kind"] == "code")
+    assert code_step["source"] == "run" and code_step["result"] == "RE"
+    ats = [x["at"] for x in rp["steps"]]
+    assert ats == sorted(ats), "回放步应按时间升序"
+    assert process.build_replay(db, "不存在") is None
+    db.close()
+
+
+@test
 def 消息时间线_record_seq递增且落库():
     db = TestSession()
     s = TutorSession(id="msg_s1", student_id="u", pattern_id="BP-BOUNDARY-001",
