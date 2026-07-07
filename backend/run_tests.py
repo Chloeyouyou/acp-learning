@@ -942,6 +942,26 @@ def coop_resolve标completed():
 
 
 @test
+def 开题干预_短TTL缓存命中与清除():
+    from app.services import timeline
+    db = TestSession()
+    timeline.clear_recurring_cache()
+    # 首次算并入缓存
+    r1 = timeline.recurring_for_student(db, "cache_u")
+    assert "cache_u" in timeline._RECURRING_CACHE
+    # TTL 内再取是同一对象（走缓存、没重算）
+    r2 = timeline.recurring_for_student(db, "cache_u")
+    assert r1 is r2, "TTL 内应返回缓存的同一结果"
+    # 清缓存后重算，得到新对象
+    timeline.clear_recurring_cache()
+    assert "cache_u" not in timeline._RECURRING_CACHE
+    r3 = timeline.recurring_for_student(db, "cache_u")
+    assert r3 is not r1, "清缓存后应重新计算"
+    timeline.clear_recurring_cache()
+    db.close()
+
+
+@test
 def coop_防污染_不进成长轨迹():
     from app.services import coop, timeline
     db = TestSession()

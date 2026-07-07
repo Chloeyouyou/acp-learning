@@ -7,6 +7,7 @@
 只动这里，事件流 schema 不变（07 文档）。
 """
 
+import time
 from collections import defaultdict
 
 from sqlalchemy.orm import Session
@@ -169,6 +170,29 @@ def aggregate_thinking_patterns(episodes):
     return {"enough": True, "items": items}
 
 
+# 开题干预每次开题都要算跨题惯性，而 build_timeline 是全量 O(N) 重建。用按学生的短 TTL 缓存
+# 挡掉重复重算（治体检 R4：一学期数据量后开题变慢）。惯性只随「碰到新思维簇的题」缓慢变化，
+# 60s 内不会有意义地改变，故短 TTL 安全。进程内内存缓存，重启即清；GIL 护 dict 读写。
+_RECURRING_CACHE: "dict[str, tuple[float, dict]]" = {}
+_RECURRING_TTL = 60.0  # 秒
+
+
+def recurring_for_student(db: Session, student_id: str) -> dict:
+    """带短 TTL 缓存的 _recurring(build_timeline)。开题干预与聚合展示的单一读取入口。"""
+    now = time.monotonic()
+    hit = _RECURRING_CACHE.get(student_id)
+    if hit and now - hit[0] < _RECURRING_TTL:
+        return hit[1]
+    rec = _recurring(build_timeline(db, student_id)["episodes"])
+    _RECURRING_CACHE[student_id] = (now, rec)
+    return rec
+
+
+def clear_recurring_cache() -> None:
+    """清空开题干预缓存（测试用；生产靠 TTL 自然过期）。"""
+    _RECURRING_CACHE.clear()
+
+
 def intervention_for(db: Session, student_id: str, pattern_id: str):
     """开题前干预（Intervention）：该题 thinking_pattern 若是用户跨题高频(≥2题)惯性，
     返回一句赋能提醒，否则 None。纯读、不写库。红线：赋能非评价、不打断。"""
@@ -178,7 +202,7 @@ def intervention_for(db: Session, student_id: str, pattern_id: str):
         tp = None
     if not tp:
         return None
-    rec = _recurring(build_timeline(db, student_id)["episodes"])
+    rec = recurring_for_student(db, student_id)   # 缓存版，避免每次开题全量重算 timeline
     if tp not in rec:
         return None
     meta = THINKING_PATTERNS.get(tp, {})
