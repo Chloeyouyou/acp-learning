@@ -8,6 +8,7 @@ const router = useRouter()
 const data = ref(null)
 const error = ref('')
 const loading = ref(true)
+const showAllSteps = ref(false)
 const teacherMode = computed(() => route.meta.teacher === true)
 
 const OUTCOME = {
@@ -46,6 +47,13 @@ function diffNote(d) {
 }
 
 const codeCount = computed(() => data.value?.code_versions || 0)
+const mainlineSteps = computed(() => {
+  const steps = data.value?.steps || []
+  const marked = steps.filter((step) => step.mainline)
+  return marked.length ? marked : steps
+})
+const visibleSteps = computed(() => showAllSteps.value ? (data.value?.steps || []) : mainlineSteps.value)
+const hiddenStepCount = computed(() => Math.max(0, (data.value?.steps?.length || 0) - mainlineSteps.value.length))
 
 const PURPOSE = {
   debug_observation: '观察真实运行结果',
@@ -80,7 +88,12 @@ function teachingNote(step) {
 
 // 系统运行结果消息：去掉前缀，正文更干净
 function cleanContent(m) {
-  return (m.content || '').replace(/^（系统·运行结果）/, '').replace(/^（系统：?/, '').replace(/）$/, '')
+  return (m.content || '')
+    .replace(/^【观察记录】\s*/, '')
+    .replace(/^【思考总结】\s*/, '')
+    .replace(/^（系统·运行结果）/, '')
+    .replace(/^（系统：?/, '')
+    .replace(/）$/, '')
 }
 </script>
 
@@ -110,8 +123,20 @@ function cleanContent(m) {
         </div>
       </header>
 
-      <ol class="timeline">
-        <li v-for="(s, i) in data.steps" :key="i" :class="['step', s.kind]">
+      <div class="replay-view">
+        <div>
+          <span class="view-title">{{ showAllSteps ? '完整过程' : '主线回放' }}</span>
+          <span class="view-meta">
+            {{ showAllSteps ? `${data.steps.length} 个原始步骤` : `${mainlineSteps.length} 个关键步骤` }}
+          </span>
+        </div>
+        <button v-if="hiddenStepCount" class="view-toggle" @click="showAllSteps = !showAllSteps">
+          {{ showAllSteps ? '只看主线' : `查看完整过程（另 ${hiddenStepCount} 步）` }}
+        </button>
+      </div>
+
+      <ol class="timeline" :aria-label="showAllSteps ? '完整过程' : '主线回放'">
+        <li v-for="(s, i) in visibleSteps" :key="`${s.at}-${i}`" :class="['step', s.kind]">
           <!-- 代码版本 -->
           <div v-if="s.kind === 'code'" class="code-step">
             <div class="code-head">
@@ -169,8 +194,13 @@ function cleanContent(m) {
 .turn-summary { margin-top: 14px; padding: 11px 13px; border-radius: 10px; background: #f6efe6; display: flex; flex-direction: column; gap: 4px; }
 .turn-summary b { font-size: 12.5px; color: #7b5e42; }
 .turn-summary span { font-size: 12px; color: var(--muted); }
+.replay-view { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 22px 0 0; padding-bottom: 9px; border-bottom: 1px solid var(--border); }
+.view-title { font-family: var(--serif); font-size: 17px; font-weight: 600; color: var(--text); }
+.view-meta { margin-left: 7px; color: var(--muted); font-size: 11.5px; }
+.view-toggle { border: 0; background: none; color: var(--primary); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+.view-toggle:hover { color: var(--primary-dark); }
 
-.timeline { list-style: none; padding: 0; margin: 24px 0 0; border-left: 2px solid var(--border); }
+.timeline { list-style: none; padding: 0; margin: 15px 0 0; border-left: 2px solid var(--border); }
 .step { position: relative; padding: 0 0 20px 22px; }
 .step::before {
   content: ''; position: absolute; left: -7px; top: 4px; width: 12px; height: 12px;
@@ -212,4 +242,7 @@ function cleanContent(m) {
 .msg.tutor .bubble { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
 .msg.system .who { color: #b08968; }
 .msg.system .bubble { background: #f6efe6; color: var(--muted); font-size: 12.5px; }
+@media (max-width: 560px) {
+  .replay-view { align-items: flex-start; flex-direction: column; gap: 5px; }
+}
 </style>

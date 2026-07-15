@@ -150,6 +150,48 @@ def derive_turning_points(code_steps: list[dict]) -> list[dict]:
     return turning_points
 
 
+_OBSERVATION_MARK = "【观察记录】"
+_SUMMARY_MARK = "【思考总结】"
+
+
+def derive_replay_mainline(steps: list[dict]) -> int:
+    """给完整回放步骤加上可重算的主线标记，返回主线步数。
+
+    原始 steps 一步不删；学生端和教师端只需按 ``mainline`` 过滤，就能先看同一条
+    “真实动作—关键转折—学生总结”主线，需要审计时再展开完整流水。
+    """
+    code_indexes = [i for i, step in enumerate(steps) if step.get("kind") == "code"]
+    first_code = code_indexes[0] if code_indexes else None
+    last_code = code_indexes[-1] if code_indexes else None
+    selected = 0
+
+    for index, step in enumerate(steps):
+        reasons: list[str] = []
+        if step.get("kind") == "code":
+            if index == first_code:
+                reasons.append("first_execution")
+            if step.get("annotations"):
+                reasons.append("turning_point")
+            if index == last_code:
+                reasons.append("latest_execution")
+        else:
+            content = (step.get("content") or "").strip()
+            if step.get("role") == "student" and content.startswith(_OBSERVATION_MARK):
+                reasons.append("student_observation")
+            if step.get("role") == "student" and content.startswith(_SUMMARY_MARK):
+                reasons.append("student_summary")
+            strategy = (step.get("meta") or {}).get("teaching_strategy") or {}
+            if step.get("role") == "tutor" and strategy.get("route_changed"):
+                reasons.append("teaching_route_changed")
+
+        step["mainline"] = bool(reasons)
+        step["mainline_reasons"] = reasons
+        if reasons:
+            selected += 1
+
+    return selected
+
+
 def teaching_metrics(db: Session, session_id: str) -> dict:
     """由导师消息 meta 重放教学策略效果。旧会话没有 meta 时返回全零，不猜测。"""
     messages = (db.query(SessionMessage).filter_by(session_id=session_id, role="tutor")
@@ -236,6 +278,7 @@ def build_replay(db: Session, session_id: str) -> dict | None:
             "meta": m.meta or {},
         })
     steps.sort(key=lambda x: x["at"])
+    mainline_steps = derive_replay_mainline(steps)
 
     try:
         pat = mine_engine.get_pattern(session.pattern_id)
@@ -250,6 +293,7 @@ def build_replay(db: Session, session_id: str) -> dict | None:
         "code_versions": len(snaps),
         "turning_points": turning_points,
         "teaching_metrics": teaching_metrics(db, session_id),
+        "mainline_steps": mainline_steps,
         "steps": steps,
     }
 

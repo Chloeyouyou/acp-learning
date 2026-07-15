@@ -1,31 +1,35 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import GlossaryText from '../components/GlossaryText.vue'
+import { nextActionEyebrow, nextActionQueueHint, nextActionTarget } from '../learning-path'
 
 const router = useRouter()
 const data = ref(null)
 const error = ref('')
-const reviewDue = ref([])
+const guidance = ref(null)
+const guidanceLoaded = ref(false)
 
 onMounted(async () => {
-  try {
-    data.value = await api.getTimeline()
-  } catch (e) {
-    error.value = '加载失败：' + e.message
-  }
-  try {
-    const r = await api.getReviewQueue()
-    reviewDue.value = r.due || []
-  } catch (e) { /* 复习卡拿不到不阻塞主时间线 */ }
+  const [timeline, next] = await Promise.allSettled([
+    api.getTimeline(), api.getNextAction(),
+  ])
+  if (timeline.status === 'fulfilled') data.value = timeline.value
+  else error.value = '加载失败：' + timeline.reason.message
+  if (next.status === 'fulfilled') guidance.value = next.value
+  guidanceLoaded.value = true
 })
 
-const _CAT = { boundary: '边界条件', loop: '循环逻辑', null: '空值/None', arithmetic: '算术运算' }
-function catLabel(c) { return _CAT[c] || c }
+const nextStep = computed(() => guidance.value?.action || {
+  kind: 'start', title: '完成一次真实调试',
+  detail: '亲自运行、判断和修改，第一条成长证据就从这里开始。', cta: '开始练习',
+})
+const nextEyebrow = computed(() => nextActionEyebrow(guidance.value))
+const queuedHint = computed(() => nextActionQueueHint(guidance.value))
 
-function startReview(pid) {
-  router.push({ path: '/arena', query: { start: pid, mode: 'review' } })
+function takeNextStep() {
+  router.push(nextActionTarget(guidance.value))
 }
 
 // 报错类型 → 大白话（治"看不懂英文报错"）
@@ -98,25 +102,18 @@ function fmtDay(d) {
       </div>
     </header>
 
-    <!-- 下一步 + 长期发现：先给行动，再给归纳。 -->
+    <!-- 下一步 + 长期发现：行动始终只有一个，归纳不抢选择。 -->
     <div class="ctx-row">
-      <!-- 回头看看（间隔复习）-->
-      <div v-if="reviewDue.length" class="ctx-card">
+      <div class="ctx-card next-card" aria-label="唯一下一步">
         <span class="ctx-kicker">下一步</span>
-        <div class="ctx-head">
-          <span class="ctx-title">回头看看</span>
-          <span class="ctx-meta">{{ reviewDue.length }} 道到期</span>
-        </div>
-        <p class="ctx-sub">隔一阵回看一次，才会真正记牢。</p>
-        <div class="rv-list">
-          <button v-for="it in reviewDue" :key="it.pattern_id" class="rv-item" @click="startReview(it.pattern_id)">
-            <span class="rv-name">{{ it.name }}</span>
-            <span class="rv-foot">
-              <span class="rv-meta">{{ catLabel(it.category) }} · {{ it.days_since }} 天前</span>
-              <span class="rv-go">去复习 →</span>
-            </span>
-          </button>
-        </div>
+        <p v-if="!guidanceLoaded" class="note">正在整理最适合接着做的一步…</p>
+        <template v-else>
+          <span class="next-eyebrow">{{ nextEyebrow }}</span>
+          <div class="next-title">{{ nextStep.title }}</div>
+          <p class="ctx-sub">{{ nextStep.detail }}</p>
+          <button class="next-action" @click="takeNextStep">{{ nextStep.cta }} →</button>
+          <p v-if="queuedHint" class="queued-hint">{{ queuedHint }}</p>
+        </template>
       </div>
       <!-- 你常见的思维默认值：镜子，非审判 -->
       <div class="ctx-card">
@@ -238,17 +235,14 @@ function fmtDay(d) {
 .ctx-row { display: flex; gap: 14px; flex-wrap: wrap; }
 .ctx-card { flex: 1; min-width: 280px; background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 15px 17px; }
 .ctx-kicker { margin-bottom: 6px; }
-.ctx-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
 .ctx-title { font-family: var(--serif); font-size: 15px; font-weight: 600; color: var(--text); }
-.ctx-meta { font-size: 12px; color: var(--muted); }
 .ctx-sub { margin: 0 0 11px; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
-.rv-list { display: flex; flex-direction: column; gap: 7px; }
-.rv-item { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; background: var(--accent-soft); border: 1px solid var(--border); border-radius: 9px; padding: 9px 12px; cursor: pointer; font: inherit; transition: border-color 0.15s; }
-.rv-item:hover { border-color: var(--primary); }
-.rv-name { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.4; }
-.rv-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.rv-meta { font-size: 11.5px; color: var(--muted); }
-.rv-go { font-size: 12px; color: var(--primary-dark); white-space: nowrap; }
+.next-card { border-color: #dcc5b4; background: #fbf6ef; }
+.next-eyebrow { display: block; margin: 8px 0 4px; color: var(--primary-dark); font-size: 11.5px; }
+.next-title { font-family: var(--serif); font-size: 17px; font-weight: 600; color: var(--text); margin-bottom: 5px; }
+.next-action { border: 0; border-radius: 9px; padding: 8px 14px; background: var(--primary); color: white; font: inherit; font-size: 13px; cursor: pointer; }
+.next-action:hover { background: var(--primary-dark); }
+.queued-hint { margin: 9px 0 0; color: var(--muted); font-size: 11.5px; }
 .tp { border-left: 2px solid #d6aa91; padding-left: 11px; margin-bottom: 12px; }
 .tp:last-of-type { margin-bottom: 0; }
 .tp-name { font-size: 13.5px; font-weight: 600; color: var(--text); }

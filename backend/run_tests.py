@@ -28,8 +28,8 @@ from app.models import (
     CodeSnapshot, Event, ExecutionEvent, KnowledgeState, SessionMessage, Student, TutorSession,
 )
 from app.services import (
-    curriculum, event_engine, mine_engine, pattern_validator, process, profile, review, sandbox,
-    teacher, timeline,
+    curriculum, event_engine, learning_path, mine_engine, pattern_validator, process, profile,
+    review, sandbox, teacher, timeline,
 )
 
 _engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
@@ -1125,6 +1125,34 @@ def coop_run落ExecutionEvent_mode_coop且不查pattern():
 
 
 @test
+def 续学决策_固定四级优先级且理由可解释():
+    active = [{"session_id": "s1", "pattern_id": "p1", "name": "未完成题",
+               "stage": "④修复"}]
+    due = [{"pattern_id": "p2", "name": "复习题", "days_since": 5, "interval_days": 2}]
+    recs = [{"id": "p3", "name": "推荐题", "reason": "补强边界意识",
+             "knowledge_points": ["数组边界"]}]
+
+    resume = learning_path.decide_next_action(active, due, recs)
+    assert resume["action"]["kind"] == "resume"
+    assert resume["action"]["reason_code"] == "unfinished_first"
+    assert resume["action"]["evidence"]["ref"] == "s1"
+    assert resume["pending"] == {"active": 1, "reviews": 1, "recommendations": 1}
+
+    review_action = learning_path.decide_next_action([], due, recs)
+    assert review_action["action"]["kind"] == "review"
+    assert review_action["action"]["target"]["mode"] == "review"
+    assert "5 天前" in review_action["action"]["detail"]
+
+    recommend = learning_path.decide_next_action([], [], recs)
+    assert recommend["action"]["kind"] == "recommend"
+    assert recommend["action"]["detail"] == "补强边界意识"
+
+    start = learning_path.decide_next_action([], [], [])
+    assert start["action"]["kind"] == "start"
+    assert start["decision_order"] == ["resume", "review", "recommend", "start"]
+
+
+@test
 def coop_run把真实结果注入对话():
     from app.services import coop, tutor
     db = TestSession()
@@ -1654,6 +1682,7 @@ def 回放_合并快照与消息按时间成步():
     code_step = next(x for x in rp["steps"] if x["kind"] == "code")
     assert code_step["source"] == "run" and code_step["result"] == "RE"
     assert code_step["action_context"]["call_id"] == "call_replay"
+    assert rp["mainline_steps"] == 1 and code_step["mainline"] is True
     ats = [x["at"] for x in rp["steps"]]
     assert ats == sorted(ats), "回放步应按时间升序"
     assert process.build_replay(db, "不存在") is None
@@ -1674,6 +1703,31 @@ def 回放2_从失败到定向修改再通过标出转折点():
     types = [point["type"] for point in points]
     assert types == ["first_failure", "targeted_change", "error_changed", "breakthrough"], types
     assert steps[2]["annotations"][0]["type"] == "breakthrough"
+
+
+@test
+def 回放主线_只归拢真实动作转折观察总结与换路():
+    steps = [
+        {"kind": "msg", "role": "tutor", "content": "先看整体", "meta": {}},
+        {"kind": "code", "version": 1, "annotations": []},
+        {"kind": "msg", "role": "student", "content": "【观察记录】\n我观察到：报错", "meta": {}},
+        {"kind": "msg", "role": "tutor", "content": "换个例子", "meta": {
+            "teaching_strategy": {"route_changed": True, "explanation_route": "micro_example"},
+        }},
+        {"kind": "code", "version": 2, "annotations": [
+            {"type": "breakthrough", "title": "关键突破", "detail": "通过"},
+        ]},
+        {"kind": "msg", "role": "student", "content": "【思考总结】\n我想记住：先验证", "meta": {}},
+        {"kind": "msg", "role": "system", "content": "完成", "meta": {}},
+    ]
+    count = process.derive_replay_mainline(steps)
+    assert count == 5
+    assert not steps[0]["mainline"] and not steps[-1]["mainline"]
+    assert steps[1]["mainline_reasons"] == ["first_execution"]
+    assert steps[2]["mainline_reasons"] == ["student_observation"]
+    assert steps[3]["mainline_reasons"] == ["teaching_route_changed"]
+    assert steps[4]["mainline_reasons"] == ["turning_point", "latest_execution"]
+    assert steps[5]["mainline_reasons"] == ["student_summary"]
 
 
 @test

@@ -20,8 +20,8 @@ from .models import ExecutionEvent, Student, TutorSession
 from .runtime_security import security_status, validate_production_environment
 from .security import sign_token, verify_token
 from .services import (
-    action_governance, coop, curriculum, event_engine, mine_engine, presence, process, profile,
-    question_training, review, teacher, timeline, tutor,
+    action_governance, coop, curriculum, event_engine, learning_path, mine_engine, presence,
+    process, profile, question_training, review, teacher, timeline, tutor,
 )
 
 @asynccontextmanager
@@ -406,26 +406,15 @@ def get_active_sessions(student_id: str, db: Session = Depends(get_db),
     """未完成关卡列表（最近 5 个 active 会话摘要），供大厅续做。纯只读、不写库。
     按 updated_at（每次对话/运行/提交刷新）倒序——真按活跃度，不再每会话回查 ExecutionEvent。"""
     require_self(student_id, me)
-    sessions = (db.query(TutorSession)
-                .filter_by(student_id=student_id, status="active")
-                .order_by(TutorSession.updated_at.desc()).all())
-    # coop（AI 共脑调试）会话不串进闯关大厅「接着做」（设计 09 防污染）
-    sessions = [s for s in sessions if not s.is_coop][:5]
-    out = []
-    for s in sessions:
-        try:
-            name = mine_engine.get_pattern(s.pattern_id).get("name", s.pattern_id)
-        except KeyError:
-            name = s.pattern_id
-        out.append({
-            "session_id": s.id,
-            "pattern_id": s.pattern_id,
-            "name": name,
-            "stage": s.stage,
-            "mine_status": s.mine_status,
-            "last_active_at": s.updated_at or s.created_at,
-        })
-    return {"sessions": out}
+    return {"sessions": learning_path.active_session_summaries(db, student_id)}
+
+
+@app.get("/api/students/{student_id}/next-action")
+def get_next_action(student_id: str, db: Session = Depends(get_db),
+                    me: str = Depends(current_student)):
+    """统一、可解释的续学行动。训练大厅与成长页共用，纯派生只读。"""
+    require_self(student_id, me)
+    return learning_path.build_next_action(db, student_id)
 
 
 @app.get("/api/sessions/{session_id}/replay")

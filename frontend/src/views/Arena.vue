@@ -15,6 +15,8 @@ function stageIndex(s) { return STAGES.indexOf(s) }
 
 const patterns = ref([])         // 题库（仅供做题页「练前小灶」按 pattern_id 查知识点；大厅不再铺题库）
 const activeSessions = ref([])   // 未完成关卡（接着做）；后端 active-sessions 是唯一真相，按活跃度倒序，第一条置顶高亮
+const guidance = ref(null)       // 后端统一续学决策；大厅与“我的成长”读取同一份优先级和理由
+const guidanceLoaded = ref(false)
 const abandoning = ref(null)     // 正在二次确认「放弃」的 session_id（null=没有确认框）
 const archiveOpen = ref(false)   // 档案面板（未完成关卡）是否打开——大厅「接着做」文字按钮触发
 const session = reactive({
@@ -29,6 +31,12 @@ const codeChanged = computed(() => session.code !== originalCode.value)
 // 灵犀感知层（设计 11）：从现成信号推一句「读过你」的招呼，至多一条；无信号返回 null。
 // 纯派生、只读、不追问、不诊断、给选择留出口。给出选择、不下判断。
 const presence = ref(null)   // 后端最近活跃时间 {has_history, days_since}
+const lobbyAction = computed(() => guidance.value?.action || {
+  kind: activeSessions.value.length ? 'resume' : 'start',
+  title: activeSessions.value[0]?.name || '完成一次真实调试',
+  cta: activeSessions.value.length ? '继续上次' : '开始练习',
+  target: activeSessions.value.length ? { session_id: activeSessions.value[0].session_id } : {},
+})
 const presenceHint = computed(() => {
   const list = activeSessions.value
   if (!list.length) {
@@ -268,6 +276,13 @@ onMounted(async () => {
     start(pid, mode)
     return
   }
+  // 从“我的成长”的单一下一步进入：直接恢复指定会话，避免先回大厅再点一次。
+  if (route.query.resume) {
+    const sessionId = String(route.query.resume)
+    router.replace({ query: {} })
+    await resume(sessionId)
+    return
+  }
   // 接着做：列出所有未完成关卡让用户自选，不再静默自动跳（设计 08）。
   // 后端 active-sessions 是唯一真相；localStorage 单会话恢复机制已退役。
   loadActiveSessions()
@@ -275,12 +290,12 @@ onMounted(async () => {
 })
 
 async function loadActiveSessions() {
-  try {
-    const d = await api.getActiveSessions()
-    activeSessions.value = d.sessions || []
-  } catch (e) {
-    activeSessions.value = []   // 拿不到就不显示「接着做」，不阻塞大厅
-  }
+  const [sessions, next] = await Promise.allSettled([
+    api.getActiveSessions(), api.getNextAction(),
+  ])
+  activeSessions.value = sessions.status === 'fulfilled' ? (sessions.value.sessions || []) : []
+  guidance.value = next.status === 'fulfilled' ? next.value : null
+  guidanceLoaded.value = true
 }
 
 async function loadPresence() {
@@ -336,12 +351,25 @@ async function resume(sessionId) {
 async function abandon(sessionId) {
   try {
     await api.abandonSession(sessionId)
-    activeSessions.value = activeSessions.value.filter((s) => s.session_id !== sessionId)
+    await loadActiveSessions()
   } catch (e) {
     error.value = '放弃失败：' + e.message
   } finally {
     abandoning.value = null
   }
+}
+
+function takeLobbyAction() {
+  const action = lobbyAction.value
+  if (action.kind === 'resume' && action.target?.session_id) {
+    resume(action.target.session_id)
+    return
+  }
+  if (action.target?.pattern_id) {
+    start(action.target.pattern_id, action.target.mode === 'review' ? 'review' : 'debug')
+    return
+  }
+  start()
 }
 
 async function loadMastered() {
@@ -591,14 +619,10 @@ function quit() {
     <!-- 灵犀感知层（设计 11）：一句「读过你」的招呼，推理不追问、给选择留出口、命中才出现 -->
     <p v-if="presenceHint" class="presence">{{ presenceHint }}</p>
 
-    <!-- 主角：有未完成题就先接住上次；没有时才开新题。 -->
-    <button v-if="activeSessions.length" class="smart-open hero" @click="resume(activeSessions[0].session_id)">
-      <span class="smart-open-main">继续上次</span>
-      <span class="smart-open-sub">{{ activeSessions[0].name }} · 停在{{ activeSessions[0].stage.slice(1) }}</span>
-    </button>
-    <button v-else class="smart-open hero" @click="start()">
-      <span class="smart-open-main">开始一次调试</span>
-      <span class="smart-open-sub">从最适合你当前状态的一题开始</span>
+    <!-- 主角：与“我的成长”共用后端同一个可解释的下一步。 -->
+    <button class="smart-open hero" :disabled="!guidanceLoaded" @click="takeLobbyAction">
+      <span class="smart-open-main">{{ guidanceLoaded ? lobbyAction.cta : '正在整理下一步…' }}</span>
+      <span class="smart-open-sub">{{ guidanceLoaded ? lobbyAction.title : '看看先收尾、复习，还是开始新题' }}</span>
     </button>
 
     <div class="lobby-secondary">
@@ -1072,6 +1096,7 @@ function quit() {
   transform: translateY(-2px); border-color: var(--primary); color: inherit;
   box-shadow: 0 14px 30px -16px rgba(193, 95, 60, 0.4);
 }
+.smart-open:disabled { cursor: wait; opacity: .72; transform: none; box-shadow: none; }
 .smart-open-main { font-family: var(--serif); font-size: 17px; font-weight: 600; color: var(--primary-dark); }
 .smart-open-sub { font-size: 13px; color: var(--muted); }
 /* 主角放大居中（大厅唯一焦点） */
