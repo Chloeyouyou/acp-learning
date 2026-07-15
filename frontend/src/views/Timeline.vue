@@ -82,10 +82,27 @@ function fmtDay(d) {
   <div v-else-if="!data" class="panel">加载中…</div>
   <template v-else>
    <div class="tl-wrap">
-    <!-- 安静上下文行：复习 + 思维默认值 并排（设计稿）-->
+    <header class="growth-head">
+      <div class="growth-title">
+        <span class="growth-eyebrow">我的成长</span>
+        <h1>每一次想通，都有证据</h1>
+        <p>这里不只记“做对了几题”，还会留下你亲自运行、修改和解释的过程。</p>
+      </div>
+      <RouterLink to="/profile" class="profile-link">查看能力画像 →</RouterLink>
+      <div class="evidence-path" aria-label="成长证据链">
+        <div><b>1</b><span><strong>真实动作</strong><small>运行、修改、提交</small></span></div>
+        <i>→</i>
+        <div><b>2</b><span><strong>关键转折</strong><small>从卡住到找对方向</small></span></div>
+        <i>→</i>
+        <div><b>3</b><span><strong>内化经验</strong><small>下次能自己迁移</small></span></div>
+      </div>
+    </header>
+
+    <!-- 下一步 + 长期发现：先给行动，再给归纳。 -->
     <div class="ctx-row">
       <!-- 回头看看（间隔复习）-->
       <div v-if="reviewDue.length" class="ctx-card">
+        <span class="ctx-kicker">下一步</span>
         <div class="ctx-head">
           <span class="ctx-title">回头看看</span>
           <span class="ctx-meta">{{ reviewDue.length }} 道到期</span>
@@ -103,6 +120,7 @@ function fmtDay(d) {
       </div>
       <!-- 你常见的思维默认值：镜子，非审判 -->
       <div class="ctx-card">
+        <span class="ctx-kicker">长期发现</span>
         <div class="ctx-title">你常见的思维默认值</div>
         <template v-if="data.thinking_patterns.enough">
           <div v-for="tp in data.thinking_patterns.items" :key="tp.id" class="tp">
@@ -118,8 +136,8 @@ function fmtDay(d) {
 
     <!-- 小标题 -->
     <div class="tl-heading">
-      <h2>一道题，一段经历</h2>
-      <span>从最近往回看</span>
+      <h2>过程记录</h2>
+      <span>一道题，一段从尝试到想通的经历</span>
     </div>
 
     <!-- 空态 -->
@@ -197,10 +215,29 @@ function fmtDay(d) {
 }
 .replay-link:hover { border-color: var(--primary); background: var(--accent-soft); }
 .tl-wrap { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.growth-head {
+  display: grid; grid-template-columns: 1fr auto; gap: 16px 24px; padding: 6px 0 12px;
+}
+.growth-eyebrow, .ctx-kicker { display: block; color: var(--primary); font-size: 11px; font-weight: 700; letter-spacing: .1em; }
+.growth-title h1 { margin: 6px 0 7px; font-size: 27px; }
+.growth-title p { margin: 0; max-width: 560px; color: var(--muted); font-size: 13.5px; line-height: 1.7; }
+.profile-link { align-self: start; color: var(--muted); font-size: 13px; text-decoration: none; padding: 7px 0; }
+.profile-link:hover { color: var(--primary); }
+.evidence-path {
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 13px 15px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+}
+.evidence-path > div { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; }
+.evidence-path b { width: 25px; height: 25px; display: inline-flex; align-items: center; justify-content: center; flex: none; border-radius: 50%; background: var(--accent-soft); color: var(--primary-dark); font-size: 12px; }
+.evidence-path span { display: flex; flex-direction: column; gap: 2px; }
+.evidence-path strong { font-family: var(--serif); font-size: 13.5px; }
+.evidence-path small { color: var(--muted); font-size: 11.5px; }
+.evidence-path i { color: #cfc6b5; font-style: normal; }
 
 /* 安静上下文行：复习 + 思维默认值 并排（设计稿）*/
 .ctx-row { display: flex; gap: 14px; flex-wrap: wrap; }
 .ctx-card { flex: 1; min-width: 280px; background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 15px 17px; }
+.ctx-kicker { margin-bottom: 6px; }
 .ctx-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
 .ctx-title { font-family: var(--serif); font-size: 15px; font-weight: 600; color: var(--text); }
 .ctx-meta { font-size: 12px; color: var(--muted); }
@@ -257,4 +294,10 @@ function fmtDay(d) {
 .pill.ok { background: #e7eee3; color: #4d6244; }
 .pill.pending { background: #ece6da; color: var(--muted); }
 .arrow { color: #cfc6b5; font-size: 11px; }
+@media (max-width: 640px) {
+  .growth-head { grid-template-columns: 1fr; }
+  .profile-link { justify-self: start; }
+  .evidence-path { flex-direction: column; align-items: stretch; }
+  .evidence-path i { transform: rotate(90deg); align-self: center; }
+}
 </style>

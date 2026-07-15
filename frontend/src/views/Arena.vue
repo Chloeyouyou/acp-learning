@@ -35,7 +35,7 @@ const presenceHint = computed(() => {
     // 无未完成关卡：用最近活跃时间，温柔接住「久别回来 / 新朋友」（补全 doc11 缺口）
     const p = presence.value
     if (!p) return null
-    if (!p.has_history) return '欢迎，第一次来——点上面「智能开一题」，我陪你从一道轻松的开始。'
+    if (!p.has_history) return '欢迎，第一次来。我们先从一道轻松的开始。'
     if (p.days_since != null && p.days_since >= 7) return '好久不见，不急，今天可以先从一道轻一点的开始。'
     return null   // 最近来过、又没有未完成题：不硬塞（灵犀铁律：不命中则不出）
   }
@@ -63,7 +63,7 @@ function toggleExplain() {
 const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否展开（默认收起，需要的人点开）
 // A+B 空间管理：终端可折叠、思考过程可折叠、逐行讲解做成代码区上滑抽屉
 const consoleOpen = ref(true)        // 终端展开/折叠（折叠后只剩状态条）
-const thoughtOpen = ref(true)        // 「我的思考过程」四步区展开/折叠
+const thoughtOpen = ref(false)       // 默认只看当前任务；主动展开后才看完整思考记录
 const walkOpen = ref(false)          // 逐行讲解抽屉是否打开（覆盖在代码上）
 const walkTall = ref(false)          // 抽屉高度档：false=60% / true=90%
 const walkthrough = ref('')          // 逐行讲解文本（点按钮自动生成）
@@ -122,7 +122,7 @@ async function runCurrentCode() {
       if (runResult.value.timed_out) obsChecks['程序卡住了/跑不完'] = true
       else if (runResult.value.stderr) obsChecks['程序报错了'] = true
       observationPending.value = true
-      thoughtOpen.value = true   // 弹观察卡时确保思考过程是展开的
+      thoughtOpen.value = false  // 当前观察/猜测会单独显示，不展开其它步骤
     }
   } catch (e) {
     runResult.value = { stdout: '', stderr: '运行失败：' + e.message, timed_out: false }
@@ -323,6 +323,7 @@ async function resume(sessionId) {
     session.internalizeQuestions = d.internalize_questions || []
     session.variant = null
     observationDone.value = true   // 续做：已在进行中，不再弹观察卡
+    thoughtOpen.value = false
     resetLingxi()
     messages.value = d.messages
     messages.value.push({ role: 'system', text: '已回到这道题，接着来吧。' })
@@ -365,7 +366,7 @@ async function start(patternId, mode = 'debug') {
     walkDeep.value = false
     walkOpen.value = false    // 关掉逐行讲解抽屉
     consoleOpen.value = true
-    thoughtOpen.value = true
+    thoughtOpen.value = false
     runResult.value = null
     resetObservation()
     resetLingxi()
@@ -582,31 +583,31 @@ function quit() {
   <!-- 选题 -->
   <div v-if="!session.id" class="lobby">
     <div class="lobby-hero">
-      <h2 class="lobby-title">
-        Bug 闯关训练场
-        <!-- 接着做：稳定文字按钮（不用图标库/SVG，避免渲染成空白方块），点开档案面板 -->
-        <button
-          v-if="activeSessions.length"
-          class="archive-btn"
-          title="接着做"
-          aria-label="接着做"
-          @click="archiveOpen = true"
-        >接着做</button>
-      </h2>
-      <p class="lobby-sub">和「知返」一起发现、定位、修好代码里的真实 Bug。</p>
+      <span class="lobby-eyebrow">一次只练一件事</span>
+      <h2 class="lobby-title">今天，自己想通一个问题</h2>
+      <p class="lobby-sub">知返会陪着你，但运行、判断和修改都由你亲自完成。</p>
     </div>
 
     <!-- 灵犀感知层（设计 11）：一句「读过你」的招呼，推理不追问、给选择留出口、命中才出现 -->
     <p v-if="presenceHint" class="presence">{{ presenceHint }}</p>
 
-    <!-- 主角：开一道新题（不指定题，后端按画像/随机挑）。大厅唯一焦点。 -->
-    <button class="smart-open hero" @click="start()">
-      <span class="smart-open-main">智能开一题</span>
-      <span class="smart-open-sub">让知返按你的画像，挑一道最该补的</span>
+    <!-- 主角：有未完成题就先接住上次；没有时才开新题。 -->
+    <button v-if="activeSessions.length" class="smart-open hero" @click="resume(activeSessions[0].session_id)">
+      <span class="smart-open-main">继续上次</span>
+      <span class="smart-open-sub">{{ activeSessions[0].name }} · 停在{{ activeSessions[0].stage.slice(1) }}</span>
+    </button>
+    <button v-else class="smart-open hero" @click="start()">
+      <span class="smart-open-main">开始一次调试</span>
+      <span class="smart-open-sub">从最适合你当前状态的一题开始</span>
     </button>
 
-    <!-- 安静入口：推荐与题库搬去能力画像（IA 见 doc 10，落地下一轮），这里先指过去 -->
-    <RouterLink :to="{ path: '/profile', query: { tab: '推荐' } }" class="browse-link">查看推荐与题库 →</RouterLink>
+    <div class="lobby-secondary">
+      <button v-if="activeSessions.length" class="quiet-action" @click="start()">换一道新题</button>
+      <RouterLink to="/map" class="quiet-action">自己选一关</RouterLink>
+      <button v-if="activeSessions.length" class="quiet-action" @click="archiveOpen = true">
+        管理未完成<template v-if="activeSessions.length > 1">（{{ activeSessions.length }}）</template>
+      </button>
+    </div>
 
     <!-- 档案面板：未完成关卡（接着做）。点标题旁「接着做」按钮打开。复用 resume/abandon，不改逻辑。 -->
     <div v-if="archiveOpen" class="archive-overlay" @click.self="archiveOpen = false">
@@ -644,11 +645,7 @@ function quit() {
     <!-- 浅色顶栏（做题页全屏接管为暖纸卡片；盖住共享顶栏，不影响其它页） -->
     <div class="wt">
       <div class="wt-brand"><span class="wt-logo">知</span> ACP Learning</div>
-      <nav class="wt-nav">
-        <RouterLink to="/arena" class="wt-on">Bug 闯关</RouterLink>
-        <RouterLink to="/timeline">成长轨迹</RouterLink>
-        <RouterLink to="/profile">能力画像</RouterLink>
-      </nav>
+      <div class="wt-context"><span>当前阶段</span><b>{{ session.stage.slice(1) }}</b></div>
       <span class="wt-id">{{ studentId }}</span>
       <button class="wt-quit" @click="quit">退出关卡</button>
     </div>
@@ -709,7 +706,11 @@ function quit() {
         </div>
 
         <div v-if="session.done" class="banner banner-done">
-          🎉 <b>本关完成！</b>该知识点已升级为「已内化」（成因 / 定位 / 迁移复述通过）。去能力画像看看，或挑战下一题。
+          🎉 <b>这次你不只是修好了，也把它讲清楚了。</b>
+          <div class="completion-actions">
+            <RouterLink :to="`/replay/${session.id}`" class="completion-link">回看我是怎么想通的 →</RouterLink>
+            <button v-if="!session.variant" class="completion-next" @click="start()">继续下一次练习</button>
+          </div>
           <div v-if="session.variant" class="variant-offer">
             <span class="variant-label">想检验是否真的学会？试试这道<b>同类变式题</b>——独立解出才算迁移到位：</span>
             <button class="primary variant-btn" @click="start(session.variant.id)">
@@ -749,7 +750,7 @@ function quit() {
       <!-- 看不懂代码?：合并 逐行讲解 + 认符号 + 补概念 -->
       <div class="tool-shelf">
         <button :class="['tool-trigger', { open: showExplain }]" @click="toggleExplain">
-          <span><b>看不懂代码?</b> · 逐行讲解、认符号、补概念</span>
+          <span><b>需要时再打开</b> · 逐行讲解、认符号、补概念</span>
           <span>{{ showExplain ? '收起 ↑' : '展开 ↓' }}</span>
         </button>
       </div>
@@ -804,17 +805,18 @@ function quit() {
 
       <div class="wr">
         <div class="thinking-head">
-          <span class="thinking-kicker">这不是作业，写不出来也可以直接问知返</span>
+          <span class="thinking-kicker">当前只做这一小步，写不出来也可以问知返</span>
           <div class="thinking-head-r">
             <span class="thinking-stage">现在 · {{ session.stage.slice(1) }}</span>
-            <button class="thought-toggle" @click="thoughtOpen = !thoughtOpen">{{ thoughtOpen ? '收起 ▲' : '展开 ▼' }}</button>
+            <button class="thought-toggle" @click="thoughtOpen = !thoughtOpen">{{ thoughtOpen ? '只看当前一步' : '查看完整记录' }}</button>
           </div>
         </div>
         <StageTracker :current="session.stage" />
-        <h3 class="wr-title acp-serif">我的思考过程</h3>
+        <h3 class="wr-title acp-serif">当前任务</h3>
 
-        <div v-show="thoughtOpen" class="thought-line">
-          <section :class="['thought-step', { active: session.stage === '①发现', filled: observationRecord?.observation }]">
+        <div :class="['thought-line', { compact: !thoughtOpen }]">
+          <section v-show="thoughtOpen || session.stage === '①发现' || observationPending"
+                   :class="['thought-step', { active: session.stage === '①发现', filled: observationRecord?.observation }]">
             <span class="thought-dot">1</span>
             <div class="thought-content">
               <div class="thought-title">观察 <span>运行后，实际发生了什么？</span></div>
@@ -835,7 +837,8 @@ function quit() {
             </div>
           </section>
 
-          <section :class="['thought-step', { active: ['②定位', '③归因', '④修复'].includes(session.stage), filled: observationRecord?.guess }]">
+          <section v-show="thoughtOpen || ['②定位', '③归因', '④修复'].includes(session.stage) || observationPending"
+                   :class="['thought-step', { active: ['②定位', '③归因', '④修复'].includes(session.stage), filled: observationRecord?.guess }]">
             <span class="thought-dot">2</span>
             <div class="thought-content">
               <div class="thought-title">猜测 <span>问题可能在哪里，为什么？</span></div>
@@ -854,7 +857,8 @@ function quit() {
             </div>
           </section>
 
-          <section :class="['thought-step', { active: session.stage === '⑤验证', filled: runResult || session.fixed }]">
+          <section v-show="thoughtOpen || session.stage === '⑤验证'"
+                   :class="['thought-step', { active: session.stage === '⑤验证', filled: runResult || session.fixed }]">
             <span class="thought-dot">3</span>
             <div class="thought-content">
               <div class="thought-title">验证 <span>什么结果能支持或推翻猜测？</span></div>
@@ -862,7 +866,8 @@ function quit() {
             </div>
           </section>
 
-          <section :class="['thought-step', { active: session.stage === '⑥内化', filled: summaryRecord?.summary }]">
+          <section v-show="thoughtOpen || session.stage === '⑥内化'"
+                   :class="['thought-step', { active: session.stage === '⑥内化', filled: summaryRecord?.summary }]">
             <span class="thought-dot">4</span>
             <div class="thought-content">
               <div class="thought-title">总结 <span>下次再遇到时，我想记住什么？</span></div>
@@ -931,10 +936,8 @@ function quit() {
 .wt { flex: none; height: 60px; display: flex; align-items: center; gap: 26px; padding: 0 24px; background: #fcfbf7; border-bottom: 1px solid #ece5d8; }
 .wt-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; color: #2b2924; }
 .wt-logo { width: 24px; height: 24px; border-radius: 7px; background: #c15f3c; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
-.wt-nav { display: flex; gap: 22px; flex: 1; font-size: 14px; }
-.wt-nav a { text-decoration: none; color: #8a8275; }
-.wt-nav a:hover { color: #2b2924; }
-.wt-nav a.wt-on, .wt-nav a.router-link-active { color: #2b2924; font-weight: 600; }
+.wt-context { flex: 1; display: flex; align-items: baseline; gap: 8px; color: #8a8275; font-size: 12px; }
+.wt-context b { color: #2b2924; font-family: var(--serif); font-size: 14px; }
 .wt-id { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #8a8275; background: #f4efe5; border: 1px solid #e7e2d6; padding: 6px 13px; border-radius: 7px; }
 .wt-quit { font-size: 13px; color: #6f695d; background: #fff; border: 1px solid #e7e2d6; padding: 7px 14px; border-radius: 8px; cursor: pointer; }
 .wt-quit:hover { border-color: #c15f3c; color: #c15f3c; }
@@ -1026,17 +1029,11 @@ function quit() {
   max-width: 720px;
 }
 .lobby-hero h2 { margin: 0 0 14px; font-size: 30px; font-weight: 600; line-height: 1.25; }
+.lobby-eyebrow { display: block; margin-bottom: 9px; font-size: 12px; font-weight: 700; letter-spacing: 0.12em; color: var(--primary); }
 .hint { color: var(--muted); margin: 0; line-height: 1.8; font-size: 15px; }
 .hint b { color: var(--text); font-weight: 600; }
 
-/* 标题 + 接着做 文字按钮（稳定，不用图标库/SVG） */
 .lobby-title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.archive-btn {
-  font-size: 13px; color: var(--muted); font-family: inherit; cursor: pointer;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
-  padding: 4px 14px; transition: color 0.15s, border-color 0.15s, background 0.15s;
-}
-.archive-btn:hover { color: var(--primary); border-color: #dac9b8; background: var(--accent-soft); }
 .lobby-sub { color: var(--muted); margin: 0; font-size: 15px; }
 
 /* 灵犀感知层：一句安静的「读过你」，柔和不抢焦点（设计 11） */
@@ -1080,13 +1077,12 @@ function quit() {
 /* 主角放大居中（大厅唯一焦点） */
 .smart-open.hero { align-items: center; text-align: center; gap: 5px; padding: 26px 28px; margin-bottom: 14px; }
 .smart-open.hero .smart-open-main { font-size: 21px; }
-
-/* 安静入口：查看推荐与题库（跳能力画像） */
-.browse-link {
-  display: inline-block; text-decoration: none;
-  font-size: 14px; color: var(--muted); padding: 4px 2px; transition: color 0.15s;
+.lobby-secondary { display: flex; justify-content: center; align-items: center; gap: 18px; flex-wrap: wrap; }
+.quiet-action {
+  border: 0; background: none; padding: 5px 2px; color: var(--muted); font-size: 13.5px;
+  text-decoration: none; cursor: pointer;
 }
-.browse-link:hover { color: var(--text); }
+.quiet-action:hover { color: var(--primary); }
 
 /* 档案面板：未完成关卡（接着做） */
 .archive-overlay {
@@ -1395,6 +1391,9 @@ function quit() {
 .variant-offer { margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0cdbb; display: flex; flex-direction: column; gap: 8px; }
 .variant-label { font-size: 13px; }
 .variant-btn { align-self: flex-start; }
+.completion-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.completion-link { color: var(--primary-dark); font-weight: 600; text-decoration: none; }
+.completion-next { padding: 5px 10px; background: transparent; color: var(--muted); }
 
 /* ---------- 思考主线 + 知返 ---------- */
 .thinking-panel {
@@ -1422,6 +1421,7 @@ function quit() {
   content: ''; position: absolute; left: 14px; top: 29px; bottom: -1px;
   width: 1px; background: #ded2c2;
 }
+.thought-line.compact .thought-step::before { display: none; }
 .thought-dot {
   position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center;
   width: 29px; height: 29px; border-radius: 50%; background: #eee8dd;

@@ -96,7 +96,7 @@ onMounted(load)
     <!-- 已登录 -->
     <template v-else>
       <header class="head">
-        <h1>教师总览</h1>
+        <div><h1>教师总览</h1><p>从班级共性出发，逐层下钻到学生的真实学习过程。</p></div>
         <div class="tools">
           <input v-model="classId" placeholder="班级（可空=全体）" @keyup.enter="load" />
           <button @click="load">刷新</button>
@@ -108,8 +108,14 @@ onMounted(load)
       <div v-else-if="error" class="hint err">{{ error }}</div>
       <div v-else-if="data && !data.students.length" class="hint">还没有学生数据。</div>
 
+      <div v-if="data" class="teacher-path">
+        <span><b>1</b> 看班级共性</span><i>→</i>
+        <span><b>2</b> 找到需要关注的学生</span><i>→</i>
+        <span><b>3</b> 回放真实过程</span>
+      </div>
+
       <section v-if="data?.common_stumbling_blocks?.length" class="stumbles">
-        <div class="section-title">班级共性卡点</div>
+        <div class="section-title">先看 · 班级共性卡点</div>
         <div class="stumble-list">
           <div v-for="s in data.common_stumbling_blocks" :key="s.pattern_id + s.stage" class="stumble">
             <b>{{ s.student_count }} 人</b>
@@ -119,6 +125,7 @@ onMounted(load)
         </div>
       </section>
 
+      <div v-if="data" class="section-title table-title">再看 · 每个学生当前走到哪里</div>
       <table v-if="data" class="tbl">
         <thead>
           <tr>
@@ -143,7 +150,7 @@ onMounted(load)
       <div v-if="detailLoading" class="hint">正在整理这名学生的过程记录…</div>
       <section v-else-if="detail" class="detail">
         <div class="detail-head">
-          <div><span class="section-title">学生钻取</span><h2>{{ detail.student.name || detail.student.student_id }}</h2></div>
+          <div><span class="section-title">最后 · 学生钻取与过程证据</span><h2>{{ detail.student.name || detail.student.student_id }}</h2></div>
           <button class="ghost" @click="detail = null">关闭</button>
         </div>
         <div class="metric-row">
@@ -181,6 +188,7 @@ h1 { font-family: var(--serif); font-size: 23px; color: var(--text); margin: 0; 
 .gate button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.head p { margin: 5px 0 0; color: var(--muted); font-size: 12.5px; }
 .tools { display: flex; gap: 8px; align-items: center; }
 .tools button {
   border: 1px solid var(--border); background: var(--panel); color: var(--text);
@@ -192,6 +200,11 @@ h1 { font-family: var(--serif); font-size: 23px; color: var(--text); margin: 0; 
 .hint { text-align: center; color: var(--muted); margin: 50px 0; }
 .hint.err { color: var(--red); }
 .section-title { font-size: 12px; color: var(--muted); font-weight: 600; }
+.teacher-path { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin: 0 0 18px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.teacher-path span { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.teacher-path b { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--accent-soft); color: var(--primary-dark); }
+.teacher-path i { color: #cfc6b5; font-style: normal; }
+.table-title { margin: 0 0 7px; }
 .stumbles { margin: 4px 0 20px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
 .stumble-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .stumble { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; min-width: 190px; padding: 8px 10px; border-radius: 9px; background: var(--accent-soft); }

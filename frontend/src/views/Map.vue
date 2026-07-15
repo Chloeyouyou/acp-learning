@@ -35,8 +35,8 @@ function st(level) { return STATE[level.state] || STATE['未接触'] }
 <template>
   <div class="map">
     <header class="head">
-      <h1>课程地图</h1>
-      <p class="sub">按主题分成四个单元，每一关练透一类常见的思维陷阱。全部开放——顺着走，或挑你想练的。</p>
+      <h1>学习地图</h1>
+      <p class="sub">想自己选时再来这里。按主题顺着练，或挑一个现在最想弄懂的问题。</p>
     </header>
 
     <div v-if="loading" class="hint">加载中…</div>

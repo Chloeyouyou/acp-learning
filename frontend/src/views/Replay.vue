@@ -63,6 +63,14 @@ function actionNote(ctx) {
   return `${PURPOSE[ctx.purpose] || ctx.purpose} · 风险 L${ctx.risk_level ?? '?'} · ${ctx.execution === 'completed' ? '已执行' : (ctx.execution || '待执行')}`
 }
 
+function actionSummary(ctx) {
+  if (!ctx) return ''
+  if (ctx.purpose === 'judge_submission') return '你亲自提交代码，系统完成了真实判定'
+  if (ctx.purpose === 'verify_hypothesis') return '你亲自运行代码，用真实结果验证了猜测'
+  if (ctx.purpose === 'collaborative_debug') return '你亲自运行代码，把结果带回了协作调试'
+  return '你亲自运行代码，拿到了真实结果'
+}
+
 function teachingNote(step) {
   const strategy = step.meta?.teaching_strategy
   if (!strategy?.route_changed) return ''
@@ -88,12 +96,14 @@ function cleanContent(m) {
 
     <template v-else>
       <header class="head">
-        <h1>{{ data.pattern_name }}</h1>
+        <span class="eyebrow">过程证据</span>
+        <h1>这次，我是怎么想通的</h1>
+        <p class="pattern-name">{{ data.pattern_name }}</p>
         <div class="meta">
           <span class="outcome" :class="data.mine_status">{{ OUTCOME[data.mine_status] || '进行中' }}</span>
           <span class="vers">共 {{ codeCount }} 版代码</span>
         </div>
-        <p class="lead">回看你是怎么一步步想通这道题的——每一次运行、每一版改动、每一句对话。</p>
+        <p class="lead">先看关键转折，再按时间回到每一次运行、改动和对话。</p>
         <div v-if="data.turning_points?.length" class="turn-summary">
           <b>这次过程里有 {{ data.turning_points.length }} 个值得记住的转折</b>
           <span>{{ data.turning_points.map(x => x.title).join(' · ') }}</span>
@@ -116,9 +126,12 @@ function cleanContent(m) {
                 <span>{{ a.detail }}</span>
               </div>
             </div>
-            <div v-if="actionNote(s.action_context)" class="action-note" :title="s.action_context.call_id">
-              <span>动作证据</span>{{ actionNote(s.action_context) }}
-              <code>{{ s.action_context.call_id }}</code>
+            <div v-if="actionNote(s.action_context)" class="action-note">
+              <div class="action-summary"><span>真实动作</span>{{ actionSummary(s.action_context) }}</div>
+              <details class="action-audit">
+                <summary>查看技术凭据</summary>
+                <div>{{ actionNote(s.action_context) }} <code>{{ s.action_context.call_id }}</code></div>
+              </details>
             </div>
             <pre class="code"><code>{{ s.code }}</code></pre>
           </div>
@@ -146,6 +159,8 @@ function cleanContent(m) {
 
 .head { margin: 22px 0 8px; }
 .head h1 { font-family: var(--serif); font-size: 24px; color: var(--text); margin: 0 0 10px; }
+.eyebrow { display: block; margin-bottom: 6px; color: var(--primary); font-size: 11px; font-weight: 700; letter-spacing: .1em; }
+.pattern-name { margin: -4px 0 10px; color: var(--text); font-size: 14px; font-weight: 600; }
 .meta { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
 .outcome { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--primary-dark); }
 .outcome.internalized { background: #dfe8d8; color: var(--green); }
@@ -177,9 +192,13 @@ function cleanContent(m) {
 .annotation.breakthrough { border-left-color: var(--green); background: #eef4e9; }
 .annotation b { font-size: 12.5px; color: var(--text); }
 .annotation span { font-size: 12px; line-height: 1.55; color: var(--muted); }
-.action-note { margin: 10px 12px 0; font-size: 11px; color: var(--muted); display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
-.action-note > span { color: var(--primary-dark); font-weight: 600; }
-.action-note code { font-size: 10.5px; color: #9a8b76; }
+.action-note { margin: 10px 12px 0; padding: 8px 10px; font-size: 11.5px; color: var(--muted); background: #f8f5ed; border-radius: 8px; }
+.action-summary { display: flex; gap: 7px; align-items: baseline; }
+.action-summary > span { color: var(--primary-dark); font-weight: 600; }
+.action-audit { margin-top: 6px; color: #9a8b76; }
+.action-audit summary { cursor: pointer; font-size: 10.5px; }
+.action-audit div { margin-top: 5px; display: flex; gap: 6px; flex-wrap: wrap; }
+.action-audit code { font-size: 10px; color: #9a8b76; word-break: break-all; }
 .code { margin: 0; padding: 12px; background: var(--code-bg); color: var(--code-text); font-size: 12.5px; line-height: 1.55; overflow-x: auto; }
 .code code { font-family: 'SF Mono', Consolas, monospace; white-space: pre; }
 

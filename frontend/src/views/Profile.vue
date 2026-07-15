@@ -179,6 +179,14 @@ const coverage = computed(() => (profile.value?.dimensions || []).filter((d) => 
   <div v-if="error" class="panel error">{{ error }}</div>
   <div v-else-if="!profile" class="panel">加载中…</div>
   <div v-else class="layout">
+    <header class="profile-head">
+      <div>
+        <span>证据归拢</span>
+        <h1>能力画像</h1>
+        <p>这里的每个判断都来自真实练习过程，不是 AI 凭印象给出的标签。</p>
+      </div>
+      <RouterLink to="/timeline">回到我的成长 →</RouterLink>
+    </header>
     <!-- 进度概览：横跨整页，一眼看懂学到哪了 -->
     <div class="overview">
       <div class="ov-item">
@@ -335,6 +343,12 @@ const coverage = computed(() => (profile.value?.dimensions || []).filter((d) => 
 <style scoped>
 .error { border-color: var(--red); color: var(--red); }
 .layout { display: flex; flex-direction: column; gap: 16px; }
+.profile-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; padding: 5px 2px 2px; }
+.profile-head span { color: var(--primary); font-size: 11px; font-weight: 700; letter-spacing: .1em; }
+.profile-head h1 { margin: 5px 0 5px; font-size: 26px; }
+.profile-head p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.profile-head a { color: var(--muted); font-size: 13px; text-decoration: none; padding-top: 8px; white-space: nowrap; }
+.profile-head a:hover { color: var(--primary); }
 h3 { margin-top: 0; font-size: 17px; }
 .h3-sub { font-size: 12px; font-weight: 400; color: var(--muted); }
 .note { color: var(--muted); font-size: 13px; line-height: 1.6; }
@@ -348,6 +362,7 @@ h3 { margin-top: 0; font-size: 17px; }
 .tab-pane { }
 .cap-pane { display: grid; grid-template-columns: 360px 1fr; gap: 16px; align-items: start; }
 @media (max-width: 760px) { .cap-pane { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .profile-head { flex-direction: column; gap: 4px; } }
 .dim-hint summary { cursor: pointer; }
 
 /* 进度概览（横跨两列） */
