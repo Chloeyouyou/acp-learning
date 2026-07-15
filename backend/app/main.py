@@ -17,15 +17,17 @@ from .concurrency import session_turn
 from .config import STAGES
 from .db import get_db, init_db
 from .models import ExecutionEvent, Student, TutorSession
+from .runtime_security import security_status, validate_production_environment
 from .security import sign_token, verify_token
 from .services import (
-    coop, curriculum, event_engine, mine_engine, presence, process, profile, question_training,
-    review, teacher, timeline, tutor,
+    action_governance, coop, curriculum, event_engine, mine_engine, presence, process, profile,
+    question_training, review, teacher, timeline, tutor,
 )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动：迁移到最新 + 预载题库（替代已废弃的 @app.on_event("startup")，审计 #6）
+    validate_production_environment()
     init_db()
     mine_engine.load_patterns()
     # 抬高同步端点线程池上限：一次 LLM 对话最长占一个线程 ~30s，默认 40 令牌在满班时
@@ -79,11 +81,13 @@ def turn_lock(session_id: str):
         yield
 
 
-def _check_admin(token: str | None) -> None:
-    """作者/教师侧只读端点的鉴权：必须设 ACP_ADMIN_TOKEN 且 ?token= 匹配（常量时间比较）。
-    未设一律 403——绝不默认放行，避免忘配一次就全员数据外泄。"""
+def _check_admin(token: str | None = None, authorization: str | None = None) -> None:
+    """作者/教师鉴权：优先 Authorization Bearer；query token 仅保留旧 QA 链接兼容。"""
     required = os.environ.get("ACP_ADMIN_TOKEN")
-    if not required or not hmac.compare_digest(token or "", required):
+    header_token = (authorization[7:].strip()
+                    if authorization and authorization.startswith("Bearer ") else None)
+    candidate = header_token or token
+    if not required or not hmac.compare_digest(candidate or "", required):
         raise HTTPException(403, "forbidden")
 
 
@@ -249,7 +253,17 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
     if session.mine_status == "fixed":
         return {"passed": True, "stage": session.stage, "message": "修复已通过，无需重复提交。"}
 
+    action_context = action_governance.authorize_action(
+        actor_id=session.student_id,
+        session_id=session.id,
+        action="submission.judge",
+        purpose="judge_submission",
+        initiated_by="student",
+        payload={"code": req.code, "mode": (session.manifest or {}).get("mode", "debug"),
+                 "pattern_id": session.pattern_id},
+    )
     result = mine_engine.judge_fix(session.pattern_id, req.code)
+    action_context = action_governance.with_execution(action_context, "completed")
     # 观测层：记一条提交执行事实（Debug Timeline + Execution_Outcome），通过/失败都记
     kind_map = {"ok": "OK", "RE": "RE", "WA": "WA", "HANG": "HANG"}
     execution = event_engine.log_execution(
@@ -257,7 +271,8 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
         pattern_id=session.pattern_id, source="submit",
         kind=kind_map.get(result["kind"], result["kind"]), stderr=result.get("stderr", ""),
         knowledge_points=mine.get("knowledge_points", []),
-        mode=(session.manifest or {}).get("mode", "debug"))
+        mode=(session.manifest or {}).get("mode", "debug"),
+        action_context=action_context)
     # 过程化：记提交时的代码快照，链到本次执行事实（submit 的代码链）
     snap = process.record_snapshot(db, session, req.code, execution.id)
     process.record_message(db, session.id, "student",
@@ -279,7 +294,7 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
         try:
             feedback = tutor.run_turn(db, session, fail_msg)
             return {"passed": False, "stage": feedback["stage"], "message": feedback["reply"],
-                    "execution": execution_summary}
+                    "execution": execution_summary, "action_context": action_context}
         except Exception:
             # LLM不可用时降级：失败记录仍进对话历史，下次对话导师能看到
             session.history = list(session.history) + [{"role": "user", "content": fail_msg}]
@@ -287,7 +302,7 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
             db.commit()
             return {"passed": False, "stage": session.stage,
                     "message": f"测试未通过。{diagnosis}\n回到对话里和导师继续分析。",
-                    "execution": execution_summary}
+                    "execution": execution_summary, "action_context": action_context}
 
     # 学生若在讲清原因之前（还停在①②③）就直接提交了正确代码——不拦截，尊重已会的学生，
     # 但记下「跳过了理解对话」，反馈里温和提醒：修对≠学会，请在⑤⑥把「为什么」补上。
@@ -315,7 +330,8 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
     if not is_review:
         event_engine.on_mine_fixed(
             db, student_id=session.student_id, session_id=session.id,
-            mine=mine, max_hint_level=session.hint_level)
+            mine=mine, max_hint_level=session.hint_level,
+            action_context=action_context)
         profile.update_knowledge_state(
             db, student_id=session.student_id, pattern_id=session.pattern_id,
             knowledge_points=mine["knowledge_points"], new_state="已解决")
@@ -347,6 +363,7 @@ def submit_fix(session_id: str, req: SubmitReq, db: Session = Depends(get_db),
         "message": message,
         "tutor_opening": tutor_opening,
         "internalize_questions": mine["internalize_questions"],
+        "action_context": action_context,
     }
 
 
@@ -432,15 +449,17 @@ def abandon_session(session_id: str, db: Session = Depends(get_db),
 
 
 @app.get("/api/admin/students/{student_id}/sessions")
-def admin_list_sessions(student_id: str, token: str | None = None, db: Session = Depends(get_db)):
+def admin_list_sessions(student_id: str, token: str | None = None,
+                        authorization: str | None = Header(default=None),
+                        db: Session = Depends(get_db)):
     """【作者/QA 只读】按学号列出全部会话 + 完整对话历史 + 内化判定，供复盘任何一局。
 
     学生端不链接、不使用——仅作者直连 URL 或工具调用。安全：默认拒绝——必须设置环境变量
-    ACP_ADMIN_TOKEN 且请求带匹配的 ?token= 才放行（常量时间比较，防时序侧信道）。
+    ACP_ADMIN_TOKEN 且请求带匹配的 Authorization Bearer 才放行（query 仅兼容旧 QA 链接）。
     未设 ACP_ADMIN_TOKEN 一律 403——绝不默认放行，避免忘配一次就全员对话史外泄。
-    本地 QA：先 `export ACP_ADMIN_TOKEN=xxx` 再带 ?token=xxx 访问。
+    本地 QA：先设置 ACP_ADMIN_TOKEN，再带 `Authorization: Bearer xxx` 访问。
     """
-    _check_admin(token)
+    _check_admin(token, authorization)
     sessions = (db.query(TutorSession).filter_by(student_id=student_id)
                 .order_by(TutorSession.created_at.desc()).all())
     return [
@@ -621,7 +640,14 @@ def health():
     """探活端点（Render 健康检查 / 自检用）。sandbox 字段暴露实际生效的沙箱后端——
     线上应为 docker；若显示 subprocess 说明容器没能连到宿主 docker（学生代码未隔离），需排查。"""
     from .services import sandbox
-    return {"status": "ok", "version": "0.1.0", "sandbox": sandbox.active_backend()}
+    runtime = security_status()
+    return {
+        "status": "ok" if runtime["ready"] else "unsafe",
+        "version": "0.1.0",
+        "sandbox": sandbox.active_backend(),
+        "environment": runtime["environment"],
+        "security_ready": runtime["ready"],
+    }
 
 
 @app.get("/api/curriculum")
@@ -632,11 +658,36 @@ def get_curriculum(db: Session = Depends(get_db), me: str = Depends(current_stud
 
 @app.get("/api/teacher/overview")
 def teacher_overview(token: str | None = None, class_id: str | None = None,
+                     authorization: str | None = Header(default=None),
                      db: Session = Depends(get_db)):
     """【教师只读】全班总览（M4）：每人进度/最近活跃/正卡在哪。纯派生。
-    鉴权复用 ACP_ADMIN_TOKEN（?token=）；不传 class_id 看全体，传了按班过滤。"""
-    _check_admin(token)
+    鉴权复用 ACP_ADMIN_TOKEN（Authorization Bearer）；不传 class_id 看全体，传了按班过滤。"""
+    _check_admin(token, authorization)
     return teacher.build_class_overview(db, class_id)
+
+
+@app.get("/api/teacher/students/{student_id}")
+def teacher_student_detail(student_id: str, token: str | None = None,
+                           authorization: str | None = Header(default=None),
+                           db: Session = Depends(get_db)):
+    """【教师只读】钻取单个学生的进度、最近会话和教学策略效果。"""
+    _check_admin(token, authorization)
+    detail = teacher.build_student_detail(db, student_id)
+    if detail is None:
+        raise HTTPException(404, "student not found")
+    return detail
+
+
+@app.get("/api/teacher/sessions/{session_id}/replay")
+def teacher_session_replay(session_id: str, token: str | None = None,
+                           authorization: str | None = Header(default=None),
+                           db: Session = Depends(get_db)):
+    """【教师只读】查看任意学生单局回放；仍只读同一份 append-only 事实。"""
+    _check_admin(token, authorization)
+    replay = process.build_replay(db, session_id)
+    if replay is None:
+        raise HTTPException(404, "session not found")
+    return replay
 
 
 @app.get("/api/patterns")

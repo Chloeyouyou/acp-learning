@@ -3,6 +3,7 @@ import { onMounted, reactive, ref, computed, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, getStudentId } from '../api'
 import GlossaryText from '../components/GlossaryText.vue'
+import StageTracker from '../components/StageTracker.vue'
 import { GLOSSARY, bricksInCode } from '../glossary'
 
 const route = useRoute()
@@ -809,6 +810,7 @@ function quit() {
             <button class="thought-toggle" @click="thoughtOpen = !thoughtOpen">{{ thoughtOpen ? '收起 ▲' : '展开 ▼' }}</button>
           </div>
         </div>
+        <StageTracker :current="session.stage" />
         <h3 class="wr-title acp-serif">我的思考过程</h3>
 
         <div v-show="thoughtOpen" class="thought-line">

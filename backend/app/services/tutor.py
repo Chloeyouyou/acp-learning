@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..config import DEEPSEEK_BASE_URL, HINT_LEVELS, STAGES, TUTOR_MODEL
 from ..models import Event, TutorSession
-from . import event_engine, mine_engine, process, profile, sandbox
+from . import action_governance, event_engine, mine_engine, process, profile, sandbox
 
 client = OpenAI(
     api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -358,11 +358,22 @@ def inject_run_note(history: list, note: str) -> list:
 def run_and_inject(db: Session, session, code: str, *, knowledge_points: list, mode: str) -> dict:
     """跑沙箱 → 记执行事实 → 真实结果注入对话 → 返回 {stdout, stderr, timed_out, hint}。
     闯关 run 端点与 coop.run 共用这套机械逻辑；差异只有 knowledge_points / mode 两个参数。"""
+    purpose = action_governance.purpose_for_run(stage=session.stage, mode=mode)
+    action_context = action_governance.authorize_action(
+        actor_id=session.student_id,
+        session_id=session.id,
+        action="sandbox.run",
+        purpose=purpose,
+        initiated_by="student",
+        payload={"code": code, "mode": mode, "pattern_id": session.pattern_id},
+    )
     r = sandbox.run_code(code)
+    action_context = action_governance.with_execution(action_context, "completed")
     kind = "HANG" if r.timed_out else ("RE" if r.has_error else "OK")
     ev = event_engine.log_execution(
         db, student_id=session.student_id, session_id=session.id, pattern_id=session.pattern_id,
-        source="run", kind=kind, stderr=r.stderr, knowledge_points=knowledge_points, mode=mode)
+        source="run", kind=kind, stderr=r.stderr, knowledge_points=knowledge_points, mode=mode,
+        action_context=action_context)
     # 过程化：记一条代码快照，链到本次执行事实（run 的代码链，闯关 + coop 都留）
     process.record_snapshot(db, session, code, ev.id)
     note = run_result_note(kind, r.stdout, r.stderr)
@@ -373,7 +384,7 @@ def run_and_inject(db: Session, session, code: str, *, knowledge_points: list, m
         session.touch()
     db.commit()   # 提交快照（+ active 时的对话/活跃时间）
     return {"stdout": r.stdout, "stderr": r.stderr, "timed_out": r.timed_out,
-            "hint": explain_error(kind, r.stderr)}
+            "hint": explain_error(kind, r.stderr), "action_context": action_context}
 
 
 # ④修复阶段常驻注入：学生自己提思路、自己改代码；失败反馈针对诊断引导，不复读「测试失败」。
@@ -564,6 +575,97 @@ SUPPORT_FLOOR_NOTE = """
 5. 已到最高提示级 L5、学生仍卡死：启用「托底」——换一个与本题无关的超简单小例子，把背后的原理完整讲透（这个例子可以讲清楚，因为它不是本题答案），讲完再请他把同样的道理用回自己的代码。宁可慢，也别让他彻底卡死、丧失信心。"""
 
 
+class TeachingStrategy(BaseModel):
+    """每轮可观测的教学决策；由规则计算，不把讲解质量只押在提示词自觉上。"""
+
+    core_goal: str
+    explanation_route: Literal["skeleton", "analogy", "micro_example", "execution_trace", "contrast"]
+    confusion_detected: bool = False
+    route_changed: bool = False
+    knowledge_gap: Optional[str] = None
+    code_explanation_order: list[str] = Field(default_factory=list)
+
+
+CONFUSION_RE = re.compile(
+    r"听不懂|没听懂|不明白|看不懂|太抽象|还是不会|完全不会|啥意思|什么意思|靠北|懵了|绕晕"
+)
+KNOWLEDGE_GAPS = (
+    (re.compile(r"什么是.{0,8}(下标|索引)|下标.{0,5}是什么|索引.{0,5}是什么"), "下标/索引"),
+    (re.compile(r"什么是.{0,8}(函数|参数|返回值)|函数|参数|返回值"), "函数调用"),
+    (re.compile(r"什么是.{0,8}(循环|range)|循环|range"), "循环边界"),
+    (re.compile(r"什么是.{0,8}(None|空值)|None|空值"), "空值"),
+)
+STAGE_GOALS = {
+    "①发现": "只建立现象全景：输入经过代码后在哪里表现异常",
+    "②定位": "只找出异常沿执行路线经过的可疑位置",
+    "③归因": "只完成当前归因小步骤，不提前讨论修复",
+    "④修复": "只让学生把已确认的根因转成自己的修改思路",
+    "⑤验证": "只设计并解释一个能检验修复的边界案例",
+    "⑥内化": "只让学生复述一个可迁移的判断方法",
+}
+CODE_EXPLANATION_ORDER = ["入口与输入", "谁调用谁", "关键数据怎样变化", "返回值或报错落点"]
+
+
+def choose_teaching_strategy(session: TutorSession, student_message: str) -> TeachingStrategy:
+    """把固定讲解偏好变成本轮确定性策略，不参与阶段跃迁判定。"""
+    explicit_confusion = bool(CONFUSION_RE.search(student_message or ""))
+    struggling = explicit_confusion or session.stalled_turns >= 2
+    gap = next((name for pattern, name in KNOWLEDGE_GAPS if pattern.search(student_message or "")), None)
+
+    # 首次正常讲解先搭骨架；卡住后按轮数换路，保证不是把原定义再说一遍。
+    routes = ["analogy", "micro_example", "execution_trace", "contrast"]
+    if struggling:
+        route = routes[min(session.stalled_turns + (1 if explicit_confusion else 0), len(routes) - 1)]
+    else:
+        route = "skeleton"
+
+    return TeachingStrategy(
+        core_goal=STAGE_GOALS.get(session.stage, "只推进当前阶段的一个核心概念"),
+        explanation_route=route,
+        confusion_detected=struggling,
+        route_changed=struggling,
+        knowledge_gap=gap,
+        code_explanation_order=CODE_EXPLANATION_ORDER if route == "execution_trace" or "代码" in student_message else [],
+    )
+
+
+TEACHING_STRATEGY_TEMPLATE = """
+
+[本轮可执行教学策略]
+核心目标：{core_goal}
+讲解路径：{route}
+是否必须换路：{route_changed}
+疑似知识断层：{knowledge_gap}
+代码讲解顺序：{code_order}
+
+严格按以下顺序组织 reply，但总长度仍服从当前阶段剧本：
+1. 先用一句话给整体骨架：现在有哪些角色/值，谁把什么交给谁，当前问题位于哪一步。
+2. 本轮只推进上面的一个核心目标；不要顺手讲第二个新概念。
+3. 若有知识断层，先补这个最小前置知识，再回到当前问题，不默认学生已经会。
+4. 若“必须换路”为是，禁止重复上一轮定义和问法；必须使用指定的新路径重新解释。
+5. 生活化比喻必须立刻映射回技术对象，明确比喻中的每个角色对应代码里的什么。
+6. 涉及代码时按给出的调用链顺序讲：先入口，再谁调用谁，再数据变化，最后返回/报错落点；仍不得泄露修复答案。
+7. 结尾只留一个可回答的小问题，自然连接下一步。
+"""
+
+
+def teaching_strategy_prompt(strategy: TeachingStrategy) -> str:
+    route_names = {
+        "skeleton": "整体骨架",
+        "analogy": "生活化比喻",
+        "micro_example": "与本题不同的极小例子",
+        "execution_trace": "从入口到落点的执行链",
+        "contrast": "正确直觉与当前直觉的对照",
+    }
+    return TEACHING_STRATEGY_TEMPLATE.format(
+        core_goal=strategy.core_goal,
+        route=route_names[strategy.explanation_route],
+        route_changed="是" if strategy.route_changed else "否",
+        knowledge_gap=strategy.knowledge_gap or "未发现",
+        code_order="→".join(strategy.code_explanation_order) if strategy.code_explanation_order else "本轮不需要展开代码链",
+    )
+
+
 def build_system(session: TutorSession) -> str:
     mine = session.manifest["mines"][0]
     ladder = "\n".join(f"{k}: {v}" for k, v in mine["hint_ladder"].items())
@@ -663,6 +765,7 @@ def walkthrough_for_code(code: str, deep: bool = False) -> str:
 
 def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
     """一轮对话：调LLM → 应用状态跃迁 → 落库LLM事件与规则事件。"""
+    stage_at_turn_start = session.stage
     history = list(session.history) + [{"role": "user", "content": student_message}]
 
     # 规则跃迁层：退出条件可确定性判定的阶段不等LLM——①贴出异常签名、②指认雷行、⑤完整解释边界测试
@@ -697,7 +800,8 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
     if support_mode and HINT_LEVELS.index(session.hint_level) < len(HINT_LEVELS) - 1:
         session.hint_level = HINT_LEVELS[HINT_LEVELS.index(session.hint_level) + 1]
 
-    system = build_system(session)
+    strategy = choose_teaching_strategy(session, student_message)
+    system = build_system(session) + teaching_strategy_prompt(strategy)
     if auto_advanced:
         sig, playbook = auto_advanced
         system += MENTOR_LAYER_TEMPLATE.format(sig=sig, **playbook)
@@ -873,8 +977,22 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
 
     # 过程化时间线（写新）：记真实学生发言 + 导师回复。系统回流/提交动作在别处按语义记，此处跳过。
     if not student_message.startswith((FIX_FAILED_PREFIX, RUN_RESULT_PREFIX, "（系统", "(系统")):
-        process.record_message(db, session.id, "student", student_message, "chat")
-    process.record_message(db, session.id, "tutor", turn.reply, "chat")
+        process.record_message(
+            db, session.id, "student", student_message, "chat",
+            meta={"stage": stage_at_turn_start},
+        )
+    process.record_message(
+        db, session.id, "tutor", turn.reply, "chat",
+        meta={
+            "teaching_strategy": strategy.model_dump(),
+            "confusion_detected": strategy.confusion_detected,
+            "stage_before": stage_at_turn_start,
+            "stage_after": session.stage,
+            "student_progressed": bool(turn.student_progressed or rule_advanced),
+            "support_mode": support_mode,
+            "hint_level": session.hint_level,
+        },
+    )
 
     db.commit()
     return {
@@ -889,6 +1007,7 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
         "session_status": session.status,
         "hint_level": session.hint_level,
         "support_mode": support_mode,
+        "teaching_strategy": strategy.model_dump(),
         "variant": variant,
         "events_emitted": [e.capability for e in turn.events],
     }

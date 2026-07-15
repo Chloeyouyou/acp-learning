@@ -136,6 +136,9 @@ class SessionMessage(Base):
     role: Mapped[str] = mapped_column(String)   # student / tutor / system
     kind: Mapped[str] = mapped_column(String)   # chat / run_result / submit / tutor_opening
     content: Mapped[str] = mapped_column(Text)
+    # 可观测决策上下文（append-only，随消息一次性写入）：导师教学路线、阶段前后等。
+    # 旧消息/普通系统消息为空对象；派生指标只读这里，不反写历史。
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[str] = mapped_column(String, default=now)
 
 

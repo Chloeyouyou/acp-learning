@@ -23,6 +23,7 @@ const router = createRouter({
     { path: '/profile', component: Profile },
     { path: '/replay/:sessionId', component: Replay },
     { path: '/teacher', component: Teacher },   // 隐藏：不挂学生导航，教师直连 + 输 token
+    { path: '/teacher/replay/:sessionId', component: Replay, meta: { teacher: true } },
   ],
 })
 

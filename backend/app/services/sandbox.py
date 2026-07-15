@@ -69,6 +69,11 @@ def _docker_available() -> bool:
         return False
 
 
+def docker_available() -> bool:
+    """公开的只读自检接口；生产启动门槛使用，避免只看配置值而误判 Docker 真可用。"""
+    return _docker_available()
+
+
 def active_backend() -> str:
     """当前实际生效的后端：docker / subprocess。供 /health 自检和测试用。"""
     choice = os.environ.get("ACP_SANDBOX", "auto").lower()
