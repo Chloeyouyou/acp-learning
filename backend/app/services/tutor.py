@@ -586,6 +586,15 @@ class TeachingStrategy(BaseModel):
     code_explanation_order: list[str] = Field(default_factory=list)
 
 
+class ReplyGuardResult(BaseModel):
+    """知返回复的确定性出站检查；只判断可证明的结构/泄题红线。"""
+
+    passed: bool
+    violations: list[str] = Field(default_factory=list)
+    question_count: int = 0
+    route_observed: bool = True
+
+
 CONFUSION_RE = re.compile(
     r"听不懂|没听懂|不明白|看不懂|太抽象|还是不会|完全不会|啥意思|什么意思|靠北|懵了|绕晕"
 )
@@ -664,6 +673,122 @@ def teaching_strategy_prompt(strategy: TeachingStrategy) -> str:
         knowledge_gap=strategy.knowledge_gap or "未发现",
         code_order="→".join(strategy.code_explanation_order) if strategy.code_explanation_order else "本轮不需要展开代码链",
     )
+
+
+_ROUTE_SIGNALS = {
+    "analogy": re.compile(r"像|就像|好比|想象|当成"),
+    "micro_example": re.compile(r"比如|例如|假设|举个|先拿.{0,12}例子"),
+    "execution_trace": re.compile(r"先|接着|然后|最后|入口|传给|返回|落到|报错"),
+    "contrast": re.compile(r"对比|区别|而是|相反|如果.{0,20}(那么|就)"),
+}
+
+
+def _fix_fragments(expected_fix: str) -> list[str]:
+    """把“方案A 或 方案B”拆成可检测片段；保留短代码（如 s=0 / continue）。"""
+    raw_parts = re.split(r"\s*或\s*|，|；|;|(?:^|\s)如\s*", expected_fix or "")
+    return [part.strip() for part in raw_parts if part.strip()]
+
+
+def _guard_normalize(text: str) -> str:
+    return re.sub(r"[\s`'\"，,。；;：:]", "", text or "").lower()
+
+
+def assess_teaching_reply(reply: str, strategy: TeachingStrategy,
+                          expected_fix: str) -> ReplyGuardResult:
+    """检查最终给学生的 reply；不判断学生是否答对，也不参与状态机。"""
+    violations: list[str] = []
+    reply_text = reply or ""
+    normalized_reply = _guard_normalize(reply_text)
+
+    for fragment in _fix_fragments(expected_fix):
+        normalized_fix = _guard_normalize(fragment)
+        looks_like_code = bool(re.search(r"[=\[\](){}]|\b(?:return|continue|break|range|for|while|if)\b",
+                                         fragment))
+        if normalized_fix and (len(normalized_fix) >= 5 or looks_like_code) \
+                and normalized_fix in normalized_reply:
+            violations.append("direct_fix_leak")
+            break
+
+    question_count = len(re.findall(r"[？?]", reply_text))
+    if question_count != 1:
+        violations.append("question_count")
+    elif not reply_text.rstrip().endswith(("？", "?")):
+        violations.append("question_not_at_end")
+
+    route_observed = True
+    if strategy.route_changed:
+        pattern = _ROUTE_SIGNALS.get(strategy.explanation_route)
+        if pattern is not None:
+            hits = pattern.findall(reply_text)
+            # 执行链至少出现两个顺序/流转信号；其他换路有一个明确信号即可。
+            route_observed = len(hits) >= (2 if strategy.explanation_route == "execution_trace" else 1)
+            if not route_observed:
+                violations.append("route_not_observable")
+
+    return ReplyGuardResult(
+        passed=not violations,
+        violations=violations,
+        question_count=question_count,
+        route_observed=route_observed,
+    )
+
+
+_SAFE_STAGE_QUESTIONS = {
+    "①发现": "我们先不改代码，只盯真实现象。你能说出运行后最明显的一条反馈吗？",
+    "②定位": "我们先把范围缩到执行经过的位置。你觉得哪一行最接近报错落点？",
+    "③归因": "我们这轮只追一个值。它在进入关键行之前具体变成了什么？",
+    "④修复": "我们先不同时改多处。你想用哪一个最小改动去验证刚才的根因？",
+    "⑤验证": "我们只设计一个边界输入。你选什么输入，它的预期结果是什么？",
+    "⑥内化": "我们只留下一条可迁移经验。下次遇到相似现象你会先检查什么？",
+}
+
+
+def safe_guard_reply(stage: str) -> str:
+    return _SAFE_STAGE_QUESTIONS.get(
+        stage, "我们先把问题缩小到一步。你现在最确定的一条事实是什么？",
+    )
+
+
+def _guarded_llm_turn(system: str, history: list[dict], strategy: TeachingStrategy,
+                      expected_fix: str, stage: str) -> tuple[TutorTurn, dict]:
+    """模型回复最多纠错一次；仍违规则只替换对学生可见的 reply 为安全问题。"""
+    attempts = 1
+    turn = _call_llm(system, history)
+    result = assess_teaching_reply(turn.reply, strategy, expected_fix)
+    seen_violations = list(result.violations)
+    fallback_used = False
+
+    if not result.passed:
+        attempts = 2
+        retry_note = (
+            "\n\n[回复质量纠错·学生看不到]\n"
+            f"上一次 reply 未通过出站检查：{', '.join(result.violations)}。"
+            "请重新生成完整 JSON。reply 不得出现 expected_fix 或可直接抄的改法；"
+            "结尾必须恰好留下一个小问题；若本轮要求换解释路径，必须在措辞中真实落实该路径。"
+            "其余判断字段仍依据学生原话，不要因为这条系统纠错改变学生进展判定。"
+        )
+        try:
+            turn = _call_llm(system + retry_note, history)
+            result = assess_teaching_reply(turn.reply, strategy, expected_fix)
+            for violation in result.violations:
+                if violation not in seen_violations:
+                    seen_violations.append(violation)
+        except Exception:
+            result = ReplyGuardResult(passed=False, violations=["retry_failed"])
+            if "retry_failed" not in seen_violations:
+                seen_violations.append("retry_failed")
+
+    if not result.passed:
+        fallback_used = True
+        turn = turn.model_copy(update={"reply": safe_guard_reply(stage)})
+
+    return turn, {
+        "passed": result.passed,
+        "attempts": attempts,
+        "fallback_used": fallback_used,
+        "violations": seen_violations,
+        "final_question_count": len(re.findall(r"[？?]", turn.reply)),
+    }
 
 
 def build_system(session: TutorSession) -> str:
@@ -766,6 +891,7 @@ def walkthrough_for_code(code: str, deep: bool = False) -> str:
 def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
     """一轮对话：调LLM → 应用状态跃迁 → 落库LLM事件与规则事件。"""
     stage_at_turn_start = session.stage
+    mine = session.manifest["mines"][0]
     history = list(session.history) + [{"role": "user", "content": student_message}]
 
     # 规则跃迁层：退出条件可确定性判定的阶段不等LLM——①贴出异常签名、②指认雷行、⑤完整解释边界测试
@@ -835,8 +961,14 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
         system += SUPPORT_LAYER_TEMPLATE.format(
             analogy=ANALOGY_HINTS.get(category, DEFAULT_ANALOGY), floor_note=floor)
 
+    reply_guard = {
+        "passed": False, "attempts": 0, "fallback_used": True,
+        "violations": ["llm_unavailable"], "final_question_count": 1,
+    }
     try:
-        turn = _call_llm(system, history)
+        turn, reply_guard = _guarded_llm_turn(
+            system, history, strategy, mine["expected_fix"], session.stage,
+        )
     except Exception:
         # LLM 任何失败（坏 JSON / API 超时 / 限流 / 网络抖动…）都优雅降级：温和兜底一句，
         # 状态全部不变，对话与本轮发言不丢，绝不让模型抽风把整局拖崩成 500
@@ -850,8 +982,6 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
             internalization=None,
             events=[],
         )
-
-    mine = session.manifest["mines"][0]
 
     # 状态更新
     session.history = history + [{"role": "assistant", "content": turn.reply}]
@@ -991,6 +1121,7 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
             "student_progressed": bool(turn.student_progressed or rule_advanced),
             "support_mode": support_mode,
             "hint_level": session.hint_level,
+            "reply_guard": reply_guard,
         },
     )
 
@@ -1008,6 +1139,7 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
         "hint_level": session.hint_level,
         "support_mode": support_mode,
         "teaching_strategy": strategy.model_dump(),
+        "reply_guard": reply_guard,
         "variant": variant,
         "events_emitted": [e.capability for e in turn.events],
     }

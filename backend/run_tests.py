@@ -9,6 +9,7 @@
 """
 
 import os
+import re
 import sys
 import traceback
 
@@ -312,6 +313,98 @@ def teaching_strategy_代码按调用链讲():
     assert s.code_explanation_order == tutor.CODE_EXPLANATION_ORDER
     prompt = tutor.teaching_strategy_prompt(s)
     assert "入口与输入→谁调用谁→关键数据怎样变化→返回值或报错落点" in prompt
+
+
+def _guard_strategy(route="skeleton", changed=False):
+    return tutor.TeachingStrategy(
+        core_goal="只推进一个小目标",
+        explanation_route=route,
+        confusion_detected=changed,
+        route_changed=changed,
+    )
+
+
+@test
+def reply_guard_拦直接修法与多个问题():
+    leak = tutor.assess_teaching_reply(
+        "直接改成 range(len(arr)) 就行。你明白了吗？",
+        _guard_strategy(), "range(len(arr))",
+    )
+    assert "direct_fix_leak" in leak.violations
+    many = tutor.assess_teaching_reply(
+        "你先看哪一行？这个值又从哪来？",
+        _guard_strategy(), "range(len(arr))",
+    )
+    assert "question_count" in many.violations and many.question_count == 2
+
+    one_of_two = tutor.assess_teaching_reply(
+        "可以改成列表推导 [s for s in scores if s >= 60]。你能先说出它避开了什么吗？",
+        _guard_strategy(),
+        "遍历副本 for s in scores[:] 或列表推导 [s for s in scores if s >= 60]",
+    )
+    assert "direct_fix_leak" in one_of_two.violations
+
+
+@test
+def reply_guard_换路必须在回复中真实可见():
+    missing = tutor.assess_teaching_reply(
+        "我们再想一想。你现在看到什么？",
+        _guard_strategy("micro_example", True), "range(len(arr))",
+    )
+    assert "route_not_observable" in missing.violations
+    good = tutor.assess_teaching_reply(
+        "比如三个抽屉只编号 0 到 2，我们先只看这个小例子。你觉得编号 3 还能找到抽屉吗？",
+        _guard_strategy("micro_example", True), "range(len(arr))",
+    )
+    assert good.passed, good
+
+
+@test
+def reply_guard_首次违规会纠错重试():
+    original = tutor._call_llm
+    calls = []
+    try:
+        replies = iter([
+            "你先看哪一行？这个值从哪来？",
+            "比如三个抽屉只编号 0 到 2。你觉得编号 3 存在吗？",
+        ])
+
+        def fake_call(system, history):
+            calls.append(system)
+            return tutor.TutorTurn(
+                reply=next(replies), stage_transition=None, hint_level_used="L0",
+                student_progressed=False, answer_begging=False, events=[],
+            )
+
+        tutor._call_llm = fake_call
+        turn, meta = tutor._guarded_llm_turn(
+            "system", [], _guard_strategy("micro_example", True),
+            "range(len(arr))", "②定位",
+        )
+        assert len(calls) == 2 and meta["attempts"] == 2
+        assert meta["passed"] is True and meta["fallback_used"] is False
+        assert "question_count" in meta["violations"] and "三个抽屉" in turn.reply
+    finally:
+        tutor._call_llm = original
+
+
+@test
+def reply_guard_连续违规时安全兜底():
+    original = tutor._call_llm
+    try:
+        tutor._call_llm = lambda system, history: tutor.TutorTurn(
+            reply="直接改成 range(len(arr))。照着改就好。",
+            stage_transition=None, hint_level_used="L0",
+            student_progressed=False, answer_begging=False, events=[],
+        )
+        turn, meta = tutor._guarded_llm_turn(
+            "system", [], _guard_strategy(), "range(len(arr))", "②定位",
+        )
+        assert meta["passed"] is False and meta["fallback_used"] is True
+        assert "range(len(arr))" not in turn.reply
+        assert len(re.findall(r"[？?]", turn.reply)) == 1
+    finally:
+        tutor._call_llm = original
 
 
 # ---- Resource Gateway 亮点落地：动作信封 / 用途 / 风险 / Evidence 关联 ----
@@ -773,6 +866,7 @@ def 状态机_修复阶段未提交时LLM不得擅自跃迁():
                  .order_by(SessionMessage.seq.desc()).first())
         assert saved.meta["teaching_strategy"]["explanation_route"] == "skeleton"
         assert saved.meta["stage_before"] == "④修复" and saved.meta["stage_after"] == "④修复"
+        assert saved.meta["reply_guard"]["fallback_used"] is True
         db.close()
     finally:
         mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = orig_get, orig_load, orig_llm
