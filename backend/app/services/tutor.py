@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..config import DEEPSEEK_BASE_URL, HINT_LEVELS, STAGES, TUTOR_MODEL
 from ..models import Event, TutorSession
-from . import action_governance, event_engine, mine_engine, process, profile, sandbox
+from . import action_governance, event_engine, experience, mine_engine, process, profile, sandbox
 
 client = OpenAI(
     api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -575,6 +575,20 @@ SUPPORT_FLOOR_NOTE = """
 5. 已到最高提示级 L5、学生仍卡死：启用「托底」——换一个与本题无关的超简单小例子，把背后的原理完整讲透（这个例子可以讲清楚，因为它不是本题答案），讲完再请他把同样的道理用回自己的代码。宁可慢，也别让他彻底卡死、丧失信心。"""
 
 
+# 第二层记忆：与这个学生的过往共同经历（experience.py 召回后注入）。
+# 双保险之注入端硬规则；落库端摘要本就不含 expected_fix，出站另有 reply guard 兜底。
+EXPERIENCE_LAYER_TEMPLATE = """
+
+[与这个学生的过往共同经历·背景参考]
+{experiences}
+
+使用硬规则：
+1. 这些是你和这个学生一起走过的真实经历，可用于共情（「上次你也是一步步走出来的」）和方法迁移（提醒他用过的定位手法：代入具体输入、追踪变量取值）。
+2. 学生处于①发现/②定位阶段时，绝不点破当前题与过往经历的具体成因联系（不说「这次又是XX问题」）——发现和定位必须由他自己完成。
+3. 绝不复述过往题目的修复代码或确切改法；过往经历不是当前题的答案线索。
+4. 自然引用、点到为止，别每轮都提；学生没卡时可以完全不提。"""
+
+
 class TeachingStrategy(BaseModel):
     """每轮可观测的教学决策；由规则计算，不把讲解质量只押在提示词自觉上。"""
 
@@ -928,6 +942,21 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
 
     strategy = choose_teaching_strategy(session, student_message)
     system = build_system(session) + teaching_strategy_prompt(strategy)
+
+    # 第二层记忆：召回与这个学生的过往共同经历（排除当前题防变式剧透；coop 隔离不参与）。
+    # 只改 system prompt，不参与任何跃迁判定；无经历时行为与现状完全一致。
+    if not session.is_coop:
+        try:
+            pattern_meta = mine_engine.get_pattern(session.pattern_id)
+        except Exception:
+            pattern_meta = None
+        past = experience.recall(
+            db, session.student_id,
+            experience.build_query(mine, pattern_meta),
+            exclude_pattern_id=session.pattern_id)
+        if past:
+            system += EXPERIENCE_LAYER_TEMPLATE.format(
+                experiences="\n".join(f"- {e.summary}" for e in past))
     if auto_advanced:
         sig, playbook = auto_advanced
         system += MENTOR_LAYER_TEMPLATE.format(sig=sig, **playbook)
@@ -970,10 +999,11 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
             system, history, strategy, mine["expected_fix"], session.stage,
         )
     except Exception:
-        # LLM 任何失败（坏 JSON / API 超时 / 限流 / 网络抖动…）都优雅降级：温和兜底一句，
+        # LLM 任何失败（坏 JSON / API 超时 / 限流 / 网络抖动…）都优雅降级：按当前阶段
+        # 给一句确定性的安全引导（无 Key/断网时学生也不至于只收到"走神了"），
         # 状态全部不变，对话与本轮发言不丢，绝不让模型抽风把整局拖崩成 500
         turn = TutorTurn(
-            reply="抱歉，我刚刚走神了一下，没接住你这句。能麻烦你再说一遍，或者换个说法吗？",
+            reply="抱歉，我这边刚刚卡了一下。" + safe_guard_reply(session.stage),
             stage_transition=None,
             hint_level_used=session.hint_level,
             student_progressed=True,  # 非学生之过，不累加无进展轮数
@@ -1078,6 +1108,8 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
             profile.update_knowledge_state(
                 db, student_id=session.student_id, pattern_id=session.pattern_id,
                 knowledge_points=mine["knowledge_points"], new_state="已内化")
+            # 第二层记忆：把这局「怎么踩坑、怎么走出来」沉淀成一条共同经历（append-only）
+            experience.record_on_completion(db, session)
             # 复述过关后，推荐一道同类异形的变式题，用实战检验迁移能力
             variant = profile.pick_variant(db, session.student_id, session.pattern_id)
 

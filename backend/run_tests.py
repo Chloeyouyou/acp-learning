@@ -1919,6 +1919,142 @@ def 沙箱docker_死循环超时():
     assert r.timed_out
 
 
+# ════════ 经历记忆（第二层记忆：结算沉淀 + 相关度召回 + 泄题门控）════════
+
+def _exp_pattern(pid, name, root_cause="下标 3 越界"):
+    p = dict(_good_candidate())
+    p.update(id=pid, name=name, root_cause=root_cause)
+    return p
+
+
+def _exp_session(tutor, mine_engine, patterns, *, student_id, pattern_id,
+                 stage, mine_status="planted", mode=None):
+    """自定学生/题目的会话（_arena_session 硬编码 rt1，经历测试需隔离学生）。"""
+    mine_engine.get_pattern = lambda pid: patterns[pid]
+    mine_engine.load_patterns = lambda: patterns
+    from app.models import TutorSession
+    db = TestSession()
+    manifest = mine_engine.build_manifest(student_id, patterns[pattern_id])
+    if mode:
+        manifest["mode"] = mode
+    sess = TutorSession(id=f"s_exp_{__import__('uuid').uuid4().hex[:6]}",
+                        student_id=student_id, pattern_id=pattern_id,
+                        manifest=manifest, history=[], stage=stage, mine_status=mine_status)
+    db.add(sess); db.commit()
+    return db, sess
+
+
+@test
+def 经历检索_内容词召回且纯虚词不算():
+    from app.services import experience
+    s = experience.relevance_score("数组下标越界 IndexError", "他在《测试题》踩了 IndexError，根因是数组下标越界")
+    assert s >= experience.RELEVANCE_FLOOR, f"内容词高度重叠应过门槛: {s}"
+    s2 = experience.relevance_score("我觉得可能是不知道怎么了", "他自己就是这个样子的没什么")
+    assert s2 < experience.RELEVANCE_FLOOR, f"纯虚词撞上不算相关: {s2}"
+
+
+@test
+def 经历检索_跑题记忆宁可空手():
+    from app.services import experience
+    s = experience.relevance_score("除以零 ZeroDivisionError 分母 平均数",
+                                   "在《测试题》遇到 IndexError，根因是下标 3 越界")
+    assert s < experience.RELEVANCE_FLOOR, f"不相关经历不应过门槛: {s}"
+
+
+@test
+def 经历沉淀_内化结算落库且摘要不含修复代码():
+    from app.models import StudentExperience
+    from app.services import mine_engine, tutor
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        pats = {p["id"]: p for p in [_exp_pattern("BP-EXP-001", "经历题甲")]}
+        tutor._call_llm = _stub_turn(
+            tutor, internalization=tutor.InternalizationScore(cause=True, locate=True, prevent=False))
+        db, sess = _exp_session(tutor, mine_engine, pats, student_id="exp1",
+                                pattern_id="BP-EXP-001", stage="⑥内化", mine_status="fixed")
+        tutor.run_turn(db, sess, "因为下标越界，定位靠追踪变量取值，下次先查边界")
+        assert sess.status == "completed"
+        exp = db.query(StudentExperience).filter_by(student_id="exp1").one()
+        assert "经历题甲" in exp.summary and "下标 3 越界" in exp.summary, exp.summary
+        assert "成因机制" in exp.summary and "定位方法" in exp.summary, exp.summary
+        # 落库端泄题硬门控：摘要与关键词绝不含 expected_fix 片段
+        fix = pats["BP-EXP-001"]["expected_fix"]
+        assert fix not in exp.summary and all(fix not in k for k in exp.keywords), "摘要泄了修复代码"
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
+
+
+@test
+def 经历召回_新题注入过往经历且同题排除():
+    from app.services import experience, mine_engine, tutor
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        pats = {p["id"]: p for p in [
+            _exp_pattern("BP-EXP-011", "经历题乙"), _exp_pattern("BP-EXP-012", "经历题丙")]}
+        # 先内化完成"经历题乙"沉淀一条经历
+        tutor._call_llm = _stub_turn(
+            tutor, internalization=tutor.InternalizationScore(cause=True, locate=True, prevent=True))
+        db, sess = _exp_session(tutor, mine_engine, pats, student_id="exp2",
+                                pattern_id="BP-EXP-011", stage="⑥内化", mine_status="fixed")
+        tutor.run_turn(db, sess, "因为下标越界，定位靠追踪变量，下次先查边界")
+
+        # 换一道同族新题：system 应注入过往经历（带硬规则），召回按相关度过门槛
+        captured = {}
+        stub = _stub_turn(tutor)
+        tutor._call_llm = lambda system, history: (captured.__setitem__("sys", system), stub(system, history))[1]
+        db2, sess2 = _exp_session(tutor, mine_engine, pats, student_id="exp2",
+                                  pattern_id="BP-EXP-012", stage="①发现")
+        tutor.run_turn(db2, sess2, "程序好像不太对")
+        assert "过往共同经历" in captured["sys"] and "经历题乙" in captured["sys"], "应召回过往经历"
+        assert "绝不点破" in captured["sys"], "注入段应携带泄题硬规则"
+
+        # 同题重开：exclude_pattern_id 应排除，system 无经历段（变式不剧透）
+        captured.clear()
+        db3, sess3 = _exp_session(tutor, mine_engine, pats, student_id="exp2",
+                                  pattern_id="BP-EXP-011", stage="①发现")
+        tutor.run_turn(db3, sess3, "程序好像不太对")
+        assert "过往共同经历" not in captured["sys"], "同题经历不得召回（防变式剧透）"
+        db.close(); db2.close(); db3.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
+
+
+@test
+def 经历隔离_coop会话不沉淀():
+    from app.services import experience, mine_engine, tutor
+    o1, o2 = mine_engine.get_pattern, mine_engine.load_patterns
+    try:
+        pats = {p["id"]: p for p in [_exp_pattern("BP-EXP-021", "经历题丁")]}
+        db, sess = _exp_session(tutor, mine_engine, pats, student_id="exp3",
+                                pattern_id="BP-EXP-021", stage="⑥内化",
+                                mine_status="fixed", mode="coop")
+        assert experience.record_on_completion(db, sess) is None, "coop 会话不得沉淀经历"
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns = o1, o2
+
+
+@test
+def 兜底升级_LLM挂掉时按阶段给确定性引导():
+    from app.services import mine_engine, tutor
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        def boom(system, history):
+            raise RuntimeError("api down")
+        tutor._call_llm = boom
+        db, sess = _exp_session(tutor, mine_engine,
+                                {p["id"]: p for p in [_exp_pattern("BP-EXP-031", "经历题戊")]},
+                                student_id="exp4", pattern_id="BP-EXP-031", stage="③归因")
+        sess.attribution_step = "variable_trace"
+        r = tutor.run_turn(db, sess, "然后呢")
+        assert tutor._SAFE_STAGE_QUESTIONS["③归因"] in r["reply"], r["reply"]  # 不再只说"走神"
+        assert sess.stage == "③归因" and r["events_emitted"] == [], "兜底轮状态不变、不落事件"
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
+
+
 def main():
     passed = failed = skipped = 0
     for fn in _tests:
