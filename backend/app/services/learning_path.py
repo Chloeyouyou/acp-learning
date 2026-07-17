@@ -10,6 +10,19 @@ from ..models import TutorSession
 from . import mine_engine, profile, review
 
 DECISION_ORDER = ["resume", "review", "recommend", "start"]
+DISPLAY_STEP_BY_STAGE = {
+    "①发现": "运行观察",
+    "②定位": "定位原因",
+    "③归因": "定位原因",
+    "④修复": "修改验证",
+    "⑤验证": "修改验证",
+    "⑥内化": "总结迁移",
+}
+
+
+def display_step(stage: str | None) -> str:
+    """把内部六阶段翻译成学生只需记住的四步语言。"""
+    return DISPLAY_STEP_BY_STAGE.get(stage or "", "运行观察")
 
 
 def active_session_summaries(db: Session, student_id: str, limit: int = 5) -> list[dict]:
@@ -29,6 +42,7 @@ def active_session_summaries(db: Session, student_id: str, limit: int = 5) -> li
             "pattern_id": session.pattern_id,
             "name": name,
             "stage": session.stage,
+            "display_step": display_step(session.stage),
             "mine_status": session.mine_status,
             "last_active_at": session.updated_at or session.created_at,
         })
@@ -39,11 +53,11 @@ def decide_next_action(active: list[dict], due: list[dict], recommendations: lis
     """按固定优先级选一个行动，并把判断依据显式返回。"""
     if active:
         item = active[0]
-        stage = (item.get("stage") or "①发现")[1:]
+        step = item.get("display_step") or display_step(item.get("stage"))
         action = {
             "kind": "resume",
             "title": f"继续想通“{item['name']}”",
-            "detail": f"上次停在{stage}，先把已经开始的思路收完整。",
+            "detail": f"上次停在“{step}”，先把已经开始的思路收完整。",
             "cta": "继续上次",
             "reason_code": "unfinished_first",
             "target": {"session_id": item["session_id"], "pattern_id": item["pattern_id"], "mode": "debug"},

@@ -2,9 +2,12 @@
 import { onMounted, reactive, ref, computed, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, getStudentId } from '../api'
+import CompletionPanel from '../components/CompletionPanel.vue'
 import GlossaryText from '../components/GlossaryText.vue'
+import LearningHelp from '../components/LearningHelp.vue'
 import StageTracker from '../components/StageTracker.vue'
 import { GLOSSARY, bricksInCode } from '../glossary'
+import { learningStepFor } from '../learning-flow'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,6 +40,7 @@ const lobbyAction = computed(() => guidance.value?.action || {
   cta: activeSessions.value.length ? '继续上次' : '开始练习',
   target: activeSessions.value.length ? { session_id: activeSessions.value[0].session_id } : {},
 })
+const currentLearningStep = computed(() => learningStepFor(session.stage))
 const presenceHint = computed(() => {
   const list = activeSessions.value
   if (!list.length) {
@@ -53,12 +57,11 @@ const presenceHint = computed(() => {
   if (gapDays >= 7) return '好久不见，不急，今天可以先开一道轻一点的。'
   const highStages = ['③归因', '④修复', '⑤验证']
   if (gapDays >= 2 && highStages.includes(top.stage)) {
-    return `上次那道你在${top.stage.slice(1)}阶段停了挺久，今天可以接着收尾，也可以先换一道轻松的。`
+    return `上次那道你在“${top.display_step || learningStepFor(top.stage).name}”停了挺久，今天可以接着收尾，也可以先换一道轻松的。`
   }
   return '我还记得你上次停在这里，但要不要继续，由你决定。'
 })
 const masteredKps = ref(new Set())   // 学生已内化的知识点（练前小灶用来标「已掌握」）
-const showPrimer = ref(false)        // 练前小灶默认收起（需要的人再点开），避免页面被撑长
 const intervention = ref(null)       // 开题前小检查（命中跨题高频思维默认值才有）；帮手语气、可忽略、本题只首次弹
 
 // 卡住时的小工具：解释默认收起，记住用户偏好；知返始终在思考主线里。
@@ -68,7 +71,6 @@ function toggleExplain() {
   showExplain.value = !showExplain.value
   localStorage.setItem('arena_panels', JSON.stringify({ explain: showExplain.value, tutor: true }))
 }
-const showSyntax = ref(false)        // 「代码怎么读」符号扫盲是否展开（默认收起，需要的人点开）
 // A+B 空间管理：终端可折叠、思考过程可折叠、逐行讲解做成代码区上滑抽屉
 const consoleOpen = ref(true)        // 终端展开/折叠（折叠后只剩状态条）
 const thoughtOpen = ref(false)       // 默认只看当前任务；主动展开后才看完整思考记录
@@ -156,8 +158,6 @@ const walkRows = computed(() => {
 // 过滤掉用户已标「懂了」的符号
 const visibleBricks = computed(() => syntaxBricks.value.filter((b) => !learnedBricks.value.has(b.name)))
 const hiddenBricks = computed(() => syntaxBricks.value.filter((b) => learnedBricks.value.has(b.name)))
-const showHiddenBricks = ref(false)   // 「已隐藏的符号」管理区是否展开
-
 function persistBricks() {
   localStorage.setItem('learned_bricks', JSON.stringify([...learnedBricks.value]))
 }
@@ -227,6 +227,7 @@ const termHint = computed(() => {
 const selectedLine = ref(null)
 function showLine(n) {
   selectedLine.value = n
+  if (!showExplain.value) toggleExplain()
   if (!walkthrough.value && !walkLoading.value) loadWalkthrough(false)
 }
 function clickLine(n) {           // 点行号：滑出该行讲解；点同一行可收起
@@ -239,6 +240,13 @@ const lineNote = computed(() => {
   const r = (walkRows.value || [])[selectedLine.value - 1]
   return r?.explain || '这一行还没有讲解——点「运行」看真实结果，或在右边问知返。'
 })
+
+async function requestDifferentExplanation() {
+  if (sending.value) return
+  if (showExplain.value) toggleExplain()
+  const step = currentLearningStep.value
+  await sendText(`我还是听不懂，太抽象了。请换一种讲法，这轮只讲“${step.name}”这一步。`)
+}
 
 // 「代码怎么读」：这道题代码里实际出现的语法符号，给完全没见过代码的人扫盲
 const syntaxBricks = computed(() => bricksInCode(session.code))
@@ -372,6 +380,14 @@ function takeLobbyAction() {
   start()
 }
 
+function takeCompletionAction() {
+  if (session.variant?.id) {
+    start(session.variant.id)
+    return
+  }
+  takeLobbyAction()
+}
+
 async function loadMastered() {
   try {
     const prof = await api.getProfile()
@@ -389,7 +405,7 @@ async function start(patternId, mode = 'debug') {
     const data = await api.createSession(patternId, mode)
     session.id = data.session_id
     session.patternId = data.pattern_id || patternId   // 智能开题不传 id，用后端选中的
-    showPrimer.value = false  // 新关卡练前小灶默认收起，需要的人再点开
+    selectedLine.value = null
     walkthrough.value = ''    // 清掉上一题的逐行讲解
     walkDeep.value = false
     walkOpen.value = false    // 关掉逐行讲解抽屉
@@ -451,8 +467,9 @@ async function sendText(text) {
     session.hintLevel = d.hint_level
     if (d.session_status === 'completed') {
       session.done = true
-      messages.value.push({ role: 'system', text: '🎉 内化判定通过！该知识点已升级为「已内化」，本关完成。' })
+      messages.value.push({ role: 'system', text: '🎉 总结迁移已完成！这次的方法已经留进你的学习证据。' })
       session.variant = d.variant || null   // 推荐的变式题（迁移检验）
+      await loadActiveSessions()            // 完成后重算唯一下一步
     }
   } catch (e) {
     messages.value.push({ role: 'system', text: '出错了：' + e.message })
@@ -538,12 +555,6 @@ async function submitObservation() {
   observationPending.value = false
   observationDone.value = true
   await sendText(text)
-}
-
-async function skipObservation() {
-  observationPending.value = false
-  observationDone.value = true
-  await sendText(`${OBSERVATION_MARK}\n我运行了代码，但暂时描述不出观察，请帮我一起分析。`)
 }
 
 async function submitSummary() {
@@ -669,7 +680,7 @@ function quit() {
     <!-- 浅色顶栏（做题页全屏接管为暖纸卡片；盖住共享顶栏，不影响其它页） -->
     <div class="wt">
       <div class="wt-brand"><span class="wt-logo">知</span> ACP Learning</div>
-      <div class="wt-context"><span>当前阶段</span><b>{{ session.stage.slice(1) }}</b></div>
+      <div class="wt-context"><span>当前一步</span><b>{{ currentLearningStep.name }}</b></div>
       <span class="wt-id">{{ studentId }}</span>
       <button class="wt-quit" @click="quit">退出关卡</button>
     </div>
@@ -702,14 +713,6 @@ function quit() {
               <textarea ref="taEl" v-model="session.code" class="cc-ta" spellcheck="false"
                         :disabled="session.fixed" @scroll="syncScroll" />
             </div>
-            <!-- 滑出讲解便签：点行号触发，内容用现成「逐行讲解」(walkRows)；不泄雷 -->
-            <div v-if="selectedLine" class="cc-note" :style="{ top: Math.max(8, (16 + (selectedLine - 1) * 31) - 6) + 'px' }">
-              <div class="cc-note-head">
-                <span class="cc-note-line">第 {{ selectedLine }} 行</span>
-                <button class="cc-note-x" @click="selectedLine = null" aria-label="收起">×</button>
-              </div>
-              <div class="cc-note-body">{{ lineNote }}</div>
-            </div>
           </div>
 
           <!-- 终端状态条（默认一行，运行后可展开） -->
@@ -729,21 +732,16 @@ function quit() {
           </div>
         </div>
 
-        <div v-if="session.done" class="banner banner-done">
-          🎉 <b>这次你不只是修好了，也把它讲清楚了。</b>
-          <div class="completion-actions">
-            <RouterLink :to="`/replay/${session.id}`" class="completion-link">回看我是怎么想通的 →</RouterLink>
-            <button v-if="!session.variant" class="completion-next" @click="start()">继续下一次练习</button>
-          </div>
-          <div v-if="session.variant" class="variant-offer">
-            <span class="variant-label">想检验是否真的学会？试试这道<b>同类变式题</b>——独立解出才算迁移到位：</span>
-            <button class="primary variant-btn" @click="start(session.variant.id)">
-              挑战变式：{{ session.variant.name }} →
-            </button>
-          </div>
-        </div>
+        <CompletionPanel
+          v-if="session.done"
+          :session-id="session.id"
+          :variant="session.variant"
+          :action="lobbyAction"
+          :loading="!session.variant && !guidanceLoaded"
+          @continue="takeCompletionAction"
+        />
         <div v-else-if="session.fixed" class="banner banner-fixed">
-          ✓ 代码修对了——接着到右边和知返走完<b>验证</b>、<b>内化</b>，这关才算真学会。
+          ✓ 代码修对了——接着到右边和知返走完<b>修改验证</b>、<b>总结迁移</b>，这关才算真学会。
         </div>
 
         <!-- 逐行讲解抽屉（完整通读；点行号是即时单行讲解） -->
@@ -771,67 +769,31 @@ function quit() {
           </div>
         </div>
 
-      <!-- 看不懂代码?：合并 逐行讲解 + 认符号 + 补概念 -->
-      <div class="tool-shelf">
-        <button :class="['tool-trigger', { open: showExplain }]" @click="toggleExplain">
-          <span><b>需要时再打开</b> · 逐行讲解、认符号、补概念</span>
-          <span>{{ showExplain ? '收起 ↑' : '展开 ↓' }}</span>
-        </button>
-      </div>
-      <div v-if="showExplain" class="panel explain-panel">
-        <div class="explain-body">
-          <button class="walk-trigger-inline" @click="openWalk">📖 逐行讲解（完整通读，从代码上滑出）</button>
-          <!-- 认符号 -->
-          <div v-if="visibleBricks.length" class="syntax-box">
-            <button class="syntax-head" @click="showSyntax = !showSyntax">
-              <span class="primer-caret" :class="{ open: showSyntax }">▸</span>
-              先认认这道题里的符号（{{ visibleBricks.length }} 个）
-            </button>
-            <div v-show="showSyntax" class="syntax-list">
-              <div v-for="b in visibleBricks" :key="b.name" class="syntax-item">
-                <div class="syntax-row">
-                  <span class="syntax-name">{{ b.name }}</span>
-                  <button class="brick-known" title="标记懂了，以后不再显示" @click="markBrickLearned(b.name)">✓ 懂了</button>
-                </div>
-                <span class="syntax-desc">{{ b.desc }}</span>
-              </div>
-              <div v-if="hiddenBricks.length" class="brick-hidden">
-                <button class="brick-toggle" @click="showHiddenBricks = !showHiddenBricks">
-                  已隐藏 {{ hiddenBricks.length }} 个你标记懂了的符号 {{ showHiddenBricks ? '▾' : '▸' }}
-                </button>
-                <div v-show="showHiddenBricks" class="hidden-list">
-                  <div v-for="b in hiddenBricks" :key="b.name" class="hidden-item">
-                    <span class="syntax-name">{{ b.name }}</span>
-                    <button class="brick-restore" @click="restoreBrick(b.name)">↩ 恢复</button>
-                  </div>
-                  <button class="brick-reset" @click="resetLearnedBricks">全部恢复</button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 概念 -->
-          <template v-if="primerConcepts.length">
-            <div class="primer-sub">这道题涉及的概念</div>
-            <div v-for="c in primerConcepts" :key="c.kp" class="primer-item">
-              <div class="primer-term">
-                {{ c.kp }}
-                <span v-if="c.mastered" class="primer-tag done">已掌握</span>
-                <span v-else class="primer-tag new">新</span>
-              </div>
-              <div class="primer-desc">{{ c.desc || '遇到不懂的随时问知返。' }}</div>
-            </div>
-          </template>
-          <p class="primer-foot">对话里带虚线的词，悬停就能看解释。</p>
-        </div>
-      </div>
+      <LearningHelp
+        :open="showExplain"
+        :step="currentLearningStep"
+        :selected-line="selectedLine"
+        :line-note="lineNote"
+        :walk-loading="walkLoading"
+        :visible-bricks="visibleBricks"
+        :hidden-bricks="hiddenBricks"
+        :concepts="primerConcepts"
+        :asking-tutor="sending"
+        @toggle="toggleExplain"
+        @clear-line="selectedLine = null"
+        @open-walk="openWalk"
+        @change-route="requestDifferentExplanation"
+        @mark-brick="markBrickLearned"
+        @restore-brick="restoreBrick"
+        @reset-bricks="resetLearnedBricks"
+      />
       </div>
 
       <div class="wr">
         <div class="thinking-head">
           <span class="thinking-kicker">当前只做这一小步，写不出来也可以问知返</span>
           <div class="thinking-head-r">
-            <span class="thinking-stage">现在 · {{ session.stage.slice(1) }}</span>
+            <span class="thinking-stage">现在 · {{ currentLearningStep.name }}</span>
             <button class="thought-toggle" @click="thoughtOpen = !thoughtOpen">{{ thoughtOpen ? '只看当前一步' : '查看完整记录' }}</button>
           </div>
         </div>
@@ -839,11 +801,11 @@ function quit() {
         <h3 class="wr-title acp-serif">当前任务</h3>
 
         <div :class="['thought-line', { compact: !thoughtOpen }]">
-          <section v-show="thoughtOpen || session.stage === '①发现' || observationPending"
-                   :class="['thought-step', { active: session.stage === '①发现', filled: observationRecord?.observation }]">
+          <section v-show="thoughtOpen || currentLearningStep.id === 'observe' || observationPending"
+                   :class="['thought-step', { active: currentLearningStep.id === 'observe', filled: observationRecord?.observation }]">
             <span class="thought-dot">1</span>
             <div class="thought-content">
-              <div class="thought-title">观察 <span>运行后，实际发生了什么？</span></div>
+              <div class="thought-title">运行观察 <span>运行后，实际发生了什么？</span></div>
               <div v-if="observationRecord?.observation" class="thought-note">
                 {{ observationRecord.observation }}
               </div>
@@ -857,44 +819,41 @@ function quit() {
                     <input type="checkbox" v-model="obsChecks[k]" /> {{ k }}
                   </label>
                 </div>
+                <textarea v-model="obsGuess" class="obs-guess" rows="2"
+                          placeholder="我猜问题可能经过……（说不上来可以留空）" />
+                <div class="obs-actions">
+                  <button class="primary" :disabled="sending" @click="submitObservation">记下来，再听知返怎么想 →</button>
+                </div>
               </div>
             </div>
           </section>
 
-          <section v-show="thoughtOpen || ['②定位', '③归因', '④修复'].includes(session.stage) || observationPending"
-                   :class="['thought-step', { active: ['②定位', '③归因', '④修复'].includes(session.stage), filled: observationRecord?.guess }]">
+          <section v-show="thoughtOpen || currentLearningStep.id === 'explain'"
+                   :class="['thought-step', { active: currentLearningStep.id === 'explain', filled: observationRecord?.guess }]">
             <span class="thought-dot">2</span>
             <div class="thought-content">
-              <div class="thought-title">猜测 <span>问题可能在哪里，为什么？</span></div>
+              <div class="thought-title">定位原因 <span>问题经过哪里，为什么会这样？</span></div>
               <div v-if="observationRecord?.guess" class="thought-note">
                 {{ observationRecord.guess }}
               </div>
-              <template v-else-if="observationPending">
-                <textarea v-model="obsGuess" class="obs-guess" rows="2"
-                          placeholder="问题可能出在……（说不上来可以留空）" />
-                <div class="obs-actions">
-                  <button class="primary" :disabled="sending" @click="submitObservation">记下来，再听知返怎么想 →</button>
-                  <button class="obs-skip" :disabled="sending" @click="skipObservation">我看不懂，直接请知返帮助</button>
-                </div>
-              </template>
               <div v-else class="thought-empty">先凭感觉也可以，知返会陪你把猜测一点点变清楚。</div>
             </div>
           </section>
 
-          <section v-show="thoughtOpen || session.stage === '⑤验证'"
-                   :class="['thought-step', { active: session.stage === '⑤验证', filled: runResult || session.fixed }]">
+          <section v-show="thoughtOpen || currentLearningStep.id === 'verify'"
+                   :class="['thought-step', { active: currentLearningStep.id === 'verify', filled: runResult || session.fixed }]">
             <span class="thought-dot">3</span>
             <div class="thought-content">
-              <div class="thought-title">验证 <span>什么结果能支持或推翻猜测？</span></div>
+              <div class="thought-title">修改验证 <span>做一个最小修改，再用真实结果检验。</span></div>
               <div :class="['thought-note', { muted: !runResult && !session.fixed }]">{{ verificationNote }}</div>
             </div>
           </section>
 
-          <section v-show="thoughtOpen || session.stage === '⑥内化'"
-                   :class="['thought-step', { active: session.stage === '⑥内化', filled: summaryRecord?.summary }]">
+          <section v-show="thoughtOpen || currentLearningStep.id === 'transfer'"
+                   :class="['thought-step', { active: currentLearningStep.id === 'transfer', filled: summaryRecord?.summary }]">
             <span class="thought-dot">4</span>
             <div class="thought-content">
-              <div class="thought-title">总结 <span>下次再遇到时，我想记住什么？</span></div>
+              <div class="thought-title">总结迁移 <span>下次再遇到时，我想记住什么？</span></div>
               <div v-if="summaryRecord?.summary" class="thought-note">{{ summaryRecord.summary }}</div>
               <div v-else-if="session.stage === '⑥内化'" class="summary-compose">
                 <textarea v-model="summaryDraft" rows="2"
@@ -930,7 +889,7 @@ function quit() {
           <div class="composer-box">
             <textarea
               v-model="draft" rows="1"
-              placeholder="描述你的观察、猜测、验证…"
+              placeholder="说说真实结果、原因、验证或总结…"
               @keydown.enter.exact.prevent="send"
             />
             <div class="composer-actions">
@@ -990,11 +949,6 @@ function quit() {
 .cc-hl :deep(.t-str) { color: #5c7a52; }
 .cc-hl :deep(.t-com) { color: #a89e8c; font-style: italic; }
 .cc-ta { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; outline: none; background: transparent; color: transparent; caret-color: #c15f3c; overflow: auto; }
-.cc-note { position: absolute; right: 16px; width: 320px; background: #fff; border: 1px solid #f0d8c8; border-left: 3px solid #c15f3c; border-radius: 10px; box-shadow: 0 18px 36px -16px rgba(193,95,60,0.35); padding: 12px 15px; z-index: 3; }
-.cc-note-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
-.cc-note-line { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #fff; background: #c15f3c; padding: 2px 8px; border-radius: 5px; font-weight: 600; }
-.cc-note-x { margin-left: auto; border: none; background: none; font-size: 16px; color: #a89e8c; cursor: pointer; line-height: 1; }
-.cc-note-body { font-size: 13px; line-height: 1.7; color: #3a3530; }
 .cc-term { border-top: 1px solid #1c2128; background: #11151b; }
 .cc-term-bar { display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 16px; background: none; border: none; cursor: pointer; text-align: left; }
 .cc-dots { display: inline-flex; gap: 6px; align-items: center; flex: none; }
@@ -1011,13 +965,6 @@ function quit() {
 .cc-term-body .console-err { color: #ff9d8c; font-size: 13px; margin: 0; white-space: pre-wrap; }
 .cc-term-body .console-muted { color: #6b7480; font-size: 12.5px; }
 .cc-term-body .console-hint { color: #f0c27b; font-size: 12.5px; line-height: 1.6; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #3a352f; }
-
-/* 看不懂代码 + explain（浅色）*/
-.wl .tool-trigger { background: #fcfbf7; border: 1px solid #e7e2d6; border-radius: 11px; color: #6f695d; }
-.wl .tool-trigger b { color: #2b2924; }
-.wl .explain-panel { background: #fcfbf7; border: 1px solid #e7e2d6; border-radius: 11px; }
-.wl .walk-trigger-inline { width: 100%; background: #f4efe5; border: 1px solid #e7e2d6; color: #6f695d; border-radius: 10px; padding: 10px; font-size: 13px; font-weight: 600; cursor: pointer; margin-bottom: 6px; }
-.wl .walk-trigger-inline:hover { border-color: #c15f3c; color: #c15f3c; }
 
 /* 右栏：我的思考过程（浅色，按设计）*/
 .wr-title { font-family: var(--serif); font-size: 21px; font-weight: 600; color: #2b2924; margin: 0; padding: 4px 24px 0; }
@@ -1242,60 +1189,6 @@ function quit() {
 .card:hover .card-cta { transform: translateX(4px); }
 
 
-/* ---------- 练前小灶 ---------- */
-/* 辅助层：移到主线下方（CSS order，不动 DOM），折叠条做成安静小条 */
-.primer { padding: 0; overflow: hidden; order: 1; }
-.primer-head {
-  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-  background: transparent; border: none; padding: 11px 18px; cursor: pointer;
-  font-size: 13.5px; color: var(--muted); border-radius: 14px 14px 0 0;
-}
-.primer-head b { font-weight: 600; color: var(--text); }
-.primer-head-sub { color: var(--muted); font-size: 13px; margin-left: 6px; }
-.primer-caret { color: var(--primary); font-size: 12px; transition: transform 0.18s; }
-.primer-caret.open { transform: rotate(90deg); }
-.primer-body {
-  padding: 16px 20px; display: flex; flex-direction: column; gap: 14px;
-  max-height: 52vh; overflow-y: auto;   /* 逐行讲解再长也只在本块内滚，不把下面代码/知返顶出屏幕 */
-}
-.primer-item { display: flex; flex-direction: column; gap: 3px; }
-.primer-term { font-family: var(--serif); font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 9px; }
-.primer-tag { font-size: 11.5px; font-weight: 500; padding: 1px 8px; border-radius: 999px; font-family: 'Segoe UI', sans-serif; }
-.primer-tag.done { background: #e4ede0; color: #3f5837; }
-.primer-tag.new { background: var(--accent-soft); color: var(--primary-dark); }
-.primer-desc { font-size: 13.5px; color: var(--muted); line-height: 1.65; }
-.primer-foot { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
-.primer-sub { font-size: 13px; font-weight: 600; color: var(--text); margin-top: 2px; }
-
-/* 代码符号扫盲 */
-.syntax-box { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-.syntax-head {
-  display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
-  background: var(--bg); border: none; padding: 10px 14px; cursor: pointer;
-  font-size: 13.5px; color: var(--text);
-}
-.syntax-list { padding: 6px 14px 12px; display: flex; flex-direction: column; gap: 9px; }
-.syntax-item { display: flex; flex-direction: column; gap: 2px; }
-.syntax-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.syntax-name {
-  font-family: Consolas, monospace; font-size: 13px; font-weight: 700; color: var(--primary-dark);
-}
-.syntax-desc { font-size: 13px; color: var(--muted); line-height: 1.6; }
-.brick-known {
-  flex-shrink: 0; font-size: 11.5px; color: var(--muted); border: 1px solid var(--border);
-  background: none; padding: 1px 8px; border-radius: 999px;
-}
-.brick-known:hover { border-color: var(--green); color: var(--green); }
-.brick-hidden { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
-.brick-allknown { font-size: 12px; color: var(--muted); margin: 4px 0; }
-.brick-toggle { font-size: 12px; color: var(--muted); background: none; border: none; padding: 0; cursor: pointer; }
-.brick-toggle:hover { color: var(--text); }
-.hidden-list { margin-top: 6px; display: flex; flex-direction: column; gap: 5px; }
-.hidden-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.brick-restore { font-size: 12px; color: var(--primary); background: none; border: 1px solid var(--border); border-radius: 6px; padding: 1px 8px; cursor: pointer; }
-.brick-restore:hover { border-color: var(--primary); }
-.brick-reset { font-size: 12px; color: var(--primary); background: none; border: none; padding: 2px 0 0; cursor: pointer; align-self: flex-start; }
-
 /* 逐行讲解 */
 .walk-btn {
   width: 100%; text-align: left; font-size: 13.5px; color: var(--muted);
@@ -1329,18 +1222,6 @@ function quit() {
 .walk-deep:hover { border-color: var(--primary); }
 .walk-deep-done { margin-top: 10px; font-size: 12px; color: var(--muted); }
 
-.explain-panel { max-height: 560px; overflow-y: auto; }
-.explain-body { display: flex; flex-direction: column; gap: 14px; }
-.tool-shelf { padding: 0 4px; }
-.tool-trigger {
-  display: flex; justify-content: space-between; align-items: center; gap: 16px;
-  width: 100%; padding: 9px 12px; border: 1px solid transparent; background: transparent;
-  color: var(--muted); text-align: left; font-size: 12.5px; border-radius: 9px;
-}
-.tool-trigger b { color: var(--text); font-weight: 600; }
-.tool-trigger:hover, .tool-trigger.open {
-  background: #f1ebe0; border-color: var(--border); color: var(--primary);
-}
 @media (max-width: 900px) {
   .cols { grid-template-columns: 1fr; }
   .thinking-panel { min-height: auto; }
@@ -1355,7 +1236,6 @@ function quit() {
   .stage-bar { padding: 12px 14px; }
   .code { min-height: 220px; flex: 1 1 220px; font-size: 14px; padding: 14px; }
   .console-body { max-height: 220px; }
-  .explain-panel { max-height: none; }   /* 单列时不要再套一层内滚 */
   .composer { flex-direction: column; align-items: stretch; }
   .send-btn { width: 100%; }
 }
@@ -1408,18 +1288,6 @@ function quit() {
 .obs-guess { margin-top: 8px; resize: vertical; background: #fffdf9; }
 .obs-actions { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
 .obs-actions .primary { font-size: 12.5px; padding: 7px 12px; }
-.obs-skip {
-  font-size: 12.5px; color: var(--muted); background: none; border: none;
-  text-decoration: underline; padding: 0; cursor: pointer;
-}
-.obs-skip:hover { color: var(--primary); }
-.variant-offer { margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0cdbb; display: flex; flex-direction: column; gap: 8px; }
-.variant-label { font-size: 13px; }
-.variant-btn { align-self: flex-start; }
-.completion-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
-.completion-link { color: var(--primary-dark); font-weight: 600; text-decoration: none; }
-.completion-next { padding: 5px 10px; background: transparent; color: var(--muted); }
-
 /* ---------- 思考主线 + 知返 ---------- */
 .thinking-panel {
   min-height: 650px; height: 100%; padding: 22px 24px; display: flex; flex-direction: column;

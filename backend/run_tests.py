@@ -538,6 +538,7 @@ def active_sessions_按活跃倒序且上限5():
     assert times == sorted(times, reverse=True), f"应按活跃度倒序：{times}"
     assert "s5" not in [s["session_id"] for s in sessions], "最老的应被挤出前 5"
     assert sessions[0]["name"] and sessions[0]["stage"], "应带 name/stage 供大厅展示"
+    assert sessions[0]["display_step"] == "运行观察", "学生界面应只消费四步语言"
     db.close()
 
 @test
@@ -1139,6 +1140,7 @@ def 续学决策_固定四级优先级且理由可解释():
     assert resume["action"]["kind"] == "resume"
     assert resume["action"]["reason_code"] == "unfinished_first"
     assert resume["action"]["evidence"]["ref"] == "s1"
+    assert "修改验证" in resume["action"]["detail"] and "修复" not in resume["action"]["detail"]
     assert resume["pending"] == {"active": 1, "reviews": 1, "recommendations": 1}
 
     review_action = learning_path.decide_next_action([], due, recs)

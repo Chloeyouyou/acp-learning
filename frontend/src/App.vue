@@ -79,11 +79,10 @@ function switchIdentity() {
         <RouterLink to="/map">学习地图</RouterLink>
         <RouterLink to="/timeline">我的成长</RouterLink>
         <details class="more-nav">
-          <summary>更多</summary>
+          <summary>专项练习</summary>
           <div class="more-menu">
             <RouterLink to="/coop">AI 共脑调试</RouterLink>
             <RouterLink to="/question">提问训练</RouterLink>
-            <RouterLink to="/profile">能力画像</RouterLink>
           </div>
         </details>
       </nav>
