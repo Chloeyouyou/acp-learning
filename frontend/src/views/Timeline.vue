@@ -28,6 +28,20 @@ const nextStep = computed(() => guidance.value?.action || {
 const nextEyebrow = computed(() => nextActionEyebrow(guidance.value))
 const queuedHint = computed(() => nextActionQueueHint(guidance.value))
 
+// 近 7 天调试足迹（镜子非审判）：进步和松动先讲，卡点用四步语言、带一句可行建议
+const footprintLines = computed(() => {
+  const fp = data.value?.footprint
+  if (!fp?.enough) return []
+  const lines = []
+  if (fp.targeted_progress?.length)
+    lines.push({ tag: '进步', good: true, text: `在《${fp.targeted_progress.join('》《')}》里，你从到处试改，走到了对准关键行修改。` })
+  if (fp.loosened?.length)
+    lines.push({ tag: '松动', good: true, text: `「${fp.loosened[0].name}」这个思维默认值，这周在《${fp.loosened[0].pattern}》上松动了。` })
+  if (fp.stuck_step)
+    lines.push({ tag: '卡点', good: false, text: `这周最常需要搭把手的一步是「${fp.stuck_step}」（${fp.stuck_count} 次）——下次卡在这里时，先回看运行结果再动手。` })
+  return lines
+})
+
 function takeNextStep() {
   router.push(nextActionTarget(guidance.value))
 }
@@ -128,6 +142,21 @@ function fmtDay(d) {
           <p v-if="data.persona.enough" class="persona-foot">{{ data.persona.line }}</p>
         </template>
         <p v-else class="note">{{ data.thinking_patterns.hint }}</p>
+      </div>
+    </div>
+
+    <!-- 近 7 天调试足迹：只在有活动时出现，安静一条 -->
+    <div v-if="data.footprint?.enough" class="footprint" aria-label="近7天调试足迹">
+      <div class="fp-head">
+        <span class="ctx-kicker">近 {{ data.footprint.days }} 天足迹</span>
+        <span class="fp-stats">
+          练了 {{ data.footprint.patterns_touched }} 道题 · 尝试 {{ data.footprint.attempts }} 次 ·
+          活跃 {{ data.footprint.active_days }} 天<template v-if="data.footprint.internalized.length"> · 内化 {{ data.footprint.internalized.length }} 道</template>
+        </span>
+      </div>
+      <div v-for="(l, li) in footprintLines" :key="li" class="field">
+        <span :class="['tag', { 'gain-tag': l.good }]">{{ l.tag }}</span>
+        <span class="field-val">{{ l.text }}</span>
       </div>
     </div>
 
@@ -250,6 +279,11 @@ function fmtDay(d) {
 .tp-reflection { font-size: 12px; color: var(--text); margin-top: 5px; line-height: 1.5; }
 .tp-advice { font-size: 12.5px; color: var(--primary-dark); margin-top: 5px; }
 .persona-foot { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+
+/* 近 7 天足迹：安静一条，不与「下一步」抢焦点 */
+.footprint { background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 14px 17px; }
+.fp-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.fp-stats { font-size: 13px; color: var(--text); }
 
 /* 小标题 */
 .tl-heading { display: flex; align-items: baseline; gap: 10px; margin-top: 8px; }

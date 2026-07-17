@@ -2133,6 +2133,40 @@ def 过程旁白_注入导师system且带硬规则():
         mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
 
 
+@test
+def 足迹周报_窗口聚合卡点与进步():
+    from datetime import datetime, timedelta, timezone as _tz
+    from app.models import SessionMessage as SM, TutorSession as TS
+    recent_ts = datetime.now(_tz.utc).isoformat()
+    old_ts = (datetime.now(_tz.utc) - timedelta(days=30)).isoformat()
+    # 两个 Episode：一个本周已内化（快照证据=试探开局），一个 30 天前的（必须被窗口排除）
+    episodes = [
+        {"pattern_id": "BP-NULL-002", "pattern_name": "方法返回None未检查", "session_id": "fp_s1",
+         "outcome": "已内化", "last_at": recent_ts,
+         "rounds": [{"day": recent_ts[:10], "attempts": [{"time": recent_ts}, {"time": recent_ts}]}]},
+        {"pattern_id": "BP-NULL-003", "pattern_name": "字典取值未判空", "session_id": "fp_s2",
+         "outcome": "已解决", "last_at": old_ts,
+         "rounds": [{"day": old_ts[:10], "attempts": [{"time": old_ts}]}]},
+    ]
+    db = TestSession()
+    db.add(TS(id="fp_tut1", student_id="fp1", pattern_id="BP-NULL-002",
+              manifest={"mines": []}, history=[], stage="②定位", mine_status="planted"))
+    db.add(SM(id="sm_fp1", session_id="fp_tut1", seq=1, role="tutor", kind="chat", content="x",
+              meta={"support_mode": True, "stage_before": "②定位"}, created_at=recent_ts))
+    for seq, touched in enumerate((False, False, True), start=1):
+        _snap(db, "fp_s1", seq, touched)
+    db.commit()
+    fp = timeline.debug_footprint(db, "fp1", episodes)
+    assert fp["enough"] and fp["attempts"] == 2 and fp["patterns_touched"] == 1, \
+        f"30 天前的尝试必须被窗口排除: {fp}"
+    assert fp["internalized"] == ["方法返回None未检查"], fp
+    assert fp["stuck_step"] == "定位原因" and fp["stuck_count"] == 1, "卡点应翻成四步语言"
+    assert fp["targeted_progress"] == ["方法返回None未检查"], "试探开局且解决的题应报进步"
+    assert fp["loosened"] and "正常" in fp["loosened"][0]["name"], "高频簇内化应报松动"
+    assert timeline.debug_footprint(db, "fp_empty", [])["enough"] is False, "无活动 enough=False"
+    db.close()
+
+
 # 认知先验层测试组：在 test_priors.py 独立维护（假 LLM、零外部依赖、可单跑），
 # 这里并入主套件一起跑。顶部已设 ACP_PRIORS=off，结算路径不打真网。
 import test_priors as _priors  # noqa: E402

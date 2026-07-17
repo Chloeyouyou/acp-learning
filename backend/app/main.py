@@ -389,7 +389,10 @@ def get_timeline(student_id: str, db: Session = Depends(get_db),
                  me: str = Depends(current_student)):
     """B1 调试成长轨迹（纯派生只读）：一道题=一个 Episode，串观察/尝试链/认知根因/收获。"""
     require_self(student_id, me)
-    return timeline.build_timeline(db, student_id)
+    data = timeline.build_timeline(db, student_id)
+    # 方向一 1.3：近 7 天调试足迹周报（复用已算好的 episodes，纯派生）
+    data["footprint"] = timeline.debug_footprint(db, student_id, data["episodes"])
+    return data
 
 
 @app.get("/api/students/{student_id}/review-queue")
