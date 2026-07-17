@@ -98,14 +98,65 @@ curl http://localhost:8000/api/health   # 返回 {"status":"ok","sandbox":"docke
   指向 `localhost:8000`，拿到一个 https 公网地址，连端口都不用对外开。
 - **C. 先不加**：内测同学少、先用 `http://IP:8000` 验证功能也行。
 
-## 7. 以后更新代码（数据不会丢）
+## 7. 以后更新到最新版（权威流程 · 数据不丢）
+
+> 这是 VPS 已经跑过一版、要升级到 GitHub 最新代码时的**标准步骤**。本机 VPS：`root@72.11.133.118`。
+> 一步一步来，某步报红色错误就停下，别往下敲。
+
+**第 0 步 · 连上 VPS**
+自己电脑开 PowerShell（Win 键 → 输 `powershell` → 回车）：
+```bash
+ssh root@72.11.133.118
+```
+输 root 密码（屏幕不显示字是正常的）。成功 = 提示符变成 `root@...:~#`。
+> 若反复 `Connection closed` / 握手超时 → 国内线路掐 22 端口，走 RackNerd 网页控制台（VNC）操作，或换 SSH 端口。
+> 建议装一次免密公钥，之后 ssh/scp 不再要密码：把本机 `~/.ssh/id_ed25519.pub` 内容 append 到 VPS 的 `~/.ssh/authorized_keys`。
+
+**第 1 步 · 先抄下 AI 的 key（等下重启要用）**
+```bash
+docker exec acp printenv DEEPSEEK_API_KEY
+```
+打印的 `sk-...` 字符串复制存好。
+
+**第 2 步 · 拉最新代码**
 ```bash
 cd /root/acp-learning
-git pull                       # 拉最新代码
-docker build -t acp-learning . # 重新打包
-docker rm -f acp               # 删旧容器（数据在 /root/acp-data，不受影响）
-# 再执行第 5 步的 docker run ... 重新启动
+git pull
 ```
+成功 = 文件名滚过、无红色报错。若要账号密码 → GitHub 令牌过期，先停下。
+
+**第 3 步 · 预拉沙箱镜像（学生代码隔离运行用）**
+```bash
+docker pull python:3.12-slim
+```
+
+**第 4 步 · 重新打包（几分钟）**
+```bash
+docker build -t acp-learning .
+```
+成功 = 最后出现 `naming to ... acp-learning`。
+
+**第 5 步 · 删旧容器（数据在 `/root/acp-data`，不受影响）**
+```bash
+docker rm -f acp
+```
+
+**第 6 步 · 启动新版（整行一次性粘贴，把 `<你的key>` 换成第 1 步抄的）**
+```bash
+docker run -d --name acp --restart unless-stopped -p 8000:8000 -e DEEPSEEK_API_KEY="<你的key>" -e DATABASE_URL="sqlite:////data/acp.db" -e ACP_SANDBOX="docker" -v /root/acp-data:/data -v /var/run/docker.sock:/var/run/docker.sock acp-learning
+```
+成功 = 打印一长串容器 ID。
+
+**第 7 步 · 验收**
+```bash
+curl http://localhost:8000/api/health
+```
+必须看到 `"status":"ok"` 且 `"sandbox":"docker"`（后者=安全隔离生效）。显示 `subprocess` 说明 socket 没挂上，排查第 6 步的 `-v /var/run/docker.sock`。
+最后浏览器开 `http://72.11.133.118:8000`，看到浅色新 UI + 「课程地图」入口即成功。
+
+> ⚠️ **老库升级坑（已知）**：若 VPS 上是「登录功能之前」的老库（没有 `students` 表），新版启动的自动纳管会跳过建表 → 登录报 500。
+> 处置：老库测试数据不要了就 `docker stop acp && rm -f /root/acp-data/acp.db*  && docker start acp`（重建全新库）；
+> 要保留本地进度就把本地 `backend/acp.db`（已是新版结构）`scp` 覆盖上去再 `docker start acp`。此 bug 待在代码层修 `db.py:init_db` 的 stamp 分支。
 
 ## 8. 备份数据（养成习惯）
 数据库就是一个文件，定期拷走即可：
