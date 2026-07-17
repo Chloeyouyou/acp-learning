@@ -2060,6 +2060,12 @@ def 兜底升级_LLM挂掉时按阶段给确定性引导():
         mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
 
 
+# 认知先验层测试组：在 test_priors.py 独立维护（假 LLM、零外部依赖、可单跑），
+# 这里并入主套件一起跑。顶部已设 ACP_PRIORS=off，结算路径不打真网。
+import test_priors as _priors  # noqa: E402
+_tests.extend(_priors._tests)
+
+
 def main():
     passed = failed = skipped = 0
     for fn in _tests:
