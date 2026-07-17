@@ -14,6 +14,8 @@ venv/
 # Node
 node_modules/
 dist/
+playwright-report/
+test-results/
 *.local
 
 # IDE
@@ -30,3 +32,10 @@ Thumbs.db
 
 # 自动出题候选（人审入库前不进 git）
 backend/patterns/_pending/
+
+# 认知先验层数据（学生个人档案，不入库；迁移=搬目录）
+backend/priors_data/
+
+# 本地产物：真实学号数据导出/路演包/手工库备份，含个人数据不入库
+outputs/
+*.backup-before-clean

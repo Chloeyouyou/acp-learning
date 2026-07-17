@@ -1,42 +1,14 @@
 <script setup>
-import { onMounted, ref, computed, reactive } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { onMounted, ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '../api'
 import RadarChart from '../components/RadarChart.vue'
 import GlossaryText from '../components/GlossaryText.vue'
 
 const router = useRouter()
-const route = useRoute()
 function practiceVariant(pid) {
   router.push({ path: '/arena', query: { start: pid } })
 }
-// 从能力画像直接开题（IA：画像=推荐与选题中枢，doc 10）。复用 Arena 的 ?start= 自动开题，不改开题逻辑。
-function start(pid) {
-  router.push({ path: '/arena', query: { start: pid } })
-}
-
-// 推荐与题库（从大厅搬来，doc 10）。分类元数据与分组逻辑与 Arena 一致。
-const recs = ref([])
-const recsLoading = ref(false)
-const patterns = ref([])
-const openCats = reactive({})
-function toggleCat(c) { openCats[c] = !openCats[c] }
-const CATEGORY_META = {
-  boundary: { label: '边界类', desc: '数组越界、差一错误——和「范围」打交道时最常见的坑。' },
-  loop: { label: '循环类', desc: '循环次数、终止条件、累加逻辑里的细节失误。' },
-  null: { label: '空值类', desc: '空对象、缺字段、None——没防住「什么都没有」的情况。' },
-  arithmetic: { label: '算术类', desc: '除零、溢出等数值运算中的边界问题。' },
-}
-const CATEGORY_ORDER = ['boundary', 'loop', 'null', 'arithmetic']
-const grouped = computed(() => {
-  const byCat = {}
-  for (const p of patterns.value) (byCat[p.category] ||= []).push(p)
-  const order = [...CATEGORY_ORDER, ...Object.keys(byCat).filter((c) => !CATEGORY_ORDER.includes(c))]
-  return order.filter((c) => byCat[c]?.length).map((c) => ({
-    category: c, ...(CATEGORY_META[c] || { label: c, desc: '' }),
-    items: byCat[c].sort((a, b) => (a.difficulty || '').localeCompare(b.difficulty || '')),
-  }))
-})
 
 const ZH = {
   Log_Reading: '日志阅读', Boundary_Awareness: '边界意识', Root_Cause_Reasoning: '根因分析',
@@ -69,20 +41,10 @@ async function load() {
   try {
     profile.value = await api.getProfile()
     const ps = await api.listPatterns().catch(() => [])
-    patterns.value = ps
     patternNames.value = Object.fromEntries(ps.map((p) => [p.id, p.name]))
-    if (grouped.value[0]) openCats[grouped.value[0].category] = true  // 默认只展开第一组
   } catch (e) {
     error.value = '加载失败：' + e.message
   }
-  loadRecs()
-}
-
-async function loadRecs() {
-  recsLoading.value = true
-  try { recs.value = await api.getRecommendations() }
-  catch (e) { recs.value = [] }
-  finally { recsLoading.value = false }
 }
 
 // 关卡进度概览：各状态计数
@@ -153,7 +115,7 @@ const sortedMastery = computed(() =>
   }))
 
 // 下半部分用标签页：一次只看一块，避免页面又长又吵
-const tab = ref(route.query.tab === '推荐' ? '推荐' : '能力')   // 默认能力雷达（设计稿：雷达是主角）；'能力' | '知识点' | '推荐'
+const tab = ref('能力')   // 画像只解释能力与知识点证据；推荐和题库统一归学习地图
 
 // 维度还没数据时，解释它测什么、怎么才会有分（避免空维度看起来像坏了）
 const DIM_HINT = {
@@ -179,6 +141,17 @@ const coverage = computed(() => (profile.value?.dimensions || []).filter((d) => 
   <div v-if="error" class="panel error">{{ error }}</div>
   <div v-else-if="!profile" class="panel">加载中…</div>
   <div v-else class="layout">
+    <header class="profile-head">
+      <div>
+        <span>证据归拢</span>
+        <h1>能力画像</h1>
+        <p>这里的每个判断都来自真实练习过程，不是 AI 凭印象给出的标签。</p>
+      </div>
+      <div class="profile-links">
+        <RouterLink to="/timeline">回到我的成长</RouterLink>
+        <RouterLink to="/map">去学习地图选题 →</RouterLink>
+      </div>
+    </header>
     <!-- 进度概览：横跨整页，一眼看懂学到哪了 -->
     <div class="overview">
       <div class="ov-item">
@@ -206,7 +179,6 @@ const coverage = computed(() => (profile.value?.dimensions || []).filter((d) => 
     <div class="tabbar">
       <button :class="['tab', { on: tab === '能力' }]" @click="tab = '能力'">能力雷达</button>
       <button :class="['tab', { on: tab === '知识点' }]" @click="tab = '知识点'">知识点</button>
-      <button :class="['tab', { on: tab === '推荐' }]" @click="tab = '推荐'">推荐与题库</button>
     </div>
 
     <!-- 能力雷达 + 能力明细（同一标签，左右并排） -->
@@ -255,7 +227,7 @@ const coverage = computed(() => (profile.value?.dimensions || []).filter((d) => 
         <div class="km-head">
           <h3>知识点 <small class="h3-sub">点卡片展开看详情</small></h3>
           <div v-if="nextPractice" class="km-next">
-            <span class="km-next-label">下一题推荐</span>
+            <span class="km-next-label">针对这个知识点</span>
             <span class="km-next-kp">{{ nextPractice.kp }}</span>
             <button class="km-next-btn" @click="practiceKp(nextPractice.kp)">去练 →</button>
           </div>
@@ -297,44 +269,19 @@ const coverage = computed(() => (profile.value?.dimensions || []).filter((d) => 
       </div>
     </div>
 
-    <!-- 推荐与题库：从大厅搬来（doc 10）。能力画像=选题中枢：看完状态，从这儿挑下一题。 -->
-    <div v-show="tab === '推荐'" class="tab-pane sel-pane">
-      <div class="panel">
-        <h3>智能推荐 <small class="h3-sub">按你的画像挑，点开始挑战</small></h3>
-        <p v-if="recsLoading" class="note">正在根据你的能力画像生成推荐…</p>
-        <p v-else-if="!recs.length" class="note">暂时没有可推荐的——可能已把现有题都内化了，去下面浏览全部复习。</p>
-        <div v-else class="sel-recs">
-          <button v-for="r in recs" :key="r.id" class="sel-rec" @click="start(r.id)">
-            <span class="sel-rec-reason">{{ r.reason }}</span>
-            <span class="sel-rec-name">{{ r.name }}</span>
-            <span class="sel-rec-meta">{{ r.difficulty }}<template v-if="(r.knowledge_points || []).length"> · {{ r.knowledge_points.join('、') }}</template></span>
-          </button>
-        </div>
-      </div>
-      <div class="panel">
-        <h3>浏览全部题目 <small class="h3-sub">{{ patterns.length }} 道，按类型分组</small></h3>
-        <div v-for="g in grouped" :key="g.category" class="sel-cat">
-          <button class="sel-cat-head" @click="toggleCat(g.category)">
-            <span class="sel-caret" :class="{ open: openCats[g.category] }">▸</span>
-            <span class="sel-cat-title">{{ g.label }}</span>
-            <span class="sel-cat-count">{{ g.items.length }} 题</span>
-            <span class="sel-cat-desc">{{ g.desc }}</span>
-          </button>
-          <div v-show="openCats[g.category]" class="sel-items">
-            <button v-for="p in g.items" :key="p.id" class="sel-item" @click="start(p.id)">
-              <span class="sel-item-name">{{ p.name }}</span>
-              <span class="sel-item-diff">{{ p.difficulty }}</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <style scoped>
 .error { border-color: var(--red); color: var(--red); }
 .layout { display: flex; flex-direction: column; gap: 16px; }
+.profile-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; padding: 5px 2px 2px; }
+.profile-head span { color: var(--primary); font-size: 11px; font-weight: 700; letter-spacing: .1em; }
+.profile-head h1 { margin: 5px 0 5px; font-size: 26px; }
+.profile-head p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.profile-links { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.profile-head a { color: var(--muted); font-size: 13px; text-decoration: none; white-space: nowrap; }
+.profile-head a:hover { color: var(--primary); }
 h3 { margin-top: 0; font-size: 17px; }
 .h3-sub { font-size: 12px; font-weight: 400; color: var(--muted); }
 .note { color: var(--muted); font-size: 13px; line-height: 1.6; }
@@ -348,6 +295,10 @@ h3 { margin-top: 0; font-size: 17px; }
 .tab-pane { }
 .cap-pane { display: grid; grid-template-columns: 360px 1fr; gap: 16px; align-items: start; }
 @media (max-width: 760px) { .cap-pane { grid-template-columns: 1fr; } }
+@media (max-width: 640px) {
+  .profile-head { flex-direction: column; gap: 8px; }
+  .profile-links { align-items: flex-start; }
+}
 .dim-hint summary { cursor: pointer; }
 
 /* 进度概览（横跨两列） */
@@ -415,38 +366,6 @@ h3 { margin-top: 0; font-size: 17px; }
   background: var(--accent-soft); border: 1px solid var(--border); border-radius: 7px; padding: 3px 11px;
 }
 .kpc-go:hover { border-color: var(--primary); }
-
-/* 推荐与题库（选题中枢，doc 10） */
-.sel-pane { display: flex; flex-direction: column; gap: 16px; }
-.sel-recs { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 10px; }
-.sel-rec {
-  display: flex; flex-direction: column; gap: 5px; text-align: left; cursor: pointer;
-  background: var(--accent-soft); border: 1px solid #e0cdbb; border-radius: 12px; padding: 13px 15px;
-  transition: transform 0.18s, box-shadow 0.18s;
-}
-.sel-rec:hover { transform: translateY(-2px); color: inherit; box-shadow: 0 12px 26px -18px rgba(193,95,60,0.4); }
-.sel-rec-reason { font-size: 12.5px; font-weight: 600; color: var(--primary); }
-.sel-rec-name { font-family: var(--serif); font-size: 15px; font-weight: 600; color: var(--text); }
-.sel-rec-meta { font-size: 12px; color: var(--muted); }
-.sel-cat { border-bottom: 1px solid var(--border); }
-.sel-cat:last-child { border-bottom: none; }
-.sel-cat-head {
-  display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
-  background: none; border: none; padding: 11px 2px; cursor: pointer; flex-wrap: wrap;
-}
-.sel-caret { color: var(--muted); font-size: 12px; transition: transform 0.18s; align-self: center; }
-.sel-caret.open { transform: rotate(90deg); }
-.sel-cat-title { font-family: var(--serif); font-size: 15px; font-weight: 600; color: var(--text); }
-.sel-cat-count { font-size: 12px; color: var(--muted); }
-.sel-cat-desc { font-size: 12px; color: var(--muted); flex: 1; min-width: 160px; }
-.sel-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; padding: 4px 0 12px; }
-.sel-item {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; cursor: pointer;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; transition: border-color 0.15s;
-}
-.sel-item:hover { border-color: var(--primary); color: inherit; }
-.sel-item-name { font-size: 13.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sel-item-diff { font-size: 11.5px; color: var(--muted); flex-shrink: 0; }
 
 .radar-panel { display: flex; flex-direction: column; align-items: center; }
 .radar-panel h3 { align-self: flex-start; }

@@ -92,6 +92,199 @@ def record_snapshot(db: Session, session, code: str, execution_event_id: str | N
 _RESULT_LABEL = {"OK": "通过", "RE": "报错", "WA": "结果不对", "HANG": "超时"}
 
 
+def _mark(marker_type: str, title: str, detail: str) -> dict:
+    return {"type": marker_type, "title": title, "detail": detail}
+
+
+def derive_turning_points(code_steps: list[dict]) -> list[dict]:
+    """从代码/执行事实中标注解题转折点；不写库，可由任意时刻重放重算。"""
+    had_failure = False
+    targeted_seen = False
+    breakthrough_seen = False
+    previous_family = None
+    turning_points: list[dict] = []
+
+    for step in code_steps:
+        annotations: list[dict] = []
+        result = step.get("result")
+        family = step.get("error_family") or result
+        touched = (step.get("diff_stats") or {}).get("touched_mine_line")
+        failed_before = had_failure
+
+        if result and result != "OK" and not had_failure:
+            annotations.append(_mark(
+                "first_failure", "第一次拿到真实反馈",
+                f"第 {step['version']} 版运行结果是{step.get('result_label') or result}，问题从猜测变成了可观察事实。",
+            ))
+
+        if failed_before and touched is True and not targeted_seen:
+            targeted_seen = True
+            annotations.append(_mark(
+                "targeted_change", "修改开始对准关键位置",
+                f"第 {step['version']} 版第一次在失败后动到了关键行，调试从试探转向定向验证。",
+            ))
+
+        if (failed_before and previous_family and family and family != previous_family
+                and result != "OK"):
+            annotations.append(_mark(
+                "error_changed", "错误形态发生变化",
+                f"真实反馈从 {previous_family} 变为 {family}，说明这次修改改变了程序的执行路径。",
+            ))
+
+        if result == "OK" and failed_before and not breakthrough_seen:
+            breakthrough_seen = True
+            annotations.append(_mark(
+                "breakthrough", "这里出现了关键突破",
+                f"第 {step['version']} 版从连续失败走到通过，形成了“观察—修改—验证”的闭环。",
+            ))
+
+        if result and result != "OK":
+            had_failure = True
+        if family:
+            previous_family = family
+
+        step["annotations"] = annotations
+        for marker in annotations:
+            turning_points.append({"version": step["version"], **marker})
+
+    return turning_points
+
+
+# ---------------- 跨局过程信号（方向一 1.1，纯派生只读） ----------------
+
+def blind_start(snaps) -> bool | None:
+    """一局是否「试探开局」：可判定的快照序列里，前两版都没碰到关键行
+    （或一直没碰到）。可判定信息不足（coop/快照太少）返回 None，不计入样本。"""
+    known = [t for t in ((s.diff_stats or {}).get("touched_mine_line") for s in snaps)
+             if t is not None]
+    if len(known) < 2:
+        return None
+    first_touch = next((i for i, t in enumerate(known) if t), None)
+    if first_touch is None:
+        return True if len(known) >= 3 else None   # 两版都没碰还看不出惯性
+    return first_touch >= 2
+
+
+_UNFINISHED = ("planted", "found")
+
+
+def recent_struggle_signal(db: Session, student_id: str, pattern_id: str,
+                           exclude_session_id: str = "") -> str:
+    """跨局旁白：从该生近期会话+快照里算「重复卡点/试探开局」信号，给导师把握
+    引导切入点。只产生 system prompt 旁白，不参与任何跃迁判定；无信号返回空串
+    （行为与没有这一层完全一致）。coop 会话不计入（设计 09 防污染）。"""
+    sessions = (db.query(TutorSession).filter_by(student_id=student_id)
+                .order_by(TutorSession.created_at.desc()).limit(20).all())
+    sessions = [s for s in sessions if not s.is_coop and s.id != exclude_session_id]
+    signals = []
+
+    # 信号一：同题重开——之前 ≥2 局都没走完，报上次停的位置
+    same = [s for s in sessions if s.pattern_id == pattern_id]
+    stuck = [s for s in same if s.mine_status in _UNFINISHED]
+    if len(stuck) >= 2:
+        signals.append(f"这已是他第 {len(same) + 1} 次打开这道题，"
+                       f"之前 {len(stuck)} 次都停在「{stuck[0].stage}」附近没走完。")
+
+    # 信号二：跨题「试探开局」惯性——最近 3 局可判样本里 ≥2 局都是先在别处改
+    samples = []
+    for s in sessions:
+        if s.pattern_id == pattern_id:
+            continue
+        snaps = (db.query(CodeSnapshot).filter_by(session_id=s.id)
+                 .order_by(CodeSnapshot.seq).all())
+        b = blind_start(snaps)
+        if b is not None:
+            samples.append(b)
+        if len(samples) == 3:
+            break
+    if len(samples) >= 2 and sum(samples) >= 2:
+        signals.append("他最近几道题的开局模式相似：失败后先在别处试改，"
+                       "两三版之后才碰到关键行。开局就把注意力引到「先读证据、再定位」上会更省力。")
+
+    return "\n".join(f"- {s}" for s in signals)
+
+
+_OBSERVATION_MARK = "【观察记录】"
+_SUMMARY_MARK = "【思考总结】"
+
+
+def derive_replay_mainline(steps: list[dict]) -> int:
+    """给完整回放步骤加上可重算的主线标记，返回主线步数。
+
+    原始 steps 一步不删；学生端和教师端只需按 ``mainline`` 过滤，就能先看同一条
+    “真实动作—关键转折—学生总结”主线，需要审计时再展开完整流水。
+    """
+    code_indexes = [i for i, step in enumerate(steps) if step.get("kind") == "code"]
+    first_code = code_indexes[0] if code_indexes else None
+    last_code = code_indexes[-1] if code_indexes else None
+    selected = 0
+
+    for index, step in enumerate(steps):
+        reasons: list[str] = []
+        if step.get("kind") == "code":
+            if index == first_code:
+                reasons.append("first_execution")
+            if step.get("annotations"):
+                reasons.append("turning_point")
+            if index == last_code:
+                reasons.append("latest_execution")
+        else:
+            content = (step.get("content") or "").strip()
+            if step.get("role") == "student" and content.startswith(_OBSERVATION_MARK):
+                reasons.append("student_observation")
+            if step.get("role") == "student" and content.startswith(_SUMMARY_MARK):
+                reasons.append("student_summary")
+            strategy = (step.get("meta") or {}).get("teaching_strategy") or {}
+            if step.get("role") == "tutor" and strategy.get("route_changed"):
+                reasons.append("teaching_route_changed")
+
+        step["mainline"] = bool(reasons)
+        step["mainline_reasons"] = reasons
+        if reasons:
+            selected += 1
+
+    return selected
+
+
+def teaching_metrics(db: Session, session_id: str) -> dict:
+    """由导师消息 meta 重放教学策略效果。旧会话没有 meta 时返回全零，不猜测。"""
+    messages = (db.query(SessionMessage).filter_by(session_id=session_id, role="tutor")
+                .order_by(SessionMessage.seq).all())
+    decisions = []
+    for message in messages:
+        meta = message.meta or {}
+        if meta.get("teaching_strategy"):
+            decisions.append(meta)
+
+    confusion_indexes = [i for i, meta in enumerate(decisions) if meta.get("confusion_detected")]
+    recovered = 0
+    for index in confusion_indexes:
+        # “恢复”只看随后两轮，且使用已经落库的规则/LLM进展判断，不重新猜学生情绪。
+        following = decisions[index + 1:index + 3]
+        if any(m.get("student_progressed") or m.get("stage_after") != m.get("stage_before")
+               for m in following):
+            recovered += 1
+
+    routes: dict[str, int] = {}
+    for meta in decisions:
+        route = (meta.get("teaching_strategy") or {}).get("explanation_route")
+        if route:
+            routes[route] = routes.get(route, 0) + 1
+
+    confusion_turns = len(confusion_indexes)
+    return {
+        "tutor_turns": len(decisions),
+        "confusion_turns": confusion_turns,
+        "route_changed_turns": sum(1 for m in decisions
+                                   if (m.get("teaching_strategy") or {}).get("route_changed")),
+        "knowledge_gap_turns": sum(1 for m in decisions
+                                  if (m.get("teaching_strategy") or {}).get("knowledge_gap")),
+        "recovered_within_two_turns": recovered,
+        "recovery_rate": round(recovered / confusion_turns, 3) if confusion_turns else None,
+        "routes": routes,
+    }
+
+
 def build_replay(db: Session, session_id: str) -> dict | None:
     """过程回放（M3）：把 code_snapshots + session_messages 按时间戳合并成一条可步进的时间线。
 
@@ -110,9 +303,10 @@ def build_replay(db: Session, session_id: str) -> dict | None:
                 db.query(ExecutionEvent).filter_by(session_id=session_id).all()}
 
     steps: list[dict] = []
+    code_steps: list[dict] = []
     for i, s in enumerate(snaps):
         ev = ev_by_id.get(s.execution_event_id)
-        steps.append({
+        code_step = {
             "kind": "code",
             "at": s.timestamp,
             "version": i + 1,                       # 第几版代码（回放步进用）
@@ -121,7 +315,13 @@ def build_replay(db: Session, session_id: str) -> dict | None:
             "source": ev.source if ev else None,    # run / submit
             "result": ev.kind if ev else None,      # OK/RE/WA/HANG
             "result_label": _RESULT_LABEL.get(ev.kind) if ev else None,
-        })
+            "error_family": ev.error_family if ev else None,
+            # Resource Gateway 亮点落地：前端回放可用 call_id 把动作、代码与能力事件串起来。
+            "action_context": ((ev.meta or {}).get("action_context") if ev else None),
+        }
+        code_steps.append(code_step)
+        steps.append(code_step)
+    turning_points = derive_turning_points(code_steps)
     for m in msgs:
         steps.append({
             "kind": "msg",
@@ -129,8 +329,10 @@ def build_replay(db: Session, session_id: str) -> dict | None:
             "role": m.role,                          # student / tutor / system
             "msg_kind": m.kind,                      # chat / run_result / submit / tutor_opening
             "content": m.content,
+            "meta": m.meta or {},
         })
     steps.sort(key=lambda x: x["at"])
+    mainline_steps = derive_replay_mainline(steps)
 
     try:
         pat = mine_engine.get_pattern(session.pattern_id)
@@ -143,12 +345,15 @@ def build_replay(db: Session, session_id: str) -> dict | None:
         "pattern_name": pattern_name,
         "mine_status": session.mine_status,
         "code_versions": len(snaps),
+        "turning_points": turning_points,
+        "teaching_metrics": teaching_metrics(db, session_id),
+        "mainline_steps": mainline_steps,
         "steps": steps,
     }
 
 
 def record_message(db: Session, session_id: str, role: str, content: str,
-                   kind: str = "chat") -> SessionMessage:
+                   kind: str = "chat", meta: dict | None = None) -> SessionMessage:
     """记一条会话消息到 append-only 时间线（供 M3 回放）。seq 会话内递增；不 commit。
     与 history 并行的「写新」——history 读写不动，此表只增不删、保留发生过的每一步。"""
     prev_seq = (db.query(SessionMessage.seq).filter_by(session_id=session_id)
@@ -160,6 +365,7 @@ def record_message(db: Session, session_id: str, role: str, content: str,
         role=role,
         kind=kind,
         content=content,
+        meta=dict(meta or {}),
         created_at=now(),
     )
     db.add(msg)

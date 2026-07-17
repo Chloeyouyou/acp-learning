@@ -9,12 +9,16 @@
 """
 
 import os
+import re
 import sys
 import traceback
 
 # 主测试套件锁定 subprocess 后端：84 项用真沙箱，走 docker 会慢到几分钟。
 # 隔离性由文末「沙箱隔离」测试组单独打 docker 后端验证（docker 不可用则跳过）。
 os.environ.setdefault("ACP_SANDBOX", "subprocess")
+# 单测不打真网：结算路径会触发先验蒸馏（真 LLM），此处关掉；
+# 先验层行为由 test_priors.py 用假 LLM 单独锁。
+os.environ.setdefault("ACP_PRIORS", "off")
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -27,8 +31,8 @@ from app.models import (
     CodeSnapshot, Event, ExecutionEvent, KnowledgeState, SessionMessage, Student, TutorSession,
 )
 from app.services import (
-    curriculum, event_engine, mine_engine, pattern_validator, process, profile, review, sandbox,
-    teacher, timeline,
+    curriculum, event_engine, learning_path, mine_engine, pattern_validator, process, profile,
+    review, sandbox, teacher, timeline,
 )
 
 _engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
@@ -277,6 +281,202 @@ def inject_只保留最新一条运行结果():
     assert any(m["content"] == "我观察到了" for m in h), "普通历史不该被剔除"
 
 
+# ---- 知返固定讲解策略：骨架 / 切路 / 断层 / 调用链 ----
+def _strategy_session(stage="①发现", stalled=0):
+    return TutorSession(id="strategy", student_id="stu", pattern_id="BP-BOUNDARY-001",
+                        manifest={}, stage=stage, stalled_turns=stalled, history=[])
+
+
+@test
+def teaching_strategy_正常轮先搭骨架且只推当前目标():
+    s = tutor.choose_teaching_strategy(_strategy_session(stage="②定位"), "我看到报错了")
+    assert s.explanation_route == "skeleton" and not s.route_changed
+    assert "可疑位置" in s.core_goal, s
+
+
+@test
+def teaching_strategy_听不懂时切换解释路径():
+    s = tutor.choose_teaching_strategy(_strategy_session(), "还是听不懂，太抽象了")
+    assert s.route_changed and s.explanation_route != "skeleton", s
+    prompt = tutor.teaching_strategy_prompt(s)
+    assert "禁止重复上一轮定义和问法" in prompt
+
+
+@test
+def teaching_strategy_主动识别知识断层():
+    s = tutor.choose_teaching_strategy(_strategy_session(), "下标是什么意思？")
+    assert s.knowledge_gap == "下标/索引", s
+    assert "先补这个最小前置知识" in tutor.teaching_strategy_prompt(s)
+
+
+@test
+def teaching_strategy_代码按调用链讲():
+    s = tutor.choose_teaching_strategy(_strategy_session(stalled=1), "这段代码我看不懂")
+    assert s.explanation_route == "execution_trace", s
+    assert s.code_explanation_order == tutor.CODE_EXPLANATION_ORDER
+    prompt = tutor.teaching_strategy_prompt(s)
+    assert "入口与输入→谁调用谁→关键数据怎样变化→返回值或报错落点" in prompt
+
+
+def _guard_strategy(route="skeleton", changed=False):
+    return tutor.TeachingStrategy(
+        core_goal="只推进一个小目标",
+        explanation_route=route,
+        confusion_detected=changed,
+        route_changed=changed,
+    )
+
+
+@test
+def reply_guard_拦直接修法与多个问题():
+    leak = tutor.assess_teaching_reply(
+        "直接改成 range(len(arr)) 就行。你明白了吗？",
+        _guard_strategy(), "range(len(arr))",
+    )
+    assert "direct_fix_leak" in leak.violations
+    many = tutor.assess_teaching_reply(
+        "你先看哪一行？这个值又从哪来？",
+        _guard_strategy(), "range(len(arr))",
+    )
+    assert "question_count" in many.violations and many.question_count == 2
+
+    one_of_two = tutor.assess_teaching_reply(
+        "可以改成列表推导 [s for s in scores if s >= 60]。你能先说出它避开了什么吗？",
+        _guard_strategy(),
+        "遍历副本 for s in scores[:] 或列表推导 [s for s in scores if s >= 60]",
+    )
+    assert "direct_fix_leak" in one_of_two.violations
+
+
+@test
+def reply_guard_换路必须在回复中真实可见():
+    missing = tutor.assess_teaching_reply(
+        "我们再想一想。你现在看到什么？",
+        _guard_strategy("micro_example", True), "range(len(arr))",
+    )
+    assert "route_not_observable" in missing.violations
+    good = tutor.assess_teaching_reply(
+        "比如三个抽屉只编号 0 到 2，我们先只看这个小例子。你觉得编号 3 还能找到抽屉吗？",
+        _guard_strategy("micro_example", True), "range(len(arr))",
+    )
+    assert good.passed, good
+
+
+@test
+def reply_guard_首次违规会纠错重试():
+    original = tutor._call_llm
+    calls = []
+    try:
+        replies = iter([
+            "你先看哪一行？这个值从哪来？",
+            "比如三个抽屉只编号 0 到 2。你觉得编号 3 存在吗？",
+        ])
+
+        def fake_call(system, history):
+            calls.append(system)
+            return tutor.TutorTurn(
+                reply=next(replies), stage_transition=None, hint_level_used="L0",
+                student_progressed=False, answer_begging=False, events=[],
+            )
+
+        tutor._call_llm = fake_call
+        turn, meta = tutor._guarded_llm_turn(
+            "system", [], _guard_strategy("micro_example", True),
+            "range(len(arr))", "②定位",
+        )
+        assert len(calls) == 2 and meta["attempts"] == 2
+        assert meta["passed"] is True and meta["fallback_used"] is False
+        assert "question_count" in meta["violations"] and "三个抽屉" in turn.reply
+    finally:
+        tutor._call_llm = original
+
+
+@test
+def reply_guard_连续违规时安全兜底():
+    original = tutor._call_llm
+    try:
+        tutor._call_llm = lambda system, history: tutor.TutorTurn(
+            reply="直接改成 range(len(arr))。照着改就好。",
+            stage_transition=None, hint_level_used="L0",
+            student_progressed=False, answer_begging=False, events=[],
+        )
+        turn, meta = tutor._guarded_llm_turn(
+            "system", [], _guard_strategy(), "range(len(arr))", "②定位",
+        )
+        assert meta["passed"] is False and meta["fallback_used"] is True
+        assert "range(len(arr))" not in turn.reply
+        assert len(re.findall(r"[？?]", turn.reply)) == 1
+    finally:
+        tutor._call_llm = original
+
+
+# ---- Resource Gateway 亮点落地：动作信封 / 用途 / 风险 / Evidence 关联 ----
+@test
+def action_governance_摘要稳定_call唯一且不泄露代码():
+    import json
+    from app.services import action_governance as ag
+    kwargs = dict(actor_id="ag_u1", session_id="ag_s1", action="sandbox.run",
+                  purpose="debug_observation", initiated_by="student",
+                  payload={"code": "print('secret-source')", "mode": "debug"})
+    a = ag.authorize_action(**kwargs)
+    b = ag.authorize_action(**kwargs)
+    assert a["call_id"] != b["call_id"], (a, b)
+    assert a["request_digest"] == b["request_digest"], (a, b)
+    assert a["risk_level"] == 1 and a["decision"] == "allow" and a["execution"] == "pending"
+    assert "secret-source" not in json.dumps(a), "动作上下文只存摘要，不得复制代码原文"
+
+
+@test
+def action_governance_未知动作与Agent代提交失败关闭():
+    from app.services import action_governance as ag
+    try:
+        ag.authorize_action(actor_id="u", session_id="s", action="shell.exec",
+                            purpose="debug", initiated_by="student", payload={})
+        assert False, "未知动作必须拒绝"
+    except ag.ActionDenied as exc:
+        assert "未注册动作" in str(exc)
+    try:
+        ag.authorize_action(actor_id="u", session_id="s", action="submission.judge",
+                            purpose="judge_submission", initiated_by="agent", payload={})
+        assert False, "知返不得代替学生提交"
+    except ag.ActionDenied as exc:
+        assert "不能触发" in str(exc)
+
+
+@test
+def action_governance_运行用途由服务端状态确定():
+    from app.services import action_governance as ag
+    assert ag.purpose_for_run(stage="⑤验证", mode="debug") == "verify_hypothesis"
+    assert ag.purpose_for_run(stage="②定位", mode="debug") == "debug_observation"
+    assert ag.purpose_for_run(stage="⑤验证", mode="coop") == "collaborative_debug"
+
+
+@test
+def action_governance_提交事实与能力事件共享call_id():
+    from app.main import SubmitReq, submit_fix
+    from app.services import mine_engine
+    db = TestSession()
+    sid, ssid, pid = "ag_submit_u", "ag_submit_s", "BP-BOUNDARY-001"
+    pat = mine_engine.get_pattern(pid)
+    sess = TutorSession(
+        id=ssid, student_id=sid, pattern_id=pid,
+        manifest=mine_engine.build_manifest(sid, pat), history=[],
+        stage="④修复", mine_status="found", status="active",
+    )
+    db.add(sess); db.commit()
+    fixed_code = pat["buggy_code"].replace("range(len(arr) + 1)", "range(len(arr))")
+    result = submit_fix(ssid, SubmitReq(code=fixed_code), db=db, me=sid, _lock=None)
+    assert result["passed"] is True
+    ctx = result["action_context"]
+    assert ctx["action"] == "submission.judge" and ctx["risk_level"] == 2
+    assert ctx["decision"] == "allow" and ctx["execution"] == "completed"
+    execution = db.query(ExecutionEvent).filter_by(session_id=ssid, source="submit").one()
+    fixed_event = db.query(Event).filter_by(session_id=ssid, capability="Independent_Debug").one()
+    assert execution.meta["action_context"]["call_id"] == ctx["call_id"]
+    assert fixed_event.context["action_context"]["call_id"] == ctx["call_id"]
+    db.close()
+
+
 # ---- 接着做（未完成关卡续做）：cleanup / active-sessions / abandon（设计 08）----
 from app.main import _cleanup_abandoned, abandon_session, get_active_sessions
 
@@ -338,6 +538,7 @@ def active_sessions_按活跃倒序且上限5():
     assert times == sorted(times, reverse=True), f"应按活跃度倒序：{times}"
     assert "s5" not in [s["session_id"] for s in sessions], "最老的应被挤出前 5"
     assert sessions[0]["name"] and sessions[0]["stage"], "应带 name/stage 供大厅展示"
+    assert sessions[0]["display_step"] == "运行观察", "学生界面应只消费四步语言"
     db.close()
 
 @test
@@ -665,6 +866,11 @@ def 状态机_修复阶段未提交时LLM不得擅自跃迁():
         tutor.run_turn(db, sess, "改个边界就行")
         assert sess.stage == "④修复", f"未提交不该离开④，实际到了 {sess.stage}"
         assert sess.mine_status == "found", sess.mine_status
+        saved = (db.query(SessionMessage).filter_by(session_id=sess.id, role="tutor")
+                 .order_by(SessionMessage.seq.desc()).first())
+        assert saved.meta["teaching_strategy"]["explanation_route"] == "skeleton"
+        assert saved.meta["stage_before"] == "④修复" and saved.meta["stage_after"] == "④修复"
+        assert saved.meta["reply_guard"]["fallback_used"] is True
         db.close()
     finally:
         mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = orig_get, orig_load, orig_llm
@@ -915,7 +1121,40 @@ def coop_run落ExecutionEvent_mode_coop且不查pattern():
     ev = db.query(ExecutionEvent).filter_by(session_id=out["session_id"]).one()
     assert ev.knowledge_points == []                 # 对画像天然隐形
     assert (ev.meta or {}).get("mode") == "coop"
+    ctx = (ev.meta or {}).get("action_context") or {}
+    assert ctx["call_id"] == r["action_context"]["call_id"]
+    assert ctx["purpose"] == "collaborative_debug" and ctx["risk_level"] == 1
+    assert ctx["decision"] == "allow" and ctx["execution"] == "completed"
     db.close()
+
+
+@test
+def 续学决策_固定四级优先级且理由可解释():
+    active = [{"session_id": "s1", "pattern_id": "p1", "name": "未完成题",
+               "stage": "④修复"}]
+    due = [{"pattern_id": "p2", "name": "复习题", "days_since": 5, "interval_days": 2}]
+    recs = [{"id": "p3", "name": "推荐题", "reason": "补强边界意识",
+             "knowledge_points": ["数组边界"]}]
+
+    resume = learning_path.decide_next_action(active, due, recs)
+    assert resume["action"]["kind"] == "resume"
+    assert resume["action"]["reason_code"] == "unfinished_first"
+    assert resume["action"]["evidence"]["ref"] == "s1"
+    assert "修改验证" in resume["action"]["detail"] and "修复" not in resume["action"]["detail"]
+    assert resume["pending"] == {"active": 1, "reviews": 1, "recommendations": 1}
+
+    review_action = learning_path.decide_next_action([], due, recs)
+    assert review_action["action"]["kind"] == "review"
+    assert review_action["action"]["target"]["mode"] == "review"
+    assert "5 天前" in review_action["action"]["detail"]
+
+    recommend = learning_path.decide_next_action([], [], recs)
+    assert recommend["action"]["kind"] == "recommend"
+    assert recommend["action"]["detail"] == "补强边界意识"
+
+    start = learning_path.decide_next_action([], [], [])
+    assert start["action"]["kind"] == "start"
+    assert start["decision_order"] == ["resume", "review", "recommend", "start"]
 
 
 @test
@@ -938,6 +1177,26 @@ def coop_resolve标completed():
     assert coop.resolve(db, out["session_id"])["status"] == "completed"
     s = db.get(TutorSession, out["session_id"])
     assert s.status == "completed"
+    db.close()
+
+
+@test
+def 开题干预_短TTL缓存命中与清除():
+    from app.services import timeline
+    db = TestSession()
+    timeline.clear_recurring_cache()
+    # 首次算并入缓存
+    r1 = timeline.recurring_for_student(db, "cache_u")
+    assert "cache_u" in timeline._RECURRING_CACHE
+    # TTL 内再取是同一对象（走缓存、没重算）
+    r2 = timeline.recurring_for_student(db, "cache_u")
+    assert r1 is r2, "TTL 内应返回缓存的同一结果"
+    # 清缓存后重算，得到新对象
+    timeline.clear_recurring_cache()
+    assert "cache_u" not in timeline._RECURRING_CACHE
+    r3 = timeline.recurring_for_student(db, "cache_u")
+    assert r3 is not r1, "清缓存后应重新计算"
+    timeline.clear_recurring_cache()
     db.close()
 
 
@@ -1337,6 +1596,37 @@ def 教师总览_聚合进度与班级过滤():
 
 
 @test
+def 教师端_共性卡点与学生钻取均为派生():
+    db = TestSession()
+    for sid in ("td_a", "td_b"):
+        db.add(Student(id=sid, name=sid, class_id="C1"))
+        db.add(TutorSession(
+            id=f"sess_{sid}", student_id=sid, pattern_id="BP-BOUNDARY-001",
+            manifest={}, history=[], stage="②定位", status="active",
+        ))
+    db.commit()
+    process.record_message(
+        db, "sess_td_a", "tutor", "换个例子",
+        meta={
+            "teaching_strategy": {"explanation_route": "micro_example", "route_changed": True,
+                                  "knowledge_gap": "下标/索引"},
+            "confusion_detected": True, "stage_before": "②定位", "stage_after": "②定位",
+            "student_progressed": False,
+        },
+    )
+    db.commit()
+    overview = teacher.build_class_overview(db, "C1")
+    common = overview["common_stumbling_blocks"][0]
+    assert common["student_count"] == 2 and common["stage"] == "②定位", common
+    detail = teacher.build_student_detail(db, "td_a")
+    assert detail["student"]["student_id"] == "td_a"
+    assert detail["sessions"][0]["session_id"] == "sess_td_a"
+    assert detail["teaching_metrics"]["route_changed_turns"] == 1
+    assert teacher.build_student_detail(db, "missing") is None
+    db.close()
+
+
+@test
 def 课程配置_单元完整且题都真实存在():
     units = curriculum.load_units()
     assert len(units) == 4, f"应 4 个单元，实际 {len(units)}"
@@ -1379,8 +1669,11 @@ def 回放_合并快照与消息按时间成步():
     s = TutorSession(id="rp_s1", student_id="u", pattern_id="BP-BOUNDARY-001",
                      manifest={}, history=[], status="active")
     db.add(s); db.commit()
+    replay_ctx = {"call_id": "call_replay", "purpose": "debug_observation",
+                  "decision": "allow", "execution": "completed"}
     ev = event_engine.log_execution(db, student_id="u", session_id="rp_s1",
-                                    pattern_id="BP-BOUNDARY-001", source="run", kind="RE")
+                                    pattern_id="BP-BOUNDARY-001", source="run", kind="RE",
+                                    action_context=replay_ctx)
     process.record_snapshot(db, s, "print(1)", ev.id)
     process.record_message(db, "rp_s1", "system", "（系统·运行结果）报错", "run_result")
     db.commit()
@@ -1393,10 +1686,53 @@ def 回放_合并快照与消息按时间成步():
     assert "code" in kinds and kinds.count("msg") == 2, kinds
     code_step = next(x for x in rp["steps"] if x["kind"] == "code")
     assert code_step["source"] == "run" and code_step["result"] == "RE"
+    assert code_step["action_context"]["call_id"] == "call_replay"
+    assert rp["mainline_steps"] == 1 and code_step["mainline"] is True
     ats = [x["at"] for x in rp["steps"]]
     assert ats == sorted(ats), "回放步应按时间升序"
     assert process.build_replay(db, "不存在") is None
     db.close()
+
+
+@test
+def 回放2_从失败到定向修改再通过标出转折点():
+    steps = [
+        {"version": 1, "result": "RE", "result_label": "报错", "error_family": "IndexError",
+         "diff_stats": {"touched_mine_line": False}},
+        {"version": 2, "result": "RE", "result_label": "报错", "error_family": "TypeError",
+         "diff_stats": {"touched_mine_line": True}},
+        {"version": 3, "result": "OK", "result_label": "通过", "error_family": None,
+         "diff_stats": {"touched_mine_line": True}},
+    ]
+    points = process.derive_turning_points(steps)
+    types = [point["type"] for point in points]
+    assert types == ["first_failure", "targeted_change", "error_changed", "breakthrough"], types
+    assert steps[2]["annotations"][0]["type"] == "breakthrough"
+
+
+@test
+def 回放主线_只归拢真实动作转折观察总结与换路():
+    steps = [
+        {"kind": "msg", "role": "tutor", "content": "先看整体", "meta": {}},
+        {"kind": "code", "version": 1, "annotations": []},
+        {"kind": "msg", "role": "student", "content": "【观察记录】\n我观察到：报错", "meta": {}},
+        {"kind": "msg", "role": "tutor", "content": "换个例子", "meta": {
+            "teaching_strategy": {"route_changed": True, "explanation_route": "micro_example"},
+        }},
+        {"kind": "code", "version": 2, "annotations": [
+            {"type": "breakthrough", "title": "关键突破", "detail": "通过"},
+        ]},
+        {"kind": "msg", "role": "student", "content": "【思考总结】\n我想记住：先验证", "meta": {}},
+        {"kind": "msg", "role": "system", "content": "完成", "meta": {}},
+    ]
+    count = process.derive_replay_mainline(steps)
+    assert count == 5
+    assert not steps[0]["mainline"] and not steps[-1]["mainline"]
+    assert steps[1]["mainline_reasons"] == ["first_execution"]
+    assert steps[2]["mainline_reasons"] == ["student_observation"]
+    assert steps[3]["mainline_reasons"] == ["teaching_route_changed"]
+    assert steps[4]["mainline_reasons"] == ["turning_point", "latest_execution"]
+    assert steps[5]["mainline_reasons"] == ["student_summary"]
 
 
 @test
@@ -1406,7 +1742,8 @@ def 消息时间线_record_seq递增且落库():
                      manifest={}, history=[], status="active")
     db.add(s); db.commit()
     process.record_message(db, "msg_s1", "student", "我觉得循环错了", "chat")
-    process.record_message(db, "msg_s1", "tutor", "为什么这么认为？", "chat")
+    process.record_message(db, "msg_s1", "tutor", "为什么这么认为？", "chat",
+                           meta={"teaching_strategy": {"explanation_route": "skeleton"}})
     process.record_message(db, "msg_s1", "system", "（系统·运行结果）报错", "run_result")
     db.commit()
     msgs = (db.query(SessionMessage).filter_by(session_id="msg_s1")
@@ -1414,7 +1751,87 @@ def 消息时间线_record_seq递增且落库():
     assert [m.seq for m in msgs] == [1, 2, 3], "seq 应从 1 递增"
     assert [m.role for m in msgs] == ["student", "tutor", "system"]
     assert msgs[2].kind == "run_result"
+    assert msgs[1].meta["teaching_strategy"]["explanation_route"] == "skeleton"
     db.close()
+
+
+@test
+def 教学指标_困惑后两轮内恢复可重放计算():
+    db = TestSession()
+    s = TutorSession(id="metric_s1", student_id="u", pattern_id="BP-BOUNDARY-001",
+                     manifest={}, history=[], status="active")
+    db.add(s); db.commit()
+    process.record_message(db, s.id, "tutor", "换个小例子", meta={
+        "teaching_strategy": {"explanation_route": "micro_example", "route_changed": True,
+                              "knowledge_gap": "下标/索引"},
+        "confusion_detected": True, "stage_before": "②定位", "stage_after": "②定位",
+        "student_progressed": False,
+    })
+    process.record_message(db, s.id, "tutor", "沿执行链再走一次", meta={
+        "teaching_strategy": {"explanation_route": "execution_trace", "route_changed": False,
+                              "knowledge_gap": None},
+        "confusion_detected": False, "stage_before": "②定位", "stage_after": "③归因",
+        "student_progressed": True,
+    })
+    db.commit()
+    metrics = process.teaching_metrics(db, s.id)
+    assert metrics["tutor_turns"] == 2 and metrics["confusion_turns"] == 1
+    assert metrics["recovered_within_two_turns"] == 1 and metrics["recovery_rate"] == 1.0
+    assert metrics["knowledge_gap_turns"] == 1 and metrics["routes"]["micro_example"] == 1
+    db.close()
+
+
+# ---- 生产安全门槛 / 教师认证头 ----
+@test
+def 生产安全门槛_生产缺隔离或秘密时失败关闭():
+    from app import runtime_security
+    keys = ("ACP_ENV", "ACP_SANDBOX", "ACP_ADMIN_TOKEN", "ACP_AUTH_SECRET", "DEEPSEEK_API_KEY")
+    old_env = {key: os.environ.get(key) for key in keys}
+    old_check = runtime_security.sandbox.docker_available
+    try:
+        os.environ["ACP_ENV"] = "production"
+        os.environ["ACP_SANDBOX"] = "subprocess"
+        for key in keys[2:]:
+            os.environ.pop(key, None)
+        runtime_security.sandbox.docker_available = lambda: False
+        try:
+            runtime_security.validate_production_environment()
+            assert False, "生产环境未隔离时必须拒绝启动"
+        except RuntimeError as exc:
+            assert "production_security_gate" in str(exc) and "Docker" in str(exc)
+
+        os.environ["ACP_SANDBOX"] = "docker"
+        for key in keys[2:]:
+            os.environ[key] = "configured-for-test"
+        runtime_security.sandbox.docker_available = lambda: True
+        assert runtime_security.validate_production_environment()["ready"] is True
+    finally:
+        runtime_security.sandbox.docker_available = old_check
+        for key, value in old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+@test
+def 教师认证_优先Bearer且错误口令拒绝():
+    from fastapi import HTTPException
+    from app.main import _check_admin
+    old = os.environ.get("ACP_ADMIN_TOKEN")
+    try:
+        os.environ["ACP_ADMIN_TOKEN"] = "teacher-secret"
+        _check_admin(authorization="Bearer teacher-secret")
+        try:
+            _check_admin(authorization="Bearer wrong")
+            assert False, "错误教师口令必须拒绝"
+        except HTTPException as exc:
+            assert exc.status_code == 403
+    finally:
+        if old is None:
+            os.environ.pop("ACP_ADMIN_TOKEN", None)
+        else:
+            os.environ["ACP_ADMIN_TOKEN"] = old
 
 
 # ---- 会话回合锁（M1 D4-5）：串行化同会话并发，防丢写 + 堵 TOCTOU ----
@@ -1505,6 +1922,255 @@ def 沙箱docker_根文件系统只读():
 def 沙箱docker_死循环超时():
     r = _docker_run("while True: pass", timeout=3.0)
     assert r.timed_out
+
+
+# ════════ 经历记忆（第二层记忆：结算沉淀 + 相关度召回 + 泄题门控）════════
+
+def _exp_pattern(pid, name, root_cause="下标 3 越界"):
+    p = dict(_good_candidate())
+    p.update(id=pid, name=name, root_cause=root_cause)
+    return p
+
+
+def _exp_session(tutor, mine_engine, patterns, *, student_id, pattern_id,
+                 stage, mine_status="planted", mode=None):
+    """自定学生/题目的会话（_arena_session 硬编码 rt1，经历测试需隔离学生）。"""
+    mine_engine.get_pattern = lambda pid: patterns[pid]
+    mine_engine.load_patterns = lambda: patterns
+    from app.models import TutorSession
+    db = TestSession()
+    manifest = mine_engine.build_manifest(student_id, patterns[pattern_id])
+    if mode:
+        manifest["mode"] = mode
+    sess = TutorSession(id=f"s_exp_{__import__('uuid').uuid4().hex[:6]}",
+                        student_id=student_id, pattern_id=pattern_id,
+                        manifest=manifest, history=[], stage=stage, mine_status=mine_status)
+    db.add(sess); db.commit()
+    return db, sess
+
+
+@test
+def 经历检索_内容词召回且纯虚词不算():
+    from app.services import experience
+    s = experience.relevance_score("数组下标越界 IndexError", "他在《测试题》踩了 IndexError，根因是数组下标越界")
+    assert s >= experience.RELEVANCE_FLOOR, f"内容词高度重叠应过门槛: {s}"
+    s2 = experience.relevance_score("我觉得可能是不知道怎么了", "他自己就是这个样子的没什么")
+    assert s2 < experience.RELEVANCE_FLOOR, f"纯虚词撞上不算相关: {s2}"
+
+
+@test
+def 经历检索_跑题记忆宁可空手():
+    from app.services import experience
+    s = experience.relevance_score("除以零 ZeroDivisionError 分母 平均数",
+                                   "在《测试题》遇到 IndexError，根因是下标 3 越界")
+    assert s < experience.RELEVANCE_FLOOR, f"不相关经历不应过门槛: {s}"
+
+
+@test
+def 经历沉淀_内化结算落库且摘要不含修复代码():
+    from app.models import StudentExperience
+    from app.services import mine_engine, tutor
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        pats = {p["id"]: p for p in [_exp_pattern("BP-EXP-001", "经历题甲")]}
+        tutor._call_llm = _stub_turn(
+            tutor, internalization=tutor.InternalizationScore(cause=True, locate=True, prevent=False))
+        db, sess = _exp_session(tutor, mine_engine, pats, student_id="exp1",
+                                pattern_id="BP-EXP-001", stage="⑥内化", mine_status="fixed")
+        tutor.run_turn(db, sess, "因为下标越界，定位靠追踪变量取值，下次先查边界")
+        assert sess.status == "completed"
+        exp = db.query(StudentExperience).filter_by(student_id="exp1").one()
+        assert "经历题甲" in exp.summary and "下标 3 越界" in exp.summary, exp.summary
+        assert "成因机制" in exp.summary and "定位方法" in exp.summary, exp.summary
+        # 落库端泄题硬门控：摘要与关键词绝不含 expected_fix 片段
+        fix = pats["BP-EXP-001"]["expected_fix"]
+        assert fix not in exp.summary and all(fix not in k for k in exp.keywords), "摘要泄了修复代码"
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
+
+
+@test
+def 经历召回_新题注入过往经历且同题排除():
+    from app.services import experience, mine_engine, tutor
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        pats = {p["id"]: p for p in [
+            _exp_pattern("BP-EXP-011", "经历题乙"), _exp_pattern("BP-EXP-012", "经历题丙")]}
+        # 先内化完成"经历题乙"沉淀一条经历
+        tutor._call_llm = _stub_turn(
+            tutor, internalization=tutor.InternalizationScore(cause=True, locate=True, prevent=True))
+        db, sess = _exp_session(tutor, mine_engine, pats, student_id="exp2",
+                                pattern_id="BP-EXP-011", stage="⑥内化", mine_status="fixed")
+        tutor.run_turn(db, sess, "因为下标越界，定位靠追踪变量，下次先查边界")
+
+        # 换一道同族新题：system 应注入过往经历（带硬规则），召回按相关度过门槛
+        captured = {}
+        stub = _stub_turn(tutor)
+        tutor._call_llm = lambda system, history: (captured.__setitem__("sys", system), stub(system, history))[1]
+        db2, sess2 = _exp_session(tutor, mine_engine, pats, student_id="exp2",
+                                  pattern_id="BP-EXP-012", stage="①发现")
+        tutor.run_turn(db2, sess2, "程序好像不太对")
+        assert "过往共同经历" in captured["sys"] and "经历题乙" in captured["sys"], "应召回过往经历"
+        assert "绝不点破" in captured["sys"], "注入段应携带泄题硬规则"
+
+        # 同题重开：exclude_pattern_id 应排除，system 无经历段（变式不剧透）
+        captured.clear()
+        db3, sess3 = _exp_session(tutor, mine_engine, pats, student_id="exp2",
+                                  pattern_id="BP-EXP-011", stage="①发现")
+        tutor.run_turn(db3, sess3, "程序好像不太对")
+        assert "过往共同经历" not in captured["sys"], "同题经历不得召回（防变式剧透）"
+        db.close(); db2.close(); db3.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
+
+
+@test
+def 经历隔离_coop会话不沉淀():
+    from app.services import experience, mine_engine, tutor
+    o1, o2 = mine_engine.get_pattern, mine_engine.load_patterns
+    try:
+        pats = {p["id"]: p for p in [_exp_pattern("BP-EXP-021", "经历题丁")]}
+        db, sess = _exp_session(tutor, mine_engine, pats, student_id="exp3",
+                                pattern_id="BP-EXP-021", stage="⑥内化",
+                                mine_status="fixed", mode="coop")
+        assert experience.record_on_completion(db, sess) is None, "coop 会话不得沉淀经历"
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns = o1, o2
+
+
+@test
+def 兜底升级_LLM挂掉时按阶段给确定性引导():
+    from app.services import mine_engine, tutor
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        def boom(system, history):
+            raise RuntimeError("api down")
+        tutor._call_llm = boom
+        db, sess = _exp_session(tutor, mine_engine,
+                                {p["id"]: p for p in [_exp_pattern("BP-EXP-031", "经历题戊")]},
+                                student_id="exp4", pattern_id="BP-EXP-031", stage="③归因")
+        sess.attribution_step = "variable_trace"
+        r = tutor.run_turn(db, sess, "然后呢")
+        assert tutor._SAFE_STAGE_QUESTIONS["③归因"] in r["reply"], r["reply"]  # 不再只说"走神"
+        assert sess.stage == "③归因" and r["events_emitted"] == [], "兜底轮状态不变、不落事件"
+        db.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
+
+
+def _snap(db, session_id, seq, touched):
+    """造一条只带 touched_mine_line 判定的快照（过程旁白测试用）。"""
+    db.add(CodeSnapshot(id=f"cs_strug_{session_id}_{seq}", session_id=session_id, seq=seq,
+                        code="x", diff_stats={"lines_changed": 1, "touched_mine_line": touched},
+                        timestamp=f"2026-07-16T00:0{seq}:00+00:00"))
+
+
+@test
+def 过程旁白_同题重开与试探开局信号():
+    from app.services import process
+    from app.models import TutorSession
+    db = TestSession()
+    # 同题重开：strug1 在 P1 上有 2 局没走完
+    for i, stage in enumerate(("②定位", "②定位")):
+        db.add(TutorSession(id=f"s_strug_p1_{i}", student_id="strug1", pattern_id="P-STRUG-1",
+                            manifest={"mines": []}, history=[], stage=stage, mine_status="planted"))
+    # 试探开局惯性：另两题各有失败后两版才碰关键行的快照链
+    for i in range(2):
+        sid = f"s_strug_o{i}"
+        db.add(TutorSession(id=sid, student_id="strug1", pattern_id=f"P-STRUG-O{i}",
+                            manifest={"mines": []}, history=[], stage="④修复", mine_status="fixed"))
+        for seq, touched in enumerate((False, False, True), start=1):
+            _snap(db, sid, seq, touched)
+    db.commit()
+    text = process.recent_struggle_signal(db, "strug1", "P-STRUG-1", exclude_session_id="cur")
+    assert "第 3 次" in text and "②定位" in text, f"应报同题重开与停留位置: {text}"
+    assert "先读证据" in text, f"应报试探开局惯性: {text}"
+    assert process.recent_struggle_signal(db, "strug_fresh", "P-STRUG-1") == "", "无历史必须零信号"
+    # 只有 1 局没走完 → 不算重复卡点；定向开局的样本不凑惯性
+    db.add(TutorSession(id="s_strug_p2_0", student_id="strug2", pattern_id="P-STRUG-2",
+                        manifest={"mines": []}, history=[], stage="②定位", mine_status="planted"))
+    sid = "s_strug2_o0"
+    db.add(TutorSession(id=sid, student_id="strug2", pattern_id="P-STRUG-O9",
+                        manifest={"mines": []}, history=[], stage="④修复", mine_status="fixed"))
+    for seq, touched in enumerate((True, False), start=1):
+        _snap(db, sid, seq, touched)
+    db.commit()
+    assert process.recent_struggle_signal(db, "strug2", "P-STRUG-2") == "", "单局卡壳/定向开局不该报信号"
+    db.close()
+
+
+@test
+def 过程旁白_注入导师system且带硬规则():
+    from app.services import mine_engine, tutor
+    from app.models import TutorSession
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        pats = {p["id"]: p for p in [_exp_pattern("BP-STRUG-011", "旁白题甲")]}
+        captured = {}
+        stub = _stub_turn(tutor)
+        tutor._call_llm = lambda system, history: (captured.__setitem__("sys", system), stub(system, history))[1]
+        # 造 2 局没走完的历史，再开第 3 局
+        db, sess = _exp_session(tutor, mine_engine, pats, student_id="strug3",
+                                pattern_id="BP-STRUG-011", stage="①发现")
+        for i in range(2):
+            db.add(TutorSession(id=f"s_strug3_{i}", student_id="strug3", pattern_id="BP-STRUG-011",
+                                manifest=sess.manifest, history=[], stage="②定位", mine_status="planted"))
+        db.commit()
+        tutor.run_turn(db, sess, "程序好像不太对")
+        assert "过程旁白" in captured["sys"] and "第 3 次" in captured["sys"], "应注入跨局旁白"
+        assert "绝不向学生照念" in captured["sys"], "旁白必须带不照念硬规则"
+        assert "不得据此跳过或放松任何阶段门控" in captured["sys"], "旁白必须带门控硬规则"
+        # 无历史学生：零注入，行为与现状一致
+        captured.clear()
+        db2, sess2 = _exp_session(tutor, mine_engine, pats, student_id="strug4",
+                                  pattern_id="BP-STRUG-011", stage="①发现")
+        tutor.run_turn(db2, sess2, "程序好像不太对")
+        assert "过程旁白" not in captured["sys"], "无信号必须零注入"
+        db.close(); db2.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
+
+
+@test
+def 足迹周报_窗口聚合卡点与进步():
+    from datetime import datetime, timedelta, timezone as _tz
+    from app.models import SessionMessage as SM, TutorSession as TS
+    recent_ts = datetime.now(_tz.utc).isoformat()
+    old_ts = (datetime.now(_tz.utc) - timedelta(days=30)).isoformat()
+    # 两个 Episode：一个本周已内化（快照证据=试探开局），一个 30 天前的（必须被窗口排除）
+    episodes = [
+        {"pattern_id": "BP-NULL-002", "pattern_name": "方法返回None未检查", "session_id": "fp_s1",
+         "outcome": "已内化", "last_at": recent_ts,
+         "rounds": [{"day": recent_ts[:10], "attempts": [{"time": recent_ts}, {"time": recent_ts}]}]},
+        {"pattern_id": "BP-NULL-003", "pattern_name": "字典取值未判空", "session_id": "fp_s2",
+         "outcome": "已解决", "last_at": old_ts,
+         "rounds": [{"day": old_ts[:10], "attempts": [{"time": old_ts}]}]},
+    ]
+    db = TestSession()
+    db.add(TS(id="fp_tut1", student_id="fp1", pattern_id="BP-NULL-002",
+              manifest={"mines": []}, history=[], stage="②定位", mine_status="planted"))
+    db.add(SM(id="sm_fp1", session_id="fp_tut1", seq=1, role="tutor", kind="chat", content="x",
+              meta={"support_mode": True, "stage_before": "②定位"}, created_at=recent_ts))
+    for seq, touched in enumerate((False, False, True), start=1):
+        _snap(db, "fp_s1", seq, touched)
+    db.commit()
+    fp = timeline.debug_footprint(db, "fp1", episodes)
+    assert fp["enough"] and fp["attempts"] == 2 and fp["patterns_touched"] == 1, \
+        f"30 天前的尝试必须被窗口排除: {fp}"
+    assert fp["internalized"] == ["方法返回None未检查"], fp
+    assert fp["stuck_step"] == "定位原因" and fp["stuck_count"] == 1, "卡点应翻成四步语言"
+    assert fp["targeted_progress"] == ["方法返回None未检查"], "试探开局且解决的题应报进步"
+    assert fp["loosened"] and "正常" in fp["loosened"][0]["name"], "高频簇内化应报松动"
+    assert timeline.debug_footprint(db, "fp_empty", [])["enough"] is False, "无活动 enough=False"
+    db.close()
+
+
+# 认知先验层测试组：在 test_priors.py 独立维护（假 LLM、零外部依赖、可单跑），
+# 这里并入主套件一起跑。顶部已设 ACP_PRIORS=off，结算路径不打真网。
+import test_priors as _priors  # noqa: E402
+_tests.extend(_priors._tests)
 
 
 def main():

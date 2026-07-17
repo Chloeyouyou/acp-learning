@@ -31,7 +31,7 @@ AI 协同编程学习系统——不做判题，做**过程化陪练**。核心�
 ## 铁律（改动前必须守住）
 
 - **事件流四张表 schema 不动**：`events` / `execution_events` / `capability_scores` / `knowledge_states`。能力评估都是可重放的**派生视图**，换更聪明的模型只改派生函数，不迁 schema。
-- **append-only 的表只 INSERT，永不 UPDATE/DELETE**：`execution_events` / `code_snapshots` / `session_messages`。
+- **append-only 的表只 INSERT，永不 UPDATE/DELETE**：`execution_events` / `code_snapshots` / `session_messages` / `student_experiences`。
 - **导师红线**：绝不泄题（任何提示级别都不给能直接抄的代码/确切改法）、绝不臆断没真实运行过的结果。见 `tutor.py` 的 SYSTEM_TEMPLATE。
 - **改 model 必须配 alembic 迁移**：`alembic revision --autogenerate -m "..."`，然后**人工检查生成的迁移**（SQLite 不支持某些 ALTER，autogenerate 可能生成坏 DDL），再 `alembic upgrade head`；跑 `alembic check` 确认无残留 drift。
 

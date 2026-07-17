@@ -103,6 +103,7 @@ export const api = {
   getTimeline: () => request('GET', `/students/${getStudentId()}/timeline`),
   getReviewQueue: () => request('GET', `/students/${getStudentId()}/review-queue`),
   getActiveSessions: () => request('GET', `/students/${getStudentId()}/active-sessions`),
+  getNextAction: () => request('GET', `/students/${getStudentId()}/next-action`),
   abandonSession: (sessionId) => request('POST', `/sessions/${sessionId}/abandon`),
   getRecommendations: () => request('GET', `/students/${getStudentId()}/recommendations`),
   getCapabilityEvents: (capability) =>

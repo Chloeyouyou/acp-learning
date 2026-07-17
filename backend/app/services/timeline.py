@@ -7,12 +7,14 @@
 只动这里，事件流 schema 不变（07 文档）。
 """
 
+import time
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
-from ..models import Event, ExecutionEvent, TutorSession
-from . import mine_engine
+from ..models import CodeSnapshot, Event, ExecutionEvent, SessionMessage, TutorSession
+from . import learning_path, mine_engine, process
 
 OBSERVATION_MARK = "【观察记录】"
 SUMMARY_MARK = "【思考总结】"
@@ -169,6 +171,29 @@ def aggregate_thinking_patterns(episodes):
     return {"enough": True, "items": items}
 
 
+# 开题干预每次开题都要算跨题惯性，而 build_timeline 是全量 O(N) 重建。用按学生的短 TTL 缓存
+# 挡掉重复重算（治体检 R4：一学期数据量后开题变慢）。惯性只随「碰到新思维簇的题」缓慢变化，
+# 60s 内不会有意义地改变，故短 TTL 安全。进程内内存缓存，重启即清；GIL 护 dict 读写。
+_RECURRING_CACHE: "dict[str, tuple[float, dict]]" = {}
+_RECURRING_TTL = 60.0  # 秒
+
+
+def recurring_for_student(db: Session, student_id: str) -> dict:
+    """带短 TTL 缓存的 _recurring(build_timeline)。开题干预与聚合展示的单一读取入口。"""
+    now = time.monotonic()
+    hit = _RECURRING_CACHE.get(student_id)
+    if hit and now - hit[0] < _RECURRING_TTL:
+        return hit[1]
+    rec = _recurring(build_timeline(db, student_id)["episodes"])
+    _RECURRING_CACHE[student_id] = (now, rec)
+    return rec
+
+
+def clear_recurring_cache() -> None:
+    """清空开题干预缓存（测试用；生产靠 TTL 自然过期）。"""
+    _RECURRING_CACHE.clear()
+
+
 def intervention_for(db: Session, student_id: str, pattern_id: str):
     """开题前干预（Intervention）：该题 thinking_pattern 若是用户跨题高频(≥2题)惯性，
     返回一句赋能提醒，否则 None。纯读、不写库。红线：赋能非评价、不打断。"""
@@ -178,13 +203,79 @@ def intervention_for(db: Session, student_id: str, pattern_id: str):
         tp = None
     if not tp:
         return None
-    rec = _recurring(build_timeline(db, student_id)["episodes"])
+    rec = recurring_for_student(db, student_id)   # 缓存版，避免每次开题全量重算 timeline
     if tp not in rec:
         return None
     meta = THINKING_PATTERNS.get(tp, {})
     return {"thinking_pattern": tp, "name": meta.get("name", ""),
             "reminder": meta.get("reminder", meta.get("name", "")),
             "advice": meta.get("advice", ""), "count": len(rec[tp])}
+
+
+def debug_footprint(db: Session, student_id: str, episodes: list[dict], days: int = 7) -> dict:
+    """「我的调试足迹」周报（方向一 1.3）：近 N 天过程数据的派生聚合，镜子非审判。
+
+    练了几题/几次尝试/几天活跃、内化了什么、最常卡在哪一步（扶一把轮按四步语言聚合）、
+    哪道题从试探走到定向、高频思维默认值是否松动。纯读不写库；episodes 复用
+    build_timeline 已算好的结果，不重复重建。"""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    recent = [ep for ep in episodes if ep["last_at"] >= cutoff]
+    attempts, day_set = 0, set()
+    for ep in recent:
+        for r in ep["rounds"]:
+            hits = [a for a in r["attempts"] if a["time"] >= cutoff]
+            attempts += len(hits)
+            if hits:
+                day_set.add(r["day"])
+    if not attempts:
+        return {"enough": False, "days": days}
+
+    # 最常卡的一步：本周导师「扶一把」轮按 stage_before 聚合，翻成四步语言
+    sess_ids = [s.id for s in db.query(TutorSession).filter_by(student_id=student_id).all()
+                if not s.is_coop]
+    stuck_counts: dict[str, int] = {}
+    if sess_ids:
+        support_msgs = (db.query(SessionMessage)
+                        .filter(SessionMessage.session_id.in_(sess_ids),
+                                SessionMessage.role == "tutor",
+                                SessionMessage.created_at >= cutoff).all())
+        for m in support_msgs:
+            meta = m.meta or {}
+            if meta.get("support_mode") and meta.get("stage_before"):
+                step = learning_path.display_step(meta["stage_before"])
+                stuck_counts[step] = stuck_counts.get(step, 0) + 1
+    stuck_step = max(stuck_counts, key=stuck_counts.get) if stuck_counts else None
+
+    # 从试探走到定向：本周解决/内化的题里，快照证据是「先在别处改、后来对准关键行」的
+    progressed = []
+    for ep in recent:
+        if ep["outcome"] not in ("已解决", "已内化"):
+            continue
+        snaps = (db.query(CodeSnapshot).filter_by(session_id=ep["session_id"])
+                 .order_by(CodeSnapshot.seq).all())
+        if process.blind_start(snaps) is True:
+            progressed.append(ep["pattern_name"])
+
+    # 思维默认值松动：跨题高频簇里，本周有成员题走到已内化
+    loosened = []
+    for tp, names in _recurring(episodes).items():
+        hit = next((ep for ep in recent
+                    if ep["pattern_name"] in names and ep["outcome"] == "已内化"), None)
+        if hit:
+            meta = THINKING_PATTERNS.get(tp, {})
+            loosened.append({"name": meta.get("name", tp), "pattern": hit["pattern_name"]})
+
+    return {
+        "enough": True, "days": days,
+        "active_days": len(day_set), "attempts": attempts,
+        "patterns_touched": len(recent),
+        "internalized": [ep["pattern_name"] for ep in recent if ep["outcome"] == "已内化"],
+        "solved": [ep["pattern_name"] for ep in recent if ep["outcome"] == "已解决"],
+        "stuck_step": stuck_step,
+        "stuck_count": stuck_counts.get(stuck_step, 0) if stuck_step else 0,
+        "targeted_progress": progressed[:2],
+        "loosened": loosened[:2],
+    }
 
 
 def build_timeline(db: Session, student_id: str) -> dict:

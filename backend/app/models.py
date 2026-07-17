@@ -136,6 +136,30 @@ class SessionMessage(Base):
     role: Mapped[str] = mapped_column(String)   # student / tutor / system
     kind: Mapped[str] = mapped_column(String)   # chat / run_result / submit / tutor_opening
     content: Mapped[str] = mapped_column(Text)
+    # 可观测决策上下文（append-only，随消息一次性写入）：导师教学路线、阶段前后等。
+    # 旧消息/普通系统消息为空对象；派生指标只读这里，不反写历史。
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[str] = mapped_column(String, default=now)
+
+
+class StudentExperience(Base):
+    """与每个学生的「共同经历」（借鉴土豆分支三层记忆的第二层）。关卡内化结算时
+    确定性沉淀一条：这个学生在哪道题踩了什么坑、卡在哪、最后怎么走出来。之后的
+    新关卡按相关度召回注入导师 prompt，让引导接得上个人历史（共情 + 方法迁移）。
+
+    摘要由结构化事实拼成（不经 LLM），天然不含 expected_fix——落库端的泄题硬门控。
+    **铁律：append-only——只 INSERT，永不 UPDATE/DELETE。**
+    """
+
+    __tablename__ = "student_experiences"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    student_id: Mapped[str] = mapped_column(String, index=True)
+    session_id: Mapped[str] = mapped_column(String)
+    pattern_id: Mapped[str] = mapped_column(String, index=True)
+    summary: Mapped[str] = mapped_column(Text)          # 给导师看的经历叙述
+    keywords: Mapped[list] = mapped_column(JSON, default=list)   # 检索关键词（弥合词面鸿沟）
+    facts: Mapped[dict] = mapped_column(JSON, default=dict)      # 结构化事实（轮数/提示级/错误家族…）
     created_at: Mapped[str] = mapped_column(String, default=now)
 
 

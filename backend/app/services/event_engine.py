@@ -82,11 +82,15 @@ def _error_family(kind: str, stderr: str) -> str | None:
 
 def log_execution(db: Session, *, student_id: str, session_id: str, pattern_id: str,
                   source: str, kind: str, stderr: str = "", knowledge_points: list | None = None,
-                  mode: str = "debug"):
+                  mode: str = "debug", action_context: dict | None = None):
     """记一条执行事实（run/submit 的真跑结果）。只 INSERT，不碰 capability_scores。
 
     mode 标记本次执行属于哪种玩法（debug/review/…），盖进 meta 供日后按玩法切片。
     """
+    meta = {"ontology_tags": [], "trace_snapshot_id": None,
+            "stderr_summary": None, "stdout_summary": None, "mode": mode}
+    if action_context:
+        meta["action_context"] = dict(action_context)
     ev = ExecutionEvent(
         id=f"ex_{uuid.uuid4().hex[:16]}",
         version="v1",
@@ -97,9 +101,8 @@ def log_execution(db: Session, *, student_id: str, session_id: str, pattern_id: 
         kind=kind,
         error_family=_error_family(kind, stderr),
         knowledge_points=knowledge_points or [],
-        # meta 预留默认形状 + mode 盖戳
-        meta={"ontology_tags": [], "trace_snapshot_id": None,
-              "stderr_summary": None, "stdout_summary": None, "mode": mode},
+        # meta 预留默认形状 + mode 盖戳；动作治理上下文只追加、不改既有键。
+        meta=meta,
         timestamp=now(),
     )
     db.add(ev)
@@ -115,7 +118,8 @@ FIX_DELTA = 3
 LOCATE_DELTA = 2
 
 
-def on_mine_fixed(db: Session, *, student_id: str, session_id: str, mine: dict, max_hint_level: str):
+def on_mine_fixed(db: Session, *, student_id: str, session_id: str, mine: dict,
+                  max_hint_level: str, action_context: dict | None = None):
     """雷 found→fixed 结算：Independent_Debug +固定分。用了多少提示不扣分（只记录）。"""
     return emit(
         db,
@@ -129,7 +133,8 @@ def on_mine_fixed(db: Session, *, student_id: str, session_id: str, mine: dict, 
             "summary": f"完成修复（{mine['pattern_id']}）",
             "refs": {"mine_id": mine["mine_id"], "pattern_id": mine["pattern_id"]},
         },
-        context={"hint_level": max_hint_level, "knowledge_points": mine["knowledge_points"]},
+        context={"hint_level": max_hint_level, "knowledge_points": mine["knowledge_points"],
+                 **({"action_context": dict(action_context)} if action_context else {})},
     )
 
 

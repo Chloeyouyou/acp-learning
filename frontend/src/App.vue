@@ -75,15 +75,19 @@ function switchIdentity() {
         <span>ACP Learning</span>
       </div>
       <nav>
-        <RouterLink to="/arena">Bug闯关训练场</RouterLink>
-        <RouterLink to="/map">课程地图</RouterLink>
-        <RouterLink to="/coop">AI共脑调试</RouterLink>
-        <RouterLink to="/question">提问训练</RouterLink>
-        <RouterLink to="/timeline">成长轨迹</RouterLink>
-        <RouterLink to="/profile">能力画像</RouterLink>
+        <RouterLink to="/arena">开始练习</RouterLink>
+        <RouterLink to="/map">学习地图</RouterLink>
+        <RouterLink to="/timeline">我的成长</RouterLink>
+        <details class="more-nav">
+          <summary>专项练习</summary>
+          <div class="more-menu">
+            <RouterLink to="/coop">AI 共脑调试</RouterLink>
+            <RouterLink to="/question">提问训练</RouterLink>
+          </div>
+        </details>
       </nav>
       <button class="student" @click="switchIdentity" title="切换身份">
-        当前：{{ studentId }}<template v-if="studentName"> / {{ studentName }}</template>
+        {{ studentName || studentId }}
       </button>
     </header>
     <main class="content">
@@ -91,7 +95,7 @@ function switchIdentity() {
     </main>
   </template>
 
-  <!-- 轻量身份页：没确立身份时盖住全站；无密码、无后端鉴权 -->
+  <!-- 轻量身份页：没确立身份时盖住全站；登录成功后换取学生 token -->
   <div v-else class="identity-gate">
     <div class="identity-wrap">
       <div class="identity-brandtop">
@@ -107,8 +111,9 @@ function switchIdentity() {
         <span class="identity-brandname">ACP Learning</span>
       </div>
       <div class="identity-card">
-        <h1 class="identity-title">先填一下你的身份</h1>
-        <p class="identity-sub">用学号记住你——换设备、清缓存后，输同一个学号就能找回你的进度、接着做和复习。</p>
+        <h1 class="identity-title">从这里继续你的学习</h1>
+        <p class="identity-value">陪你想通，不替你写完。</p>
+        <p class="identity-sub">输入同一个学号，就能找回上次的进度。</p>
         <label class="identity-field">
           <span>学号</span>
           <input class="focal" v-model="formId" placeholder="例如 2025xxxxxx" @keyup.enter="confirmIdentity" />
@@ -161,7 +166,7 @@ function switchIdentity() {
   color: var(--primary);
   flex-shrink: 0;
 }
-nav { display: flex; gap: 26px; flex: 1; }
+nav { display: flex; align-items: center; gap: 26px; flex: 1; }
 nav a {
   text-decoration: none;
   color: var(--muted);
@@ -172,6 +177,21 @@ nav a {
 }
 nav a:hover { color: var(--text); }
 nav a.router-link-active { color: var(--primary); border-color: var(--primary); }
+.more-nav { position: relative; color: var(--muted); font-size: 14.5px; }
+.more-nav summary {
+  list-style: none; cursor: pointer; padding: 6px 2px; border-bottom: 2px solid transparent;
+}
+.more-nav summary::-webkit-details-marker { display: none; }
+.more-nav summary::after { content: '⌄'; margin-left: 5px; font-size: 11px; }
+.more-nav[open] summary, .more-nav summary:hover { color: var(--text); }
+.more-menu {
+  position: absolute; top: calc(100% + 10px); left: -14px; z-index: 20;
+  width: 168px; display: flex; flex-direction: column; gap: 2px; padding: 8px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 18px 42px -22px rgba(43, 41, 36, 0.45);
+}
+.more-menu a { padding: 9px 10px; border: 0; border-radius: 8px; white-space: nowrap; }
+.more-menu a:hover, .more-menu a.router-link-active { background: var(--accent-soft); }
 .student {
   font-size: 13px;
   color: var(--muted);
@@ -206,6 +226,7 @@ nav a.router-link-active { color: var(--primary); border-color: var(--primary); 
   letter-spacing: 0.3px; margin-bottom: 20px;
 }
 .identity-title { font-family: var(--serif); font-size: 22px; font-weight: 600; color: var(--text); margin: 0 0 8px; }
+.identity-value { font-family: var(--serif); font-size: 15px; color: var(--primary-dark); margin: 0 0 7px; }
 .identity-sub { font-size: 13.5px; color: var(--muted); line-height: 1.7; margin: 0 0 22px; }
 .identity-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .identity-field span { font-size: 13px; color: var(--text); }
@@ -234,9 +255,12 @@ nav a.router-link-active { color: var(--primary); border-color: var(--primary); 
 @media (max-width: 640px) {
   .topbar { gap: 12px; padding: 0 14px; height: 54px; }
   .brand { font-size: 16px; gap: 7px; }
+  .brand > span { display: none; }
   .brand-mark { width: 22px; height: 22px; }
-  nav { gap: 14px; }
-  nav a { font-size: 13px; padding: 6px 0; }
+  nav { gap: 11px; }
+  nav > a, .more-nav { font-size: 12.5px; }
+  nav a { padding: 6px 0; }
+  .more-menu { left: auto; right: -8px; }
   .student { display: none; }
   .content { padding: 18px 12px; }
 }
