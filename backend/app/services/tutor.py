@@ -592,6 +592,19 @@ EXPERIENCE_LAYER_TEMPLATE = """
 4. 自然引用、点到为止，别每轮都提；学生没卡时可以完全不提。"""
 
 
+# 过程旁白（方向一 1.1）：跨局重复卡点/试探开局信号（process.recent_struggle_signal 产出）。
+# 只帮导师选引导切入点；红线=不照念、不动门控、本轮表现优先。
+STRUGGLE_LAYER_TEMPLATE = """
+
+[过程旁白·这个学生最近的解题过程模式]
+{signals}
+
+使用硬规则：
+1. 旁白仅供你选择更贴的引导切入点（更早引导他读证据/定位、把台阶切得更细），绝不向学生照念或复述（不说「你已经第几次了」「你总是先盲改」）。
+2. 不得据此跳过或放松任何阶段门控与提示级别规则。
+3. 学生本轮的实际表现与旁白不符时，一律以本轮为准。"""
+
+
 class TeachingStrategy(BaseModel):
     """每轮可观测的教学决策；由规则计算，不把讲解质量只押在提示词自觉上。"""
 
@@ -963,6 +976,11 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
         # 第三层记忆：长期思维默认值（priors 包蒸馏产出，措辞含「本轮矛盾则以本轮为准」）。
         # 同样只改 system prompt、不参与跃迁判定；无先验时返回空串，行为与现状一致。
         system += prior_adapter.injection_for(session.student_id)
+        # 过程旁白（方向一 1.1）：跨局重复卡点/试探开局。无信号=零注入。
+        struggle = process.recent_struggle_signal(
+            db, session.student_id, session.pattern_id, exclude_session_id=session.id)
+        if struggle:
+            system += STRUGGLE_LAYER_TEMPLATE.format(signals=struggle)
     if auto_advanced:
         sig, playbook = auto_advanced
         system += MENTOR_LAYER_TEMPLATE.format(sig=sig, **playbook)

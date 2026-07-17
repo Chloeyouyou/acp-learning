@@ -150,6 +150,60 @@ def derive_turning_points(code_steps: list[dict]) -> list[dict]:
     return turning_points
 
 
+# ---------------- 跨局过程信号（方向一 1.1，纯派生只读） ----------------
+
+def blind_start(snaps) -> bool | None:
+    """一局是否「试探开局」：可判定的快照序列里，前两版都没碰到关键行
+    （或一直没碰到）。可判定信息不足（coop/快照太少）返回 None，不计入样本。"""
+    known = [t for t in ((s.diff_stats or {}).get("touched_mine_line") for s in snaps)
+             if t is not None]
+    if len(known) < 2:
+        return None
+    first_touch = next((i for i, t in enumerate(known) if t), None)
+    if first_touch is None:
+        return True if len(known) >= 3 else None   # 两版都没碰还看不出惯性
+    return first_touch >= 2
+
+
+_UNFINISHED = ("planted", "found")
+
+
+def recent_struggle_signal(db: Session, student_id: str, pattern_id: str,
+                           exclude_session_id: str = "") -> str:
+    """跨局旁白：从该生近期会话+快照里算「重复卡点/试探开局」信号，给导师把握
+    引导切入点。只产生 system prompt 旁白，不参与任何跃迁判定；无信号返回空串
+    （行为与没有这一层完全一致）。coop 会话不计入（设计 09 防污染）。"""
+    sessions = (db.query(TutorSession).filter_by(student_id=student_id)
+                .order_by(TutorSession.created_at.desc()).limit(20).all())
+    sessions = [s for s in sessions if not s.is_coop and s.id != exclude_session_id]
+    signals = []
+
+    # 信号一：同题重开——之前 ≥2 局都没走完，报上次停的位置
+    same = [s for s in sessions if s.pattern_id == pattern_id]
+    stuck = [s for s in same if s.mine_status in _UNFINISHED]
+    if len(stuck) >= 2:
+        signals.append(f"这已是他第 {len(same) + 1} 次打开这道题，"
+                       f"之前 {len(stuck)} 次都停在「{stuck[0].stage}」附近没走完。")
+
+    # 信号二：跨题「试探开局」惯性——最近 3 局可判样本里 ≥2 局都是先在别处改
+    samples = []
+    for s in sessions:
+        if s.pattern_id == pattern_id:
+            continue
+        snaps = (db.query(CodeSnapshot).filter_by(session_id=s.id)
+                 .order_by(CodeSnapshot.seq).all())
+        b = blind_start(snaps)
+        if b is not None:
+            samples.append(b)
+        if len(samples) == 3:
+            break
+    if len(samples) >= 2 and sum(samples) >= 2:
+        signals.append("他最近几道题的开局模式相似：失败后先在别处试改，"
+                       "两三版之后才碰到关键行。开局就把注意力引到「先读证据、再定位」上会更省力。")
+
+    return "\n".join(f"- {s}" for s in signals)
+
+
 _OBSERVATION_MARK = "【观察记录】"
 _SUMMARY_MARK = "【思考总结】"
 

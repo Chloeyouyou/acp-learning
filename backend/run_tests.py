@@ -2060,6 +2060,79 @@ def 兜底升级_LLM挂掉时按阶段给确定性引导():
         mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
 
 
+def _snap(db, session_id, seq, touched):
+    """造一条只带 touched_mine_line 判定的快照（过程旁白测试用）。"""
+    db.add(CodeSnapshot(id=f"cs_strug_{session_id}_{seq}", session_id=session_id, seq=seq,
+                        code="x", diff_stats={"lines_changed": 1, "touched_mine_line": touched},
+                        timestamp=f"2026-07-16T00:0{seq}:00+00:00"))
+
+
+@test
+def 过程旁白_同题重开与试探开局信号():
+    from app.services import process
+    from app.models import TutorSession
+    db = TestSession()
+    # 同题重开：strug1 在 P1 上有 2 局没走完
+    for i, stage in enumerate(("②定位", "②定位")):
+        db.add(TutorSession(id=f"s_strug_p1_{i}", student_id="strug1", pattern_id="P-STRUG-1",
+                            manifest={"mines": []}, history=[], stage=stage, mine_status="planted"))
+    # 试探开局惯性：另两题各有失败后两版才碰关键行的快照链
+    for i in range(2):
+        sid = f"s_strug_o{i}"
+        db.add(TutorSession(id=sid, student_id="strug1", pattern_id=f"P-STRUG-O{i}",
+                            manifest={"mines": []}, history=[], stage="④修复", mine_status="fixed"))
+        for seq, touched in enumerate((False, False, True), start=1):
+            _snap(db, sid, seq, touched)
+    db.commit()
+    text = process.recent_struggle_signal(db, "strug1", "P-STRUG-1", exclude_session_id="cur")
+    assert "第 3 次" in text and "②定位" in text, f"应报同题重开与停留位置: {text}"
+    assert "先读证据" in text, f"应报试探开局惯性: {text}"
+    assert process.recent_struggle_signal(db, "strug_fresh", "P-STRUG-1") == "", "无历史必须零信号"
+    # 只有 1 局没走完 → 不算重复卡点；定向开局的样本不凑惯性
+    db.add(TutorSession(id="s_strug_p2_0", student_id="strug2", pattern_id="P-STRUG-2",
+                        manifest={"mines": []}, history=[], stage="②定位", mine_status="planted"))
+    sid = "s_strug2_o0"
+    db.add(TutorSession(id=sid, student_id="strug2", pattern_id="P-STRUG-O9",
+                        manifest={"mines": []}, history=[], stage="④修复", mine_status="fixed"))
+    for seq, touched in enumerate((True, False), start=1):
+        _snap(db, sid, seq, touched)
+    db.commit()
+    assert process.recent_struggle_signal(db, "strug2", "P-STRUG-2") == "", "单局卡壳/定向开局不该报信号"
+    db.close()
+
+
+@test
+def 过程旁白_注入导师system且带硬规则():
+    from app.services import mine_engine, tutor
+    from app.models import TutorSession
+    o1, o2, o3 = mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm
+    try:
+        pats = {p["id"]: p for p in [_exp_pattern("BP-STRUG-011", "旁白题甲")]}
+        captured = {}
+        stub = _stub_turn(tutor)
+        tutor._call_llm = lambda system, history: (captured.__setitem__("sys", system), stub(system, history))[1]
+        # 造 2 局没走完的历史，再开第 3 局
+        db, sess = _exp_session(tutor, mine_engine, pats, student_id="strug3",
+                                pattern_id="BP-STRUG-011", stage="①发现")
+        for i in range(2):
+            db.add(TutorSession(id=f"s_strug3_{i}", student_id="strug3", pattern_id="BP-STRUG-011",
+                                manifest=sess.manifest, history=[], stage="②定位", mine_status="planted"))
+        db.commit()
+        tutor.run_turn(db, sess, "程序好像不太对")
+        assert "过程旁白" in captured["sys"] and "第 3 次" in captured["sys"], "应注入跨局旁白"
+        assert "绝不向学生照念" in captured["sys"], "旁白必须带不照念硬规则"
+        assert "不得据此跳过或放松任何阶段门控" in captured["sys"], "旁白必须带门控硬规则"
+        # 无历史学生：零注入，行为与现状一致
+        captured.clear()
+        db2, sess2 = _exp_session(tutor, mine_engine, pats, student_id="strug4",
+                                  pattern_id="BP-STRUG-011", stage="①发现")
+        tutor.run_turn(db2, sess2, "程序好像不太对")
+        assert "过程旁白" not in captured["sys"], "无信号必须零注入"
+        db.close(); db2.close()
+    finally:
+        mine_engine.get_pattern, mine_engine.load_patterns, tutor._call_llm = o1, o2, o3
+
+
 # 认知先验层测试组：在 test_priors.py 独立维护（假 LLM、零外部依赖、可单跑），
 # 这里并入主套件一起跑。顶部已设 ACP_PRIORS=off，结算路径不打真网。
 import test_priors as _priors  # noqa: E402
