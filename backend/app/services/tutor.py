@@ -16,7 +16,10 @@ from sqlalchemy.orm import Session
 
 from ..config import DEEPSEEK_BASE_URL, HINT_LEVELS, STAGES, TUTOR_MODEL
 from ..models import Event, TutorSession
-from . import action_governance, event_engine, experience, mine_engine, process, profile, sandbox
+from . import (
+    action_governance, event_engine, experience, mine_engine, prior_adapter, process, profile,
+    sandbox,
+)
 
 client = OpenAI(
     api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -957,6 +960,9 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
         if past:
             system += EXPERIENCE_LAYER_TEMPLATE.format(
                 experiences="\n".join(f"- {e.summary}" for e in past))
+        # 第三层记忆：长期思维默认值（priors 包蒸馏产出，措辞含「本轮矛盾则以本轮为准」）。
+        # 同样只改 system prompt、不参与跃迁判定；无先验时返回空串，行为与现状一致。
+        system += prior_adapter.injection_for(session.student_id)
     if auto_advanced:
         sig, playbook = auto_advanced
         system += MENTOR_LAYER_TEMPLATE.format(sig=sig, **playbook)
@@ -1108,8 +1114,11 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
             profile.update_knowledge_state(
                 db, student_id=session.student_id, pattern_id=session.pattern_id,
                 knowledge_points=mine["knowledge_points"], new_state="已内化")
-            # 第二层记忆：把这局「怎么踩坑、怎么走出来」沉淀成一条共同经历（append-only）
-            experience.record_on_completion(db, session)
+            # 第二层记忆：把这局「怎么踩坑、怎么走出来」沉淀成一条共同经历（append-only）；
+            # 第三层记忆：同一条经历作为证据喂给先验蒸馏（失败关闭，绝不波及结算）
+            exp = experience.record_on_completion(db, session)
+            if exp is not None:
+                prior_adapter.feed_from_experience(exp)
             # 复述过关后，推荐一道同类异形的变式题，用实战检验迁移能力
             variant = profile.pick_variant(db, session.student_id, session.pattern_id)
 

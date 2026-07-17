@@ -5,6 +5,7 @@
 """
 
 import json
+import os
 import re
 import sys
 import tempfile
@@ -198,6 +199,55 @@ def overlong_statement_rejected():
     data = empty_data("stu_a")
     data = distill_evidence(data, _ev("s1"), _llm_returning(_new_decision("长" * 200)))
     assert not data["candidates"], "超长陈述是复述细节不是提炼倾向，拒收"
+
+
+# ---------------- 适配器（宿主侧） ----------------
+
+class _FakeExp:
+    """长得像 StudentExperience 的假对象——适配器只读这几个字段。"""
+    student_id = "stu_test"
+    session_id = "sess_1"
+    summary = "在《测试题》遇到 IndexError，全程 5 轮对话、提示最深用到 L2，最后他自己说清了成因机制。"
+
+
+@test
+def adapter_kill_switch():
+    from app.services import prior_adapter
+    with tempfile.TemporaryDirectory() as d:
+        old = {k: os.environ.get(k) for k in ("ACP_PRIORS", "ACP_PRIORS_DIR")}
+        os.environ["ACP_PRIORS"] = "off"
+        os.environ["ACP_PRIORS_DIR"] = d
+        try:
+            prior_adapter.feed_from_experience(_FakeExp())
+            assert prior_adapter.injection_for("stu_test") == "", "off 时注入必须为空"
+            assert not list(Path(d).iterdir()), "off 时不得落任何文件"
+        finally:
+            for k, v in old.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+
+@test
+def adapter_feed_and_inject_roundtrip():
+    from app.services import prior_adapter
+    with tempfile.TemporaryDirectory() as d:
+        old = {k: os.environ.get(k) for k in ("ACP_PRIORS", "ACP_PRIORS_DIR")}
+        os.environ["ACP_PRIORS"] = "on"
+        os.environ["ACP_PRIORS_DIR"] = d
+        real_llm = prior_adapter._llm
+        prior_adapter._llm = _llm_returning(_new_decision())
+        try:
+            prior_adapter.feed_from_experience(_FakeExp())
+            saved = json.loads((Path(d) / "stu_test.json").read_text(encoding="utf-8"))
+            assert len(saved["candidates"]) == 1, "结算喂入应长出候选"
+            assert saved["candidates"][0]["evidence"][0]["source_id"] == "sess_1"
+            assert prior_adapter.injection_for("stu_test") == "", "只有候选时注入仍为空"
+            # 失败关闭：LLM 炸了不许把异常抛回结算主流程
+            prior_adapter._llm = lambda p: (_ for _ in ()).throw(RuntimeError("挂了"))
+            prior_adapter.feed_from_experience(_FakeExp())
+        finally:
+            prior_adapter._llm = real_llm
+            for k, v in old.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
 
 # ---------------- 拆卸纪律 ----------------

@@ -16,6 +16,9 @@ import traceback
 # 主测试套件锁定 subprocess 后端：84 项用真沙箱，走 docker 会慢到几分钟。
 # 隔离性由文末「沙箱隔离」测试组单独打 docker 后端验证（docker 不可用则跳过）。
 os.environ.setdefault("ACP_SANDBOX", "subprocess")
+# 单测不打真网：结算路径会触发先验蒸馏（真 LLM），此处关掉；
+# 先验层行为由 test_priors.py 用假 LLM 单独锁。
+os.environ.setdefault("ACP_PRIORS", "off")
 
 sys.stdout.reconfigure(encoding="utf-8")
 
