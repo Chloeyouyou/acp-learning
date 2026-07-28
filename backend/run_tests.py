@@ -318,6 +318,18 @@ def teaching_strategy_代码按调用链讲():
     assert "入口与输入→谁调用谁→关键数据怎样变化→返回值或报错落点" in prompt
 
 
+@test
+def teaching_strategy_明确纠正触发重新理解且不回退阶段():
+    s = _strategy_session(stage="③归因")
+    s.last_strategy_route = "analogy"
+    s.reopen_count = 1
+    got = tutor.choose_teaching_strategy(s, "不是这个意思，你讲偏了")
+    assert got.correction_reopen and got.route_changed
+    assert got.previous_route == "analogy"
+    assert got.explanation_route != "analogy"
+    assert got.reopen_count == 2
+
+
 def _guard_strategy(route="skeleton", changed=False):
     return tutor.TeachingStrategy(
         core_goal="只推进一个小目标",
@@ -559,6 +571,8 @@ def abandon_置abandoned且不删历史与事件():
     abandon_session("drop_me", db=db, me=sid)
     s = db.query(TutorSession).filter_by(id="drop_me").first()
     assert s.status == "abandoned", f"应置 abandoned，实际 {s.status}"
+    assert s.completion_reason == "student_abandoned"
+    assert s.terminal_actor == "student" and s.completed_at
     assert s.history == hist, "history 不该被删"
     assert db.query(ExecutionEvent).filter_by(session_id="drop_me").count() == 1, "事件流不该被删"
     assert not get_active_sessions(sid, db=db, me=sid)["sessions"], "放弃后不该再在 active-sessions"
@@ -1018,6 +1032,8 @@ def 跃迁_内化三轴达标则升级已内化并结束会话():
         tutor.run_turn(db, sess, "因为下标越界，定位靠看报错行和追踪变量，下次先查 range 边界")
         assert sess.mine_status == "internalized", sess.mine_status
         assert sess.status == "completed", sess.status
+        assert sess.completion_reason == "mastered" and sess.terminal_actor == "tutor_rule"
+        assert sess.completed_at
         ks = db.get(KnowledgeState, ("rt1", pat["id"]))
         assert ks and ks.state == "已内化", ks
         db.close()
@@ -1177,6 +1193,7 @@ def coop_resolve标completed():
     assert coop.resolve(db, out["session_id"])["status"] == "completed"
     s = db.get(TutorSession, out["session_id"])
     assert s.status == "completed"
+    assert s.completion_reason == "teacher_closed"
     db.close()
 
 

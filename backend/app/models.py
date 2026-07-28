@@ -40,7 +40,12 @@ class TutorSession(Base):
     internalize_scores: Mapped[dict] = mapped_column(JSON, default=dict)
     history: Mapped[list] = mapped_column(JSON, default=list)  # [{role, content}]
     stalled_turns: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(String, default="active")  # active/completed
+    status: Mapped[str] = mapped_column(String, default="active")  # active/completed/abandoned
+    completion_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    terminal_actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    completed_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    reopen_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_strategy_route: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[str] = mapped_column(String, default=now)
     # 最近活动时间：每次对话/运行/提交刷新。active-sessions 大厅按它排序，省去每会话回查 ExecutionEvent。
     # nullable（DB 层）：SQLite 无法给已有行的 NOT NULL 新列加约束；值始终由 default/touch 填，实际不为空。

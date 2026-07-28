@@ -291,6 +291,9 @@ def resolve(db: Session, session_id: str) -> dict | None:
         return None
     if s.status == "active":
         s.status = "completed"
+        s.completion_reason = "teacher_closed"
+        s.terminal_actor = "student"
+        s.completed_at = now()
         s.touch()
         _log_collab_signal(db, s)   # B2 埋点：记结构化协作信号（不进画像，攒数据待将来开分）
         db.commit()
