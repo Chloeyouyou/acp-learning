@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from ..config import DEEPSEEK_BASE_URL, HINT_LEVELS, STAGES, TUTOR_MODEL
-from ..models import Event, TutorSession
+from ..models import Event, TutorSession, now
 from . import (
     action_governance, event_engine, experience, mine_engine, prior_adapter, process, profile,
     sandbox,
@@ -612,6 +612,10 @@ class TeachingStrategy(BaseModel):
     explanation_route: Literal["skeleton", "analogy", "micro_example", "execution_trace", "contrast"]
     confusion_detected: bool = False
     route_changed: bool = False
+    correction_reopen: bool = False
+    reopen_reason: Optional[str] = None
+    previous_route: Optional[str] = None
+    reopen_count: int = 0
     knowledge_gap: Optional[str] = None
     code_explanation_order: list[str] = Field(default_factory=list)
 
@@ -627,6 +631,10 @@ class ReplyGuardResult(BaseModel):
 
 CONFUSION_RE = re.compile(
     r"听不懂|没听懂|不明白|看不懂|太抽象|还是不会|完全不会|啥意思|什么意思|靠北|懵了|绕晕"
+)
+CORRECTION_RE = re.compile(
+    r"不是这样|不是这个意思|你理解错|讲偏|不对劲|还是不对|我说的不是|"
+    r"你没回答|答非所问|不是我问的|换个问题"
 )
 KNOWLEDGE_GAPS = (
     (re.compile(r"什么是.{0,8}(下标|索引)|下标.{0,5}是什么|索引.{0,5}是什么"), "下标/索引"),
@@ -646,14 +654,23 @@ CODE_EXPLANATION_ORDER = ["入口与输入", "谁调用谁", "关键数据怎样
 
 
 def choose_teaching_strategy(session: TutorSession, student_message: str) -> TeachingStrategy:
-    """把固定讲解偏好变成本轮确定性策略，不参与阶段跃迁判定。"""
+    """把固定讲解偏好变成本轮确定性策略，不参与阶段跃迁判定。
+
+    明确纠正时重新打开当前解释边界；只换教学路线，不回退学习阶段。
+    """
     explicit_confusion = bool(CONFUSION_RE.search(student_message or ""))
+    correction = bool(CORRECTION_RE.search(student_message or ""))
     struggling = explicit_confusion or session.stalled_turns >= 2
     gap = next((name for pattern, name in KNOWLEDGE_GAPS if pattern.search(student_message or "")), None)
 
     # 首次正常讲解先搭骨架；卡住后按轮数换路，保证不是把原定义再说一遍。
     routes = ["analogy", "micro_example", "execution_trace", "contrast"]
-    if struggling:
+    previous_route = session.last_strategy_route if correction else None
+    reopen_count = getattr(session, "reopen_count", 0) or 0
+    if correction:
+        candidates = ["micro_example", "execution_trace", "contrast", "analogy"]
+        route = next((item for item in candidates if item != session.last_strategy_route), "contrast")
+    elif struggling:
         route = routes[min(session.stalled_turns + (1 if explicit_confusion else 0), len(routes) - 1)]
     else:
         route = "skeleton"
@@ -662,7 +679,11 @@ def choose_teaching_strategy(session: TutorSession, student_message: str) -> Tea
         core_goal=STAGE_GOALS.get(session.stage, "只推进当前阶段的一个核心概念"),
         explanation_route=route,
         confusion_detected=struggling,
-        route_changed=struggling,
+        route_changed=struggling or correction,
+        correction_reopen=correction,
+        reopen_reason="explicit_student_correction" if correction else None,
+        previous_route=previous_route,
+        reopen_count=reopen_count + 1 if correction else reopen_count,
         knowledge_gap=gap,
         code_explanation_order=CODE_EXPLANATION_ORDER if route == "execution_trace" or "代码" in student_message else [],
     )
@@ -957,6 +978,9 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
         session.hint_level = HINT_LEVELS[HINT_LEVELS.index(session.hint_level) + 1]
 
     strategy = choose_teaching_strategy(session, student_message)
+    session.last_strategy_route = strategy.explanation_route
+    if strategy.correction_reopen:
+        session.reopen_count = (session.reopen_count or 0) + 1
     system = build_system(session) + teaching_strategy_prompt(strategy)
 
     # 第二层记忆：召回与这个学生的过往共同经历（排除当前题防变式剧透；coop 隔离不参与）。
@@ -1126,6 +1150,9 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
         if sum(1 for v in acc.values() if v) >= 2:
             session.mine_status = "internalized"
             session.status = "completed"
+            session.completion_reason = "mastered"
+            session.terminal_actor = "tutor_rule"
+            session.completed_at = now()
             event_engine.on_internalized(
                 db, student_id=session.student_id, session_id=session.id,
                 mine=mine, axes=acc)
@@ -1181,6 +1208,10 @@ def run_turn(db: Session, session: TutorSession, student_message: str) -> dict:
             "support_mode": support_mode,
             "hint_level": session.hint_level,
             "reply_guard": reply_guard,
+            "correction_reopen": strategy.correction_reopen,
+            "reopen_reason": strategy.reopen_reason,
+            "previous_route": strategy.previous_route,
+            "reopen_count": session.reopen_count,
         },
     )
 

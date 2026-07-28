@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from .concurrency import session_turn
 from .config import STAGES
 from .db import get_db, init_db
-from .models import ExecutionEvent, Student, TutorSession
+from .models import ExecutionEvent, Student, TutorSession, now
 from .runtime_security import security_status, validate_production_environment
 from .security import sign_token, verify_token
 from .services import (
@@ -215,6 +215,11 @@ def get_session(session_id: str, db: Session = Depends(get_db),
         "stage": session.stage,
         "hint_level": session.hint_level,
         "status": session.status,
+        "completion_reason": session.completion_reason,
+        "terminal_actor": session.terminal_actor,
+        "completed_at": session.completed_at,
+        "reopen_count": session.reopen_count,
+        "last_strategy_route": session.last_strategy_route,
         "fixed": session.mine_status in ("fixed", "internalized"),
         "done": session.status == "completed",
         "messages": messages,
@@ -436,8 +441,12 @@ def abandon_session(session_id: str, db: Session = Depends(get_db),
     session = _get_session(db, session_id, me)
     if session.status == "active":
         session.status = "abandoned"
+        session.completion_reason = "student_abandoned"
+        session.terminal_actor = "student"
+        session.completed_at = now()
         db.commit()
-    return {"session_id": session.id, "status": session.status}
+    return {"session_id": session.id, "status": session.status,
+            "completion_reason": session.completion_reason}
 
 
 @app.get("/api/admin/students/{student_id}/sessions")
@@ -462,6 +471,11 @@ def admin_list_sessions(student_id: str, token: str | None = None,
             "stage": s.stage,
             "mine_status": s.mine_status,
             "status": s.status,
+            "completion_reason": s.completion_reason,
+            "terminal_actor": s.terminal_actor,
+            "completed_at": s.completed_at,
+            "reopen_count": s.reopen_count,
+            "last_strategy_route": s.last_strategy_route,
             "hint_level": s.hint_level,
             "internalize_scores": s.internalize_scores,
             "created_at": s.created_at,
